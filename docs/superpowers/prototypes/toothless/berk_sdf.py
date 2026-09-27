@@ -118,6 +118,39 @@ def squashed(prim, center, scale):
     return Prim(f, np.minimum(lo, hi), np.maximum(lo, hi))
 
 
+def polygon_slab(poly_xy, z_center, half_height, rounding=0.0):
+    """Extruded 2D polygon (in the XY plane, counter-clockwise points) spanning z_center ± half_height.
+    Exact 2D polygon distance (iq), combined with the slab distance; `rounding` softens the rim."""
+    pts = np.asarray(poly_xy, float)
+    n = len(pts)
+
+    def f(P):
+        q = P[..., :2]
+        d2 = np.full(q.shape[:-1], np.inf)
+        sign = np.ones(q.shape[:-1])
+        for i in range(n):
+            a, b = pts[i], pts[(i + 1) % n]
+            e = b - a
+            w = q - a
+            h = np.clip((w @ e) / (e @ e), 0.0, 1.0)
+            dv = w - h[..., None] * e
+            d2 = np.minimum(d2, np.sum(dv * dv, axis=-1))
+            c1 = q[..., 1] >= a[1]
+            c2 = q[..., 1] < b[1]
+            c3 = e[0] * w[..., 1] > e[1] * w[..., 0]
+            flip = (c1 & c2 & c3) | (~c1 & ~c2 & ~c3)
+            sign = np.where(flip, -sign, sign)
+        dxy = sign * np.sqrt(d2)
+        dz = np.abs(P[..., 2] - z_center) - half_height
+        outside = np.sqrt(np.maximum(dxy, 0.0) ** 2 + np.maximum(dz, 0.0) ** 2)
+        inside = np.minimum(np.maximum(dxy, dz), 0.0)
+        return outside + inside - rounding
+
+    lo = np.array([pts[:, 0].min(), pts[:, 1].min(), z_center - half_height]) - rounding
+    hi = np.array([pts[:, 0].max(), pts[:, 1].max(), z_center + half_height]) + rounding
+    return Prim(f, lo, hi)
+
+
 def box(c, half, R=None, rounding=0.0):
     c = np.asarray(c, float); h = np.asarray(half, float) - rounding
 

@@ -1,0 +1,44 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>v6 GLB test (throwaway)</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#20242a}#info{position:fixed;left:8px;top:8px;color:#dde;font:12px monospace;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"}}</script>
+</head><body><div id="info"></div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight); renderer.toneMapping = THREE.AgXToneMapping; renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x2a3038);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.6;
+const sun = new THREE.DirectionalLight(0xfff0dd, 2.5); sun.position.set(-4, 6, 3); sun.castShadow = true; scene.add(sun);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(12, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6d7a5e, roughness: 0.95 }));
+ground.receiveShadow = true; scene.add(ground);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 200);
+camera.position.set(4.5, 2.4, 6.5);
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 1, 0.5);
+const info = document.getElementById('info');
+const gltf = await new GLTFLoader().loadAsync('toothless_v6.glb');
+const root = gltf.scene; scene.add(root);
+const meshes = [];
+root.traverse(o => { if (o.isSkinnedMesh) { meshes.push(o); o.castShadow = true; o.frustumCulled = false; } });
+const mesh = meshes[0];
+const skin = new THREE.MeshPhysicalMaterial({ color: 0x1b1f28, roughness: 0.5, clearcoat: 0.2, sheen: 0.6, sheenColor: new THREE.Color(0x4a6a9a), side: THREE.DoubleSide });
+const LIB = ({ skin, membrane: skin, eye: new THREE.MeshStandardMaterial({ color: 0x9bd23a, emissive: 0x2a4a08, roughness: 0.2 }),
+  mouth: new THREE.MeshStandardMaterial({ color: 0xa84a55, roughness: 0.6 }), teeth: new THREE.MeshStandardMaterial({ color: 0xf2eee4 }),
+  claw: new THREE.MeshStandardMaterial({ color: 0xd8d0c0, roughness: 0.4 }), prosthetic: new THREE.MeshStandardMaterial({ color: 0x9a1f14, roughness: 0.6, side: THREE.DoubleSide }) });
+for (const m of meshes) m.material = LIB[m.material.name] ?? m.material;
+const mixer = new THREE.AnimationMixer(root);
+const clips = Object.fromEntries(gltf.animations.map(c => [c.name, c]));
+let current = null;
+window.play = (name) => { mixer.stopAllAction(); current = mixer.clipAction(clips[name]); current.play(); mixer.update(0); return name; };
+window.morph = (name, w) => { let n = 0; for (const m of meshes) { const i = m.morphTargetDictionary?.[name]; if (i !== undefined) { m.morphTargetInfluences[i] = w; n++; } } return n; };
+window.cam = (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); controls.target.set(tx, ty, tz); controls.update(); };
+window.stats = () => ({ parts: meshes.map(m => m.material.name), bones: mesh.skeleton.bones.length, morphs: Object.keys(mesh.morphTargetDictionary ?? {}), clips: Object.keys(clips), tris: meshes.reduce((s, m) => s + m.geometry.index.count / 3, 0), bbox: new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).toArray().map(v => +v.toFixed(2)) });
+play('bind');
+info.textContent = JSON.stringify(stats(), null, 1);
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script></body></html>
+

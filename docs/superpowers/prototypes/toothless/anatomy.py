@@ -30,7 +30,7 @@ SPINE = [  # pelvis -> chest; each bone runs from point i to i+1 (toward the hea
 NECK = [("neck_01", V(0, -0.86, 1.23)), ("neck_02", V(0, -1.03, 1.30)), ("neck_03", V(0, -1.21, 1.39)),
         ("neck_04", V(0, -1.36, 1.46)), (None, V(0, -1.50, 1.50))]
 HEAD = (V(0, -1.50, 1.50), V(0, -2.24, 1.45))
-JAW = (V(0, -1.72, 1.38), V(0, -2.18, 1.31))
+JAW = (V(0, -1.70, 1.345), V(0, -2.16, 1.30))   # hinge kept BELOW the mouth slit (inside the lower-jaw volume) or heat weighting fails
 
 TAIL_PTS = [V(0, 0.88, 1.03), V(0, 1.20, 1.00), V(0, 1.54, 0.97), V(0, 1.90, 0.93), V(0, 2.28, 0.88), V(0, 2.66, 0.83),
             V(0, 3.03, 0.78), V(0, 3.38, 0.73), V(0, 3.72, 0.68), V(0, 4.04, 0.63), V(0, 4.34, 0.58), V(0, 4.63, 0.53), V(0, 4.92, 0.48)]
@@ -151,4 +151,5 @@ def bone_specs():
     b.append(("saddle", SADDLE_SEAT, SADDLE_SEAT + V(0, -0.25, 0.02), "spine_03", True))
     b.append(("pedal_L", PEDAL_L, PEDAL_L + V(0, -0.14, 0), "saddle", True))
     return b
+
 

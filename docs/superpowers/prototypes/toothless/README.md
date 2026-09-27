@@ -21,10 +21,28 @@ glTF export (+Y up) maps Blender (x, y, z) → glTF (x, z, −y), so the dragon 
 | Skinning | Blender automatic (heat) weights on the QuadriFlow body with **non-body bones' `use_deform` disabled during the bind** (wings, hip wings, tail fins, ears, tack) → 0 unweighted verts, smooth shoulder/hip deformation. Parts (eyes, ears, claws, membranes, spars) carry explicit vertex groups. | `v5-walk-deform.png` |
 | Rig | ~100 bones generated from `anatomy.bone_specs()`; roll aligned so local Z ≈ world up (−Y for near-vertical bones) → for limbs and spine, **local X is the hinge axis**. | `anatomy.py`, `rig_build.py` |
 
+## Solved after the first record (head_parts.py, head_test.py, assemble_v6.py)
+
+- **Mouth** — `berk_sdf.polygon_slab` cuts a real slit through the head along the lip U (`sculpt_body.mouth_polygon`,
+  `MOUTH_Z`, half-height 8 mm), so upper/lower jaw join only behind the corners. Interior faces get the `mouth` material
+  (`head_parts.assign_mouth_material`, inset 3 cm so the lips read dark at rest). Jaw opens cleanly with **negative local-X**
+  rotation (`head-yawn.png`, `head-snarl-teeth.png`). Retractable teeth rows sit inside the gums with a `teeth_out` key.
+- **Eyelids** — parametric spherical-cap lid shells (upper + lower per eye, solidified) with `blink_L/R` keys
+  (`head-neutral-lids.png`, `head-blink.png`); the heavy upper lid gives the film's sleepy look. The pupil is NOT a mesh — the
+  engine eye shader draws it from the eye's planar UVs (TEXCOORD_0 = eye-frame x/y ÷ radius; back hemisphere v = −1).
+- **Export** — `assemble_v6.py` produces one skinned mesh (7 materials, 43 k verts / 83 k tris), 101-joint skin, morphs
+  `blink_L/R, teeth_out`, clips `bind, wings_folded, jaw_open` with FULL tracks for all bones; loads in three r186
+  (`v6_test.html`: bbox 13.55 × 2.02 × 7.17 m).
+
+Pitfalls found on the way: bones must sit inside the mesh volume (the jaw hinge in the slit gap broke heat weighting);
+always `voxel_remesh` after VDB meshing (thin walls → non-manifold → heat weighting fails for every bone); shape-key
+values become glTF default morph weights (zero them before export); GLTFLoader splits multi-material skinned meshes
+into one SkinnedMesh per material (apply morphs/materials to all).
+
 ## Known gaps (the plan must close these)
 
-1. **Mouth**: only a lip groove is sculpted. Opening the jaw stretches the throat into a pouch (seen in the `look` test pose). Needs a real slit + oral cavity, gums, tongue, retractable teeth, and a `mouth` material on interior faces, so the jaw bone opens cleanly.
-2. **Eyelids / blink**: lid rims are sculpted but static; blink needs separate lid shells (or lid geometry) with `blink_L/R` shape keys.
+1. ~~Mouth~~ solved (above). Remaining: tongue shape, corner creases.
+2. ~~Eyelids / blink~~ solved (above). Remaining: lids leave a sliver at the outer corner of the far eye at full blink (raise upper-lid travel to ~100°, lower to ~−46°).
 3. **Folded-wing polish**: a thin membrane skirt remains under the folded bundle; needs a pleat corrective and tuned inner-panel weights.
 4. **Pose authoring**: the pelvis is the root bone, so poses like *sit* need counter-rotations up the spine (first attempt tipped the whole body).
 5. **Tack**: saddle, harness straps (SDF shell bands), left pedal, prosthetic-fin linkage cable — not yet built.
