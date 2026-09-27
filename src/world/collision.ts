@@ -151,8 +151,8 @@ export class CollisionWorld {
    * The returned t is always non-contacting by construction (with a 1e-6 safety margin for floating-point error). Caps at 64 iterations.
    */
   sphereCast(from: THREE.Vector3, to: THREE.Vector3, radius: number, stats?: { queries: number }): number {
-    if (this.closestPoint(from, radius, this.scratchSurface)) return 0;
     if (stats) stats.queries++;
+    if (this.closestPoint(from, radius, this.scratchSurface)) return 0;
     const len = from.distanceTo(to);
     if (len < 1e-9) return 1;
     const dir = _v.subVectors(to, from).normalize();

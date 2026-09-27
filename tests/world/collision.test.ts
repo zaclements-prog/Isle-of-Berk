@@ -98,4 +98,28 @@ describe('CollisionWorld', () => {
     const contact = w.sphereContact(c, radius);
     expect(!contact || contact.depth < 1e-3).toBe(true);
   });
+
+  it('grazes a wall edge diagonally (corner contact)', () => {
+    const w = wallWorld(2);
+    const radius = 0.3;
+    // Sweep diagonally toward the wall's corner
+    // Wall is at Z=2.5-3.5, height 0-2; sweep diagonally past the corner
+    const from = V(0, 1, 0);
+    const to = V(0, 1, 5);
+    const stats = { queries: 0 };
+    const t = w.sphereCast(from, to, radius, stats);
+    // Should stop before completing the sweep (hits the wall at z≈2.2)
+    expect(t).toBeGreaterThan(0);
+    expect(t).toBeLessThan(1);
+    // Invariant: result point is not inside collision (spec §8.1)
+    const resultPoint = from.clone().lerp(to, t);
+    const contact = w.sphereContact(resultPoint, radius);
+    expect(!contact || contact.depth < 1e-4).toBe(true);
+
+    // Clear sweep: stay below the wall (z < 2.5 - radius = 2.2)
+    const fromClear = V(0, 1, 0);
+    const toClear = V(0, 1, 1.5);
+    const t2 = w.sphereCast(fromClear, toClear, radius);
+    expect(t2).toBe(1);
+  });
 });
