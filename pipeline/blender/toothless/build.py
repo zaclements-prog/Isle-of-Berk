@@ -16,6 +16,7 @@ import sculpt as SB  # noqa: E402
 import parts as P  # noqa: E402
 import wings as W  # noqa: E402
 import tack as T  # noqa: E402
+import assemble as AS  # noqa: E402
 import qa  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(ROOT))
@@ -93,7 +94,17 @@ def stage_tack():
     SC.save(os.path.join(BUILD, "toothless_tack.blend"))
 
 
-STAGES = {"model": stage_model, "wings": stage_wings, "tack": stage_tack}   # later tasks add "assemble", "export" — in that order
+def stage_assemble():
+    rig, body = open_stage("tack")
+    sc = bpy.context.scene
+    AS.run(rig, body)
+    QR.setup_clay(sc)
+    qa.deform_renders(sc, rig, body, QA_DIR)
+    SC.save(os.path.join(BUILD, "toothless_assembled.blend"))
+
+
+STAGES = {"model": stage_model, "wings": stage_wings, "tack": stage_tack,
+          "assemble": stage_assemble}   # a later task adds "export" last
 
 
 def main():
