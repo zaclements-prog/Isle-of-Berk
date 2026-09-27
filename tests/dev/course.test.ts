@@ -45,6 +45,47 @@ describe('buildCourse', () => {
     }
   });
 
+  // The M5 climbing metrics depend on the three assertions below.
+  it('tilts the steep wall\'s climbing face to 75° (±0.5°)', () => {
+    const wall = buildCourse().surfaces.find((m) => m.name === 'steepWall')!;
+    const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(wall.quaternion); // the 10 × 6.2 m faces
+    const slope = THREE.MathUtils.radToDeg(Math.acos(Math.abs(normal.y)));
+    expect(Math.abs(slope - 75)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('joins cornerA and cornerB into a closed L: no gap at the inside corner, flush outside faces', () => {
+    const c = buildCourse();
+    const a = new THREE.Box3().setFromObject(c.surfaces.find((m) => m.name === 'cornerA')!);
+    const b = new THREE.Box3().setFromObject(c.surfaces.find((m) => m.name === 'cornerB')!);
+    expect(a.intersectsBox(b)).toBe(true); // touching counts
+    // The concave vertex, where A's inner face (z = a.min.z) meets B's inner face (x = b.max.x),
+    // lies on both walls, at every height of the walls.
+    for (const y of [a.min.y, (a.min.y + a.max.y) / 2, a.max.y]) {
+      const inside = new THREE.Vector3(b.max.x, y, a.min.z);
+      expect(a.containsPoint(inside), `A at y=${y}`).toBe(true);
+      expect(b.containsPoint(inside), `B at y=${y}`).toBe(true);
+    }
+    expect(a.min.x).toBeCloseTo(b.min.x, 5); // outer faces flush: an L, not a T or a cross
+    expect(a.max.z).toBeCloseTo(b.max.z, 5);
+  });
+
+  it('stands the pillar free on the floor: a 3 × 3 m footprint at (-18, 34), 3 m tall', () => {
+    const c = buildCourse();
+    const pillar = new THREE.Box3().setFromObject(c.surfaces.find((m) => m.name === 'pillar')!);
+    const size = pillar.getSize(new THREE.Vector3());
+    const centre = pillar.getCenter(new THREE.Vector3());
+    expect(size.x).toBeCloseTo(3, 5);
+    expect(size.z).toBeCloseTo(3, 5);
+    expect(size.y).toBeCloseTo(3, 5);
+    expect(pillar.min.y).toBeCloseTo(0, 5);
+    expect(centre.x).toBeCloseTo(-18, 5);
+    expect(centre.z).toBeCloseTo(34, 5);
+    for (const other of c.surfaces) {
+      if (other.name === 'pillar' || other.name === 'floor') continue;
+      expect(pillar.intersectsBox(new THREE.Box3().setFromObject(other)), other.name).toBe(false);
+    }
+  });
+
   it('is deterministic for a seed', () => {
     const a = buildCourse(7).surfaces.find((m) => m.name === 'boulder3')!.position.toArray();
     const b = buildCourse(7).surfaces.find((m) => m.name === 'boulder3')!.position.toArray();

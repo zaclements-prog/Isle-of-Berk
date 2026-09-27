@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API, USER_AGENT, selectFiles, manifestEntry, creditsMarkdown } from './polyhaven.mjs';
+import { API, USER_AGENT, selectFiles, manifestEntry, creditsMarkdown, cachePath } from './polyhaven.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -35,7 +35,8 @@ const manifest = [];
 for (const want of wanted) {
   const files = selectFiles(await getJson(`${API}/files/${want.id}`), want);
   for (const f of files) {
-    const status = await download(f, join(CACHE, want.id, f.path));
+    // f.path comes from the API (a glTF's include map): cachePath refuses anything outside CACHE.
+    const status = await download(f, cachePath(CACHE, want.id, f.path));
     console.log(`${want.id}/${f.path}: ${status}`);
   }
   manifest.push(manifestEntry(want, files));

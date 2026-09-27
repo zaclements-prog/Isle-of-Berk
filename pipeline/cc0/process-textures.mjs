@@ -4,12 +4,11 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { findMapFile, cachePath } from './polyhaven.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const QUALITY = { diff: 88, arm: 90, rough: 90, ao: 90, nor: 95, disp: 95 };
-/** Our map name → the token Poly Haven puts in file names (`<id>_<token>_<res>.<ext>`). */
-const FILE_TOKEN = { diff: 'diff', nor: 'nor_gl', arm: 'arm', rough: 'rough', ao: 'ao', disp: 'disp' };
 
 const wanted = JSON.parse(await readFile(join(HERE, 'wanted.json'), 'utf8'));
 const manifest = JSON.parse(await readFile(join(HERE, 'manifest.json'), 'utf8'));
@@ -20,11 +19,10 @@ for (const want of wanted.filter((w) => w.type === 'textures' && w.install)) {
   const outDir = join(ROOT, 'public', 'assets', want.install.dir);
   await mkdir(outDir, { recursive: true });
   for (const map of want.maps ?? ['diff', 'nor', 'arm']) {
-    const token = FILE_TOKEN[map];
-    const file = entry.files.find((f) => f.path.toLowerCase().includes(`_${token}_`));
+    const file = findMapFile(entry, map);
     if (!file) throw new Error(`${want.id}: no cached file for map ${map}`);
     const out = join(outDir, `${map}.webp`);
-    await sharp(join(HERE, 'cache', want.id, file.path))
+    await sharp(cachePath(join(HERE, 'cache'), want.id, file.path))
       .resize(want.install.size, want.install.size)
       .webp({ quality: QUALITY[map] })
       .toFile(out);

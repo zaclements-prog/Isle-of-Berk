@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+
 export const API = 'https://api.polyhaven.com';
 export const USER_AGENT = 'isle-of-berk-asset-pipeline (personal project)';
 
@@ -10,6 +12,41 @@ export const TEXTURE_MAPS = {
   ao: ['AO', 'jpg'],
   disp: ['Displacement', 'png'],
 };
+
+/** Our map name → the token Poly Haven puts in file names (`<id>_<token>_<res>.<ext>`). */
+export const FILE_TOKEN = { diff: 'diff', nor: 'nor_gl', arm: 'arm', rough: 'rough', ao: 'ao', disp: 'disp' };
+
+/**
+ * The cached file holding one map of a manifest entry. Anchored on the `_<token>_<res>.` tail of Poly
+ * Haven's `<id>_<token>_<res>.<ext>` names (ids never contain a dot), so an asset id that itself
+ * contains a token — `rock_arm_01` holds `_arm_` — can't match another map's file.
+ * @param {{ id: string, res: string, files: { path: string }[] }} entry manifest.json entry
+ * @param {string} map our map name (a FILE_TOKEN key)
+ */
+export function findMapFile(entry, map) {
+  const token = FILE_TOKEN[map];
+  if (!token) throw new Error(`${entry.id}: unknown map '${map}'`);
+  const tail = `_${token}_${entry.res}.`.toLowerCase();
+  return entry.files.find((f) => f.path.toLowerCase().includes(tail));
+}
+
+/**
+ * Absolute cache path for one downloaded file, refusing any that resolves outside `cacheDir`: `rel`
+ * comes from the Poly Haven API (a glTF's include map), so `../` or an absolute path in it must not
+ * write — or read — anywhere else on disk.
+ * @param {string} cacheDir the cache root (pipeline/cc0/cache)
+ * @param {string} id asset id (its folder under the cache)
+ * @param {string} rel file path relative to the asset folder
+ */
+export function cachePath(cacheDir, id, rel) {
+  const root = resolve(cacheDir);
+  const full = resolve(root, id, rel);
+  const inside = relative(resolve(root, id), full);
+  if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside) || !full.startsWith(root + sep)) {
+    throw new Error(`${id}: refusing cache path outside the cache folder: ${rel}`);
+  }
+  return full;
+}
 
 const basename = (u) => u.split('/').pop();
 
