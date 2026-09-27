@@ -25,6 +25,32 @@ const isLit = (m: THREE.Material) =>
   (m as THREE.MeshLambertMaterial).isMeshLambertMaterial === true ||
   (m as THREE.MeshPhongMaterial).isMeshPhongMaterial === true;
 
+/** Core lights_fragment_begin as three ships it — captured before any CSM swaps in its own copy. */
+const CORE_LIGHTS_FRAGMENT_BEGIN = THREE.ShaderChunk.lights_fragment_begin;
+const DIRECT_LIGHT_ANCHOR = 'IncidentLight directLight;';
+
+/**
+ * three r186's CSM addon installs its own lights_fragment_begin (CSMShader, on every CSM
+ * construction), copied from an older core chunk. It lacks core's `#ifdef STANDARD` block that
+ * initialises material.dfg (DFG LUT) and material.multiScatteringCompensation, so every CSM-lit
+ * Standard/Physical material reads garbage there: IBL specular goes black (the mirror swatch
+ * rendered ~0.01 under a ~1.0 sky) and sun highlights break. Splice core's block back in ahead of
+ * the direct-light loops. A no-op once the installed chunk already has it (fixed upstream, or
+ * repaired by an earlier rig).
+ */
+function repairCsmLightsChunk(): void {
+  const C = THREE.ShaderChunk;
+  if (C.lights_fragment_begin.includes('material.dfg')) return;
+  const start = CORE_LIGHTS_FRAGMENT_BEGIN.indexOf('#ifdef STANDARD');
+  const end = CORE_LIGHTS_FRAGMENT_BEGIN.indexOf(DIRECT_LIGHT_ANCHOR);
+  const block = start >= 0 && end > start ? CORE_LIGHTS_FRAGMENT_BEGIN.slice(start, end) : '';
+  if (!block.includes('material.dfg') || !C.lights_fragment_begin.includes(DIRECT_LIGHT_ANCHOR)) {
+    console.error('[lighting] CSM lights-chunk repair anchors missing — PBR specular (IBL, sun highlights) will be wrong');
+    return;
+  }
+  C.lights_fragment_begin = C.lights_fragment_begin.replace(DIRECT_LIGHT_ANCHOR, () => `${block}${DIRECT_LIGHT_ANCHOR}`);
+}
+
 /** Sun with cascaded shadow maps (crisp near, stable far) + a hemisphere fill. */
 export class LightingRig {
   readonly csm: CSM;
@@ -52,10 +78,14 @@ export class LightingRig {
       lightFar: 1200,
       lightMargin: 150,
     });
+    repairCsmLightsChunk(); // the CSM constructor just (re)installed its outdated lights chunk
     this.csm.fade = true; // must be set before any setupMaterial call
     for (const l of this.csm.lights) {
       l.color.set(params.sunColor);
       l.shadow.normalBias = 0.03;
+      // A 14° sun stretches each shadow texel ~4x along the ground (1/sin 14°), so r186's 1-texel
+      // PCF shows stair-steps on shadow edges; 2 texels hides them and stays crisp.
+      l.shadow.radius = 2;
     }
     this.hemi = new THREE.HemisphereLight(params.skyColor, params.groundColor, params.hemiIntensity);
     scene.add(this.hemi); // exempt from the material pipeline — a light has no material, and needs neither CSM nor Berk fog

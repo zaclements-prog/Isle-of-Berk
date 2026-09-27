@@ -36,6 +36,14 @@ describe('createPostStack', () => {
     expect(stack.bloom!.renderTargetBright.width).toBe(800);
   });
 
+  it('blooms only the clamped excess over the threshold, not the whole bright pixel', () => {
+    // Stock UnrealBloomPass forwards the full value of anything over the threshold: big areas just
+    // over it bloom like lamps and one ~1e4 sun glint floods every mip.
+    const fs = buildStack().bloom!.materialHighPassFilter.fragmentShader;
+    expect(fs).toContain('clamp( v - luminosityThreshold, 0.0, bloomMaxExcess )');
+    expect(fs).not.toContain('gl_FragColor = mix( outputColor, texel, alpha );');
+  });
+
   it('dispose() frees the bloom pass and the baked LUT texture', () => {
     const stack = buildStack();
     const bloomDispose = vi.spyOn(stack.bloom!, 'dispose');

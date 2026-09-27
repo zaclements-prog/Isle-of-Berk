@@ -58,6 +58,31 @@ export interface PostStack {
   dispose(): void;
 }
 
+/**
+ * Only the excess over the bloom threshold blooms, clamped. The stock UnrealBloomPass high-pass
+ * forwards the FULL value of anything over the threshold, so a large area barely over it (sky behind
+ * a sprite, a mirror full of bright sky) blooms as hard as a lamp, and a single sun glint (~1e4 on a
+ * mirror) or the sun disc floods every mip into a full-frame veil (spec §4.2: never a haze). The
+ * excess is continuous at the threshold, so no hard contour appears where a gradient crosses it.
+ */
+const BLOOM_MAX_EXCESS = 4;
+const BLOOM_UNIFORM_ANCHOR = 'uniform float smoothWidth;';
+const BLOOM_OUT_ANCHOR = 'gl_FragColor = mix( outputColor, texel, alpha );';
+
+function patchBloomPrefilter(bloom: UnrealBloomPass): void {
+  const mat = bloom.materialHighPassFilter;
+  if (!mat.fragmentShader.includes(BLOOM_UNIFORM_ANCHOR) || !mat.fragmentShader.includes(BLOOM_OUT_ANCHOR)) {
+    console.error('[post] bloom prefilter anchor missing — bloom input NOT clamped');
+    return;
+  }
+  mat.uniforms.bloomMaxExcess = { value: BLOOM_MAX_EXCESS };
+  mat.fragmentShader = mat.fragmentShader
+    .replace(BLOOM_UNIFORM_ANCHOR, () => `${BLOOM_UNIFORM_ANCHOR}\n\t\tuniform float bloomMaxExcess;`)
+    .replace(BLOOM_OUT_ANCHOR, () =>
+      'float excess = clamp( v - luminosityThreshold, 0.0, bloomMaxExcess );\n' +
+      '\t\t\tgl_FragColor = vec4( texel.rgb * ( excess / max( v, 1e-4 ) ), 1.0 );');
+}
+
 /** n8ao 2.0.1 has no dispose(): free every render target / material / texture it holds directly. */
 function disposeN8AOResources(pass: N8AOPass): void {
   for (const value of Object.values(pass as unknown as Record<string, unknown>)) {
@@ -116,6 +141,7 @@ export function createPostStack(
   if (preset.bloom) {
     // Threshold 1.0 on linear HDR: only genuinely bright things (emissives, glints) glow.
     bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.3, 0.55, 1.0);
+    patchBloomPrefilter(bloom);
     composer.addPass(bloom);
   }
 

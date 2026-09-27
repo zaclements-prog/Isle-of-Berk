@@ -8,9 +8,10 @@ export function createRenderer(container: HTMLElement, preset: QualityPreset): T
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.AgXToneMapping; // applied by OutputPass
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 1.8; // M1-tuned: sunlit mid-green ground lands mid-tone (~120/255) under AgX
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // r186 removed PCFSoftShadowMap (it warns and falls back to PCF); PCF now filters softly itself.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);
   // Lesson from the old game: repeated navigations exhausted WebGL contexts. Release ours on leave.
   addEventListener('pagehide', () => {

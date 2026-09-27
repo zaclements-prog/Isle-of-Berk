@@ -39,4 +39,22 @@ describe('LightingRig', () => {
     expect(shader.uniforms.berkFogColor).toBeDefined();
     expect(shader.uniforms.CSM_cascades).toBeUndefined();
   });
+
+  // three r186's CSM installs its own (older) lights_fragment_begin that lacks core's PBR DFG setup;
+  // without it every CSM-lit Standard/Physical material has garbage specular (black mirror).
+  it('keeps the PBR DFG setup in the lights chunk CSM installs, before the direct-light loops', () => {
+    buildRig();
+    const chunk = THREE.ShaderChunk.lights_fragment_begin;
+    expect(chunk).toContain('CSM_cascades'); // still CSM's cascade-aware chunk
+    expect(chunk).toContain('material.dfg = texture2D( dfgLUT');
+    expect(chunk).toContain('material.multiScatteringCompensation =');
+    expect(chunk.indexOf('material.multiScatteringCompensation =')).toBeLessThan(chunk.indexOf('IncidentLight directLight;'));
+  });
+
+  it('repairs the CSM lights chunk exactly once however many rigs are built', () => {
+    buildRig();
+    buildRig(); // each CSM constructor re-installs its unrepaired chunk
+    const chunk = THREE.ShaderChunk.lights_fragment_begin;
+    expect(chunk.split('material.dfg = texture2D').length - 1).toBe(1);
+  });
 });

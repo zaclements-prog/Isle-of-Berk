@@ -16,13 +16,20 @@ export interface FogParams {
   maxOpacity: number;
 }
 
+/**
+ * Colours fitted (M1) to the GOLDEN_SKY horizon they fade into, so distant geometry dissolves into the
+ * sky instead of a brighter/bluer band: the golden-hour horizon runs ~0.13–0.19 (luminance) away
+ * from the sun up to ~0.93 at it (under the sky's luminance ceiling); `color` sits slightly cool of
+ * that neutral grey, `sunColor` matches the warm horizon toward the sun, and exponent 5 widens the
+ * lobe toward the sky's broad brightening without washing near ground toward the sun.
+ */
 export const GOLDEN_FOG: FogParams = {
-  color: new THREE.Color(0.62, 0.7, 0.8),
-  sunColor: new THREE.Color(1.0, 0.78, 0.52),
+  color: new THREE.Color(0.15, 0.17, 0.2),
+  sunColor: new THREE.Color(1.4, 0.78, 0.53),
   density: 0.0035,
   heightFalloff: 0.035,
   baseHeight: 0,
-  inscatterExponent: 6,
+  inscatterExponent: 5,
   maxOpacity: 0.92,
 };
 
