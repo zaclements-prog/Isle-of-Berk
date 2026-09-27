@@ -14,6 +14,7 @@ import qa_render as QR  # noqa: E402
 import rig as R  # noqa: E402
 import sculpt as SB  # noqa: E402
 import parts as P  # noqa: E402
+import wings as W  # noqa: E402
 import qa  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(ROOT))
@@ -68,7 +69,19 @@ def stage_model():
     SC.save(os.path.join(BUILD, "toothless_model.blend"))
 
 
-STAGES = {"model": stage_model}   # later tasks add "wings", "tack", "assemble", "export" — in that order
+def stage_wings():
+    rig, body = open_stage("model")
+    sc = bpy.context.scene
+    coll = SC.collection("01_Toothless")
+    for ob in W.build_all(rig, materials()):
+        SC.move_to(ob, coll)
+    print("WINGS folded", W.fold_metrics(rig, [bpy.data.objects["Wing_L"], bpy.data.objects["Wing_R"]]))
+    QR.setup_clay(sc)
+    qa.wing_renders(sc, rig, QA_DIR)
+    SC.save(os.path.join(BUILD, "toothless_wings.blend"))
+
+
+STAGES = {"model": stage_model, "wings": stage_wings}   # later tasks add "tack", "assemble", "export" — in that order
 
 
 def main():

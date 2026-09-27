@@ -23,3 +23,19 @@ def model_renders(sc, out_dir):
     paths += _composite(out_dir, "model_vs_ref_side", "model_side", REF_SIDE)
     paths += _composite(out_dir, "model_vs_ref_front", "model_front", REF_FRONT)
     return paths
+
+
+def wing_renders(sc, rig, out_dir):
+    import rig as R
+    paths = [QR.shoot(sc, out_dir, "wings_spread_top", loc=(0, 0.5, 14.0), target=(0, 0.5, 0.0), ortho=15.5),
+             QR.shoot(sc, out_dir, "wings_spread_hero", loc=(-7.5, -8.0, 5.0), target=(0, 0.3, 1.2))]
+    R.fold_wings(rig, 0.5)
+    paths.append(QR.shoot(sc, out_dir, "wings_half_hero", loc=(-5.0, -5.5, 3.2), target=(0, 0.3, 1.1)))
+    R.reset_pose(rig)
+    R.fold_wings(rig, 1.0)
+    paths += [QR.shoot(sc, out_dir, "wings_folded_hero", loc=(-4.4, -5.0, 2.6), target=(0, 0.2, 1.0)),
+              QR.shoot(sc, out_dir, "wings_folded_side", loc=(9.0, 1.3, 1.1), target=(0, 1.3, 1.1), ortho=7.9),
+              QR.shoot(sc, out_dir, "wings_folded_top", loc=(0, 1.3, 9.0), target=(0, 1.3, 0.0), ortho=7.9)]
+    R.reset_pose(rig)
+    paths += _composite(out_dir, "wings_vs_ref_top", "wings_spread_top", REF_TOP)
+    return paths
