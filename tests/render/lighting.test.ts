@@ -28,6 +28,47 @@ describe('LightingRig', () => {
     expect(shader.uniforms.berkFogColor).toBeDefined();
   });
 
+  it('releaseMaterial() drops a material from CSM (map, defines, base hook) but keeps its fog hook', () => {
+    const rig = buildRig();
+    const m = new THREE.MeshStandardMaterial();
+    rig.setupMaterial(m);
+    applyBerkFog(m);
+    const version = m.version;
+    rig.releaseMaterial(m);
+    expect(rig.csm.shaders.has(m)).toBe(false);
+    const defines = (m as unknown as { defines: Record<string, unknown> }).defines;
+    expect(defines.USE_CSM).toBeUndefined();
+    expect(defines.CSM_CASCADES).toBeUndefined();
+    expect(defines.CSM_FADE).toBeUndefined();
+    expect(defines.BERK_FOG).toBe('');
+    expect(m.version).toBeGreaterThan(version); // needsUpdate → recompiled without CSM
+    const shader = stubShader();
+    m.onBeforeCompile(shader, fakeRenderer);
+    expect(shader.uniforms.berkFogColor).toBeDefined();
+    expect(shader.uniforms.CSM_cascades).toBeUndefined();
+  });
+
+  it('releaseMaterial() restores the default onBeforeCompile when CSM was the only patch', () => {
+    const rig = buildRig();
+    const m = new THREE.MeshStandardMaterial({ fog: false }); // applyBerkFog skips it: no composed hooks
+    rig.setupMaterial(m);
+    applyBerkFog(m);
+    rig.releaseMaterial(m);
+    expect(rig.csm.shaders.has(m)).toBe(false);
+    expect(m.onBeforeCompile).toBe(THREE.Material.prototype.onBeforeCompile);
+  });
+
+  it('releaseMaterial() leaves a material CSM never set up untouched', () => {
+    const rig = buildRig();
+    const m = new THREE.SpriteMaterial();
+    applyBerkFog(m);
+    const hook = m.onBeforeCompile;
+    const version = m.version;
+    rig.releaseMaterial(m);
+    expect(m.onBeforeCompile).toBe(hook);
+    expect(m.version).toBe(version);
+  });
+
   it('dispose() removes CSM but leaves other composed hooks (e.g. fog) working', () => {
     const rig = buildRig();
     const m = new THREE.MeshStandardMaterial();

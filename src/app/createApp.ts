@@ -9,6 +9,7 @@ import { SkySystem } from '../render/sky';
 import { installFogChunks, applyBerkFog, setFogParams, GOLDEN_FOG } from '../render/fog';
 import { createMaterialPipeline, type MaterialPipeline } from '../render/materials';
 import { gpuFence, measureRenderCost, rendererStats } from '../dev/perf';
+import { disposeObject } from '../dev/disposeObject';
 
 export interface App {
   readonly renderer: THREE.WebGLRenderer;
@@ -22,8 +23,29 @@ export interface App {
   readonly loop: GameLoop;
   /** Prepare every material under root (CSM + fog) and add it to the scene. */
   add(root: THREE.Object3D): void;
+  /**
+   * Undo add() for good: release every material under root from CSM, take root out of the scene and
+   * free its GPU resources (disposeObject). root must own everything under it — a geometry, material
+   * or texture shared with an object that stays in the scene is freed too. Don't re-add root.
+   */
+  remove(root: THREE.Object3D): void;
   /** Move the sun: lighting, sky, fog in-scatter and the baked environment follow. */
   setSun(azimuth: number, elevation: number): void;
+}
+
+/** App.remove, exported for tests (createApp itself needs a DOM and a WebGL context). */
+export function removeFromApp(
+  scene: THREE.Scene,
+  lighting: Pick<LightingRig, 'releaseMaterial'>,
+  root: THREE.Object3D,
+): void {
+  root.traverse((o) => {
+    const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (!mat) return;
+    for (const m of Array.isArray(mat) ? mat : [mat]) lighting.releaseMaterial(m);
+  });
+  scene.remove(root);
+  disposeObject(root);
 }
 
 export function createApp(container: HTMLElement): App {
@@ -100,6 +122,9 @@ export function createApp(container: HTMLElement): App {
     add(root) {
       materials.prepareTree(root);
       scene.add(root);
+    },
+    remove(root) {
+      removeFromApp(scene, lighting, root);
     },
     setSun,
   };

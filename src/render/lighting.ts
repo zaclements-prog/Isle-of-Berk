@@ -97,6 +97,31 @@ export class LightingRig {
     adoptBaseCompileHook(m); // ...so fold that assignment back in as the base, whichever ran first
   }
 
+  /**
+   * Undo setupMaterial for one material. CSM keeps every material it set up in its `shaders` map
+   * (and re-uniforms each on every updateFrustums), so a removed asset would otherwise stay reachable
+   * forever. Its CSM defines go, and CSM's onBeforeCompile is dropped from under the composed hooks,
+   * which keep working (fog, wind, ...). No-op for a material CSM never set up. App.remove calls this
+   * for every material under the removed root; dispose() for every material still registered.
+   */
+  releaseMaterial(m: THREE.Material): void {
+    // CSM.shaders is mistyped in @types/three (see dispose()); at runtime its keys are Materials.
+    if (!this.csm.shaders.has(m)) return;
+    this.csm.shaders.delete(m);
+    // CSM assigned its handler as an own property. With no composed hooks it is still there: delete
+    // it (back to the prototype no-op). With hooks, releaseBaseCompileHook reinstalls our wrapper,
+    // now without a base.
+    delete (m as unknown as { onBeforeCompile?: unknown }).onBeforeCompile;
+    releaseBaseCompileHook(m);
+    const defines = (m as THREE.Material & { defines?: Record<string, unknown> }).defines;
+    if (defines) {
+      delete defines.USE_CSM;
+      delete defines.CSM_CASCADES;
+      delete defines.CSM_FADE;
+    }
+    m.needsUpdate = true;
+  }
+
   setSun(azimuth: number, elevation: number): void {
     this.params = { ...this.params, azimuth, elevation };
     sunDirection(azimuth, elevation, this.sunDir);
@@ -113,13 +138,12 @@ export class LightingRig {
 
   dispose(): void {
     // @types/three mistypes CSM.shaders as Map<unknown, string>; at runtime (CSM.js) the keys are
-    // exactly the Materials setupMaterial() was called on. Capture them before csm.dispose() runs
-    // — it does `delete material.onBeforeCompile`, which by now deletes OUR wrapper (not CSM's own
-    // assignment) and would silently strip every other composed hook (fog, wind, ...) too.
-    const materials = [...this.csm.shaders.keys()] as THREE.Material[];
+    // exactly the Materials setupMaterial() was called on. Release each one ourselves first: left to
+    // csm.dispose(), it does `delete material.onBeforeCompile`, which by now deletes OUR wrapper (not
+    // CSM's own assignment) and would silently strip every other composed hook (fog, wind, ...) too.
+    for (const m of [...this.csm.shaders.keys()] as THREE.Material[]) this.releaseMaterial(m);
     this.csm.remove();
-    this.csm.dispose();
-    for (const m of materials) releaseBaseCompileHook(m);
+    this.csm.dispose(); // its material map is empty by now
     this.hemi.removeFromParent();
   }
 }
