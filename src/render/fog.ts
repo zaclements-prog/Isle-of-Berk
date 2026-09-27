@@ -76,12 +76,16 @@ export function installFogChunks(): void {
   C.fog_vertex += `
 #ifdef BERK_FOG
   {
-    vec4 berkWP = vec4(transformed, 1.0);
-    #ifdef USE_BATCHING
-      berkWP = batchingMatrix * berkWP;
-    #endif
-    #ifdef USE_INSTANCING
-      berkWP = instanceMatrix * berkWP;
+    #ifdef BERK_FOG_SPRITE
+      vec4 berkWP = vec4(0.0, 0.0, 0.0, 1.0); // sprites have no per-vertex offset (no begin_vertex/project_vertex): fog at the sprite centre
+    #else
+      vec4 berkWP = vec4(transformed, 1.0);
+      #ifdef USE_BATCHING
+        berkWP = batchingMatrix * berkWP;
+      #endif
+      #ifdef USE_INSTANCING
+        berkWP = instanceMatrix * berkWP;
+      #endif
     #endif
     vBerkWorldPos = (modelMatrix * berkWP).xyz;
   }
@@ -123,6 +127,11 @@ export function applyBerkFog(material: THREE.Material): void {
   const m = material as THREE.Material & { fog?: boolean; defines?: Record<string, unknown> };
   if (m.fog === false) return;
   m.defines = { ...(m.defines ?? {}), BERK_FOG: '' };
+  // SpriteMaterial has no `transformed` (no begin_vertex/project_vertex) — the sprite branch of
+  // fog_vertex falls back to the sprite's local origin instead.
+  if ((material as THREE.SpriteMaterial).isSpriteMaterial) {
+    m.defines.BERK_FOG_SPRITE = '';
+  }
   addCompileHook(material, 'berkfog', (shader) => {
     Object.assign(shader.uniforms, fogUniforms);
   });

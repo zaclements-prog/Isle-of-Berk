@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { berkFogFactor, GOLDEN_FOG, applyBerkFog, fogUniforms } from '../../src/render/fog';
+import { berkFogFactor, GOLDEN_FOG, applyBerkFog, fogUniforms, installFogChunks } from '../../src/render/fog';
 import type { ShaderParams } from '../../src/render/materials';
 
 describe('berkFogFactor', () => {
@@ -45,5 +45,28 @@ describe('applyBerkFog', () => {
     const m = new THREE.MeshBasicMaterial({ fog: false });
     applyBerkFog(m);
     expect((m as unknown as { defines?: Record<string, unknown> }).defines?.BERK_FOG).toBeUndefined();
+  });
+
+  it('also defines BERK_FOG_SPRITE on sprite materials (SpriteMaterial.fog defaults to true)', () => {
+    const m = new THREE.SpriteMaterial();
+    applyBerkFog(m);
+    const defines = (m as unknown as { defines: Record<string, unknown> }).defines;
+    expect(defines.BERK_FOG).toBe('');
+    expect(defines.BERK_FOG_SPRITE).toBe('');
+  });
+});
+
+describe('installFogChunks sprite branch', () => {
+  it('never references `transformed` inside the BERK_FOG_SPRITE branch of fog_vertex', () => {
+    // sprite.glsl.js includes fog_pars_vertex/fog_vertex but has no begin_vertex/project_vertex,
+    // so it never declares `transformed` — the sprite branch must not read it.
+    installFogChunks();
+    const src = THREE.ShaderChunk.fog_vertex;
+    const start = src.indexOf('#ifdef BERK_FOG_SPRITE');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const elseIdx = src.indexOf('#else', start);
+    expect(elseIdx).toBeGreaterThan(start);
+    const spriteBranch = src.slice(start, elseIdx);
+    expect(spriteBranch).not.toContain('transformed');
   });
 });

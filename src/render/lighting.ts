@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CSM } from 'three/addons/csm/CSM.js';
 import type { QualityPreset } from './quality';
 import { sunDirection } from './sun';
+import { adoptBaseCompileHook, releaseBaseCompileHook } from './materials';
 
 export interface LightingParams {
   azimuth: number;
@@ -57,11 +58,13 @@ export class LightingRig {
       l.shadow.normalBias = 0.03;
     }
     this.hemi = new THREE.HemisphereLight(params.skyColor, params.groundColor, params.hemiIntensity);
-    scene.add(this.hemi);
+    scene.add(this.hemi); // exempt from the material pipeline — a light has no material, and needs neither CSM nor Berk fog
   }
 
   setupMaterial(m: THREE.Material): void {
-    if (isLit(m)) this.csm.setupMaterial(m);
+    if (!isLit(m)) return;
+    this.csm.setupMaterial(m); // assigns onBeforeCompile directly, clobbering any composed hooks
+    adoptBaseCompileHook(m); // ...so fold that assignment back in as the base, whichever ran first
   }
 
   setSun(azimuth: number, elevation: number): void {
@@ -79,8 +82,14 @@ export class LightingRig {
   }
 
   dispose(): void {
+    // @types/three mistypes CSM.shaders as Map<unknown, string>; at runtime (CSM.js) the keys are
+    // exactly the Materials setupMaterial() was called on. Capture them before csm.dispose() runs
+    // — it does `delete material.onBeforeCompile`, which by now deletes OUR wrapper (not CSM's own
+    // assignment) and would silently strip every other composed hook (fog, wind, ...) too.
+    const materials = [...this.csm.shaders.keys()] as THREE.Material[];
     this.csm.remove();
     this.csm.dispose();
+    for (const m of materials) releaseBaseCompileHook(m);
     this.hemi.removeFromParent();
   }
 }

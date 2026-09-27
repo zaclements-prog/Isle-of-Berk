@@ -61,7 +61,7 @@ export class SkySystem {
     private params: SkyParams = GOLDEN_SKY,
   ) {
     this.sky = makeSky(params);
-    scene.add(this.sky);
+    scene.add(this.sky); // exempt from the material pipeline — the sky shader needs neither CSM nor Berk fog
     this.pmrem = new THREE.PMREMGenerator(renderer);
   }
 
