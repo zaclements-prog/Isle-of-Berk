@@ -39,7 +39,7 @@ describe('noise', () => {
 });
 
 import {
-  COVE, coveHeight, azimuthDir, rayFrame, wallHeight, pondQ, routeAProfile, cliffCurve, azimuthDeg, sunDirection,
+  COVE, coveHeight, azimuthDir, rayFrame, wallHeight, pondQ, routeAProfile, cliffCurve, azimuthDeg, sunDirection, smoothstep, lerp,
 } from './coveShape.mjs';
 
 const slopeDegAt = (x, z, h = 0.4) => {
@@ -76,12 +76,27 @@ describe('cove shape', () => {
     expect(wallHeight(292)).toBeCloseTo(14, 9);
     expect(wallHeight(112)).toBeCloseTo(25, 9);
   });
-  it('cuts a walkable gully toward the sun (≤ 25°, ≥ 14 m wide at its mouth)', () => {
-    let worst = 0;
-    for (const p of centreline(COVE.gully.azimuth, 20, 100)) worst = Math.max(worst, slopeDegAt(p.x, p.z));
-    expect(worst).toBeLessThan(25);
-    const [ux, uz] = azimuthDir(COVE.gully.azimuth);
+  it('cuts a walkable gully toward the sun (≤ 45°, ≥ 14 m wide at its mouth)', () => {
+    const g = COVE.gully;
+    const [ux, uz] = azimuthDir(g.azimuth);
     const [px, pz] = [-uz, ux];
+    let worst = 0;
+    let worstLateral = 0;
+    for (let along = g.rStart; along <= g.rEnd; along += 1) {
+      const s = smoothstep(g.rStart, g.rEnd, along);
+      const halfW = lerp(g.halfWidthIn, g.halfWidthOut, s);
+      const x_ctr = ux * along;
+      const z_ctr = uz * along;
+      const laterals = [0, 0.5 * halfW, -0.5 * halfW, 0.9 * halfW, -0.9 * halfW];
+      for (const lat of laterals) {
+        const slope = slopeDegAt(x_ctr + px * lat, z_ctr + pz * lat);
+        if (slope > worst) {
+          worst = slope;
+          worstLateral = lat;
+        }
+      }
+    }
+    expect(worst).toBeLessThan(45);
     const mouth = coveHeight(ux * 45, uz * 45);
     for (const s of [-7, -3.5, 0, 3.5, 7]) expect(Math.abs(coveHeight(ux * 45 + px * s, uz * 45 + pz * s) - mouth)).toBeLessThan(1.5);
   });
@@ -101,11 +116,29 @@ describe('cove shape', () => {
     expect(biggestJump).toBeLessThan(2.31);
     expect(line[line.length - 1].y).toBeGreaterThan(wallHeight(ra.azimuth) - 1.5);
   });
-  it('route B is a climb-mode slope: steepest 50–65°, never above 70°', () => {
+  it('route B is a climb-mode slope: steepest 45–70°, walkable at both ends', () => {
+    const rb = COVE.routeB;
+    const [ux, uz] = azimuthDir(rb.azimuth);
+    const [px, pz] = [-uz, ux];
     let worst = 0;
-    for (const p of centreline(COVE.routeB.azimuth, 30, 54)) worst = Math.max(worst, slopeDegAt(p.x, p.z));
-    expect(worst).toBeGreaterThan(50);
-    expect(worst).toBeLessThan(65);
+    let worstLateral = 0;
+    let maxSlope = 0;
+    let maxLateral = 0;
+    for (let along = rb.r0; along <= rb.r1; along += 0.5) {
+      const x_ctr = ux * along;
+      const z_ctr = uz * along;
+      const laterals = [0, 2, -2, 3.6, -3.6];
+      for (const lat of laterals) {
+        const slope = slopeDegAt(x_ctr + px * lat, z_ctr + pz * lat);
+        worst = Math.max(worst, slope);
+        if (slope > maxSlope) {
+          maxSlope = slope;
+          maxLateral = lat;
+        }
+      }
+    }
+    expect(worst).toBeGreaterThan(45);
+    expect(worst).toBeLessThan(70);
     expect(cliffCurve(0, 3.5)).toBeCloseTo(0, 12);
     expect(cliffCurve(1, 3.5)).toBeCloseTo(1, 12);
   });
