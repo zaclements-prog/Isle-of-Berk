@@ -6,6 +6,7 @@ import { createApp } from '../../app/createApp';
 import { createGltfLoader } from '../../render/loaders';
 import { createTestScene } from '../../world/testScene';
 import { debug } from '../../core/debug';
+import { loadDragonAsset, type DragonAsset } from '../../characters/dragon/asset';
 
 const app = createApp(document.getElementById('app')!);
 const controls = new OrbitControls(app.camera, app.renderer.domElement);
@@ -13,11 +14,15 @@ app.camera.position.set(6, 3, 8);
 controls.target.set(0, 1, 0);
 app.loop.addRender(() => controls.update(), 0);
 
-const assetUrl = new URLSearchParams(location.search).get('asset');
+const params = new URLSearchParams(location.search);
+const assetUrl = params.get('asset');
+const charName = params.get('char');
+const showToothless = charName === 'toothless';
+if (charName !== null && !showToothless) console.warn(`[viewer] unknown char '${charName}' (known: toothless)`);
 
 // The grey studio floor is for assets only: the look-dev swatches bring their own ground at y = 0,
 // which the floor would z-fight.
-if (assetUrl) {
+if (assetUrl || showToothless) {
   const floor = new THREE.Mesh(
     new THREE.CircleGeometry(40, 96).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0x7a7f86, roughness: 0.9 }),
@@ -36,6 +41,8 @@ let helper: THREE.SkeletonHelper | null = null;
 const gui = new GUI({ title: 'Asset Viewer' });
 let morphFolder: GUI | null = null;
 let clipFolder: GUI | null = null;
+/** Folders that drive one shown character (Face, Eyes, Skin): they go with it when show() replaces it. */
+let charFolders: GUI[] = [];
 
 function frameObject(obj: THREE.Object3D): void {
   obj.updateMatrixWorld(true);
@@ -108,8 +115,12 @@ function buildClipUi(): void {
   });
 }
 
-async function load(url: string) {
-  const gltf = await loader.loadAsync(url);
+/**
+ * Replace the shown object with root: the previous one goes through app.remove (CSM release + GPU free), and
+ * root gets the clip, morph and skeleton tooling. morphUi: false skips the per-primitive morph sliders (a
+ * character brings its own, one per morph).
+ */
+function show(root: THREE.Object3D, animations: THREE.AnimationClip[], opts = { morphUi: true }) {
   if (current) {
     if (mixer) {
       mixer.stopAllAction();
@@ -117,10 +128,12 @@ async function load(url: string) {
     }
     app.remove(current); // releases its materials from CSM, detaches it and frees its GPU resources
   }
+  for (const f of charFolders) f.destroy();
+  charFolders = [];
   action = null; // it belonged to the old mixer
   helper?.removeFromParent();
   helper?.dispose();
-  current = gltf.scene;
+  current = root;
   current.traverse((o) => {
     const m = o as THREE.Mesh;
     if (m.isMesh) {
@@ -130,15 +143,56 @@ async function load(url: string) {
   });
   app.add(current);
   frameObject(current);
-  clips = gltf.animations;
+  clips = animations;
   mixer = clips.length ? new THREE.AnimationMixer(current) : null;
   helper = new THREE.SkeletonHelper(current);
   helper.visible = state.skeleton;
   (helper.material as THREE.LineBasicMaterial).fog = false; // a dev overlay: keep it crisp under scene.fog (the N8AO fog proxy)
   app.scene.add(helper); // exempt from the material pipeline (Ruling 3)
-  buildMorphUi();
+  if (opts.morphUi) buildMorphUi();
+  else {
+    morphFolder?.destroy();
+    morphFolder = null;
+  }
   buildClipUi();
   return stats();
+}
+
+async function load(url: string) {
+  const gltf = await loader.loadAsync(url);
+  return show(gltf.scene, gltf.animations);
+}
+
+async function loadToothless(): Promise<DragonAsset> {
+  const asset = await loadDragonAsset({
+    glbUrl: 'assets/characters/toothless/toothless.glb',
+    posesUrl: 'assets/characters/toothless/toothless.poses.glb',
+    rigUrl: 'assets/characters/toothless/toothless.rig.json',
+    sunDir: app.lighting.sunDir,
+    prepare: (m) => app.materials.prepare(m),
+  });
+  show(asset.root, [...asset.clips.values()], { morphUi: false });   // one slider per morph, not per primitive
+  playClip('bind');
+  const face = gui.addFolder('Face');
+  const weights: Record<string, number> = Object.fromEntries(asset.morphNames.map((n) => [n, 0]));
+  for (const n of asset.morphNames) face.add(weights, n, 0, 1, 0.01).onChange((w: number) => asset.setMorph(n, w));
+  const u = asset.materials.uniforms;
+  const eyes = gui.addFolder('Eyes');
+  eyes.add(u.pupil, 'value', 0, 1, 0.01).name('pupil');
+  eyes.add(u.eyeGlow, 'value', 0, 1, 0.01).name('glow');
+  eyes.add(u.irisDepth, 'value', 0, 0.2, 0.005).name('iris depth');
+  const skin = gui.addFolder('Skin');
+  skin.add(u.rimStrength, 'value', 0, 1.5, 0.01).name('rim');
+  skin.add(u.scaleBump, 'value', 0, 0.02, 0.0005).name('scale bump (m)');
+  skin.add(u.plasmaGlow, 'value', 0, 1, 0.01).name('plasma glow');
+  charFolders = [face, eyes, skin];
+  debug.register('dragon', {
+    clip: (name: string) => playClip(name),
+    morph: (name: string, w: number) => asset.setMorph(name, w),
+    pupil: (v: number) => { u.pupil.value = v; },
+    stats: () => ({ ...stats(), morphs: asset.morphNames, bones: asset.skeleton.bones.length }),
+  });
+  return asset;
 }
 
 const view = gui.addFolder('View');
@@ -173,13 +227,23 @@ debug.register('viewer', {
     if (mesh?.morphTargetInfluences && i !== undefined) mesh.morphTargetInfluences[i] = weight;
     return i !== undefined;
   },
+  /** Place the orbit camera (world metres) for repeatable captures; returns where it is now. */
+  camera: (position?: [number, number, number], target?: [number, number, number]) => {
+    if (position) app.camera.position.set(...position);
+    if (target) controls.target.set(...target);
+    controls.update();
+    return { position: app.camera.position.toArray(), target: controls.target.toArray() };
+  },
 });
 
-if (assetUrl) {
+if (showToothless) {
+  loadToothless().catch((e) => console.error('[viewer] failed to load Toothless', e));
+} else if (assetUrl) {
   load(assetUrl).catch((e) => console.error('[viewer] failed to load', assetUrl, e));
 } else {
   const test = createTestScene();
   app.add(test.root);
 }
-document.getElementById('hud')!.textContent = `Asset Viewer · ${assetUrl ?? 'look-dev swatches'} · quality: ${app.preset.name}`;
+const subject = showToothless ? 'char:toothless' : (assetUrl ?? 'look-dev swatches');
+document.getElementById('hud')!.textContent = `Asset Viewer · ${subject} · quality: ${app.preset.name}`;
 app.loop.start();

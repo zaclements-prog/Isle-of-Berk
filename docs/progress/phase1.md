@@ -62,3 +62,28 @@ What else changed:
 - The Motion Lab uses the golden-hour rig, not the studio lighting of spec §3.5 (an M5 note).
 - Mouse look is sampled per step (an M5 decision).
 - The CSM lights chunk still needs rebuilding from core: iridescent materials can't compile (the setup guard only reports it), and probe-grid irradiance, the SunLight loop and the point-shadow type guard are missing.
+
+## M2–M4 — Toothless asset (2026-09-27)
+
+![viewer hero](img/toothless/viewer_hero.png) ![viewer face](img/toothless/viewer_face.png)
+![viewer folded](img/toothless/viewer_folded.png) ![viewer snarl](img/toothless/viewer_snarl.png)
+
+Blender QA renders: ![model](img/toothless/model_hero.png) ![vs ref](img/toothless/model_vs_ref_side.png) ![wings spread](img/toothless/wings_spread_hero.png) ![wings folded](img/toothless/wings_folded_hero.png) ![tack](img/toothless/tack_hero.png) ![walk](img/toothless/deform_walk_hero.png)
+
+- Pipeline: headless Blender 5.1 under `pipeline/blender/` (`npm run toothless:build` → stages model → wings → tack → assemble → export; `npm run blender:test`, 43 tests). Sculpt = numpy SDF → OpenVDB → voxel remesh → QuadriFlow (24k-face body), heat weights plus scripted corrections, face shape keys, a `_MASK` vertex attribute (x = ray-traced AO, y = underside, z = dorsal plates).
+- Assets (`public/assets/characters/toothless/`): `toothless.glb` 4,434,716 B (budget 6 MB), **75,798 triangles** (budget 90k), one 101-joint skin, 9 primitives / 9 materials (`skin`, `membrane`, `eye`, `mouth`, `teeth`, `claw`, `prosthetic`, `leather`, `metal`), 9 morphs (`smile`, `snarl`, `nostril_flare`, `blink_L/R`, `squint`, `teeth_out`, `membrane_pleat_L/R`); `toothless.poses.glb` 299,920 B, 6 clips keying every bone (`bind`, `wings_fold_25`, `wings_half`, `wings_fold_75`, `wings_folded`, `jaw_open`); `toothless.rig.json` (chains, limbs + poles + limits, contacts, proxies, anchors, jaw, wings/foldClips, ears, proportions).
+- Engine binding (`src/characters/dragon/`): `validateRig` (every bone reference must resolve; a `RigMeta` stays assignable to Plan 3's `MotionRig`), `createDragonMaterials`, `loadDragonAsset` (binds engine materials by GLB material name, zeroes the file's morph weights, maps bones/clips/morphs). Asset Viewer: `viewer.html?char=toothless` with Face / Eyes / Skin folders and `berk.dragon.{clip, morph, pupil, stats}`.
+
+### Decisions
+
+- **Procedural skin instead of UV bakes** (Ruling 2, amending spec §5.2 step 6 / §5.8): scales are cellular noise sampled triplanar in bind-pose object space (the skinned `position` attribute *is* the bind pose, so they stick to the skin), bump-mapped from screen derivatives; AO and region masks come from `_MASK`. No UV seams or bake steps, and close-ups stay sharp.
+- **LOD0 ≤ 90k triangles** (Ruling 2, amending spec §5.9's 30–40k): the 24k-quad body carries the sculpted forms instead of a baked normal map. One hero LOD in Phase 1 (Ruling 4).
+- **Film-look materials, tuned in the viewer under Khronos PBR Neutral at exposure 1.8** (curve and exposure unchanged). Skin `0x15171d`, roughness 0.62, **specularIntensity 0.5**, clearcoat 0.12, cool sheen 0.45 (`0x35507a`); membrane `0x1b1e26`, roughness 0.78, specularIntensity 0.5, double-sided. Rim `(0.55, 0.68, 0.95)` × 0.35, scale bump 1.5 mm, eyes pupil 0.15 / glow 0.35 / iris depth 0.08. Measured under a frontal sun: with full dielectric reflectance, the sky reflection alone lifted the lit skin to slate grey (flank sRGB ≈ (46, 57, 76); diffuse alone ≈ (0, 3, 28)). At half reflectance it reads navy-black (≈ (26, 37, 59)).
+- **Rim on the geometric normal**, fresnel⁴ × sun-facing. On the scale-bumped normal every scale edge glinted, a blue-white speckle over the whole body. A membrane is a large flat panel, so its rim is scaled to 0.3, or it silvers the whole wing when seen edge-on.
+- **Scale detail fades with the pixel footprint** (full detail up close, gone by ~0.35 cells per pixel): at gameplay distances the 2–3 cm cells aliased into glitter.
+
+### Known gaps (→ Task 9 look pass)
+
+- Sculpt: heavy neutral upper lids read sleepy; the big ear plates stand upright, and the small ones read as side horns; the torso is bulbous rather than panther-like; the lip line is frog-wide.
+- Mouth at rest: the jaw rests slightly open, so a pink band shows along the lip line, with a stair-stepped mouth-material edge (Task 9's `jaw.restCloseRad` closes it).
+- Snarl: the lip peel is weak. Folded wings read as stacked planks. The spread membrane reads as pleated paper (planform targets).
