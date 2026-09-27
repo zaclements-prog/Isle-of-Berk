@@ -61,6 +61,11 @@ export interface MotionTuning {
     phaseStep: number;
     /** Speed (m/s) at which fin flutter reaches full amplitude; it ramps in below this. */
     flutterFullSpeed: number;
+    /** Seconds between random fin/hip-wing twitches (spec §6.9); the next one is scheduled uniformly in [twitchMin, twitchMax). */
+    twitchMin: number;
+    twitchMax: number;
+    /** Velocity impulse (rad/s) applied to one randomly chosen fin/hip-wing spring at each twitch. */
+    twitchImpulse: number;
   };
   breath: {
     calmPerMin: number; exertedPerMin: number; recoverTime: number; amplitudeDeg: number;
@@ -111,7 +116,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05,
   },
   ears: { omega: 16, zeta: 0.35, twitchMin: 1.5, twitchMax: 5, twitchImpulse: 5, gallopBackDeg: 25 },
-  fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5 },
+  fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5, twitchMin: 2, twitchMax: 6, twitchImpulse: 3 },
   breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8, exertionFullSpeed: 10 },
   climb: {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,

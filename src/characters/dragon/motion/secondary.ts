@@ -30,7 +30,7 @@ const _hit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), 
  *   acceleration (counterbalance) and by vertical acceleration (lag), with a gravity droop and a rise in the gallop.
  *   After posing, each segment whose end would dip below the ground lifts; the tail never penetrates.
  * - Ears: springs that lay back in the gallop, plus seeded random twitches.
- * - Hip wings and tail fins: a speed-driven flutter.
+ * - Hip wings and tail fins: a speed-driven flutter, plus seeded random twitches (spec §6.9).
  * - Breathing: a chest pitch at 12 → 40 breaths/min with exertion, recovering slowly; the neck base cancels it.
  */
 export class SecondaryMotion {
@@ -41,7 +41,8 @@ export class SecondaryMotion {
   exertion = 0;
   private breathPhase = 0;
   private time = 0;
-  private nextTwitch: number;
+  private nextEarTwitch: number;
+  private nextFinTwitch: number;
   private readonly tail: number[];
   private readonly radius: number[];
   private readonly chest: number[];
@@ -80,7 +81,8 @@ export class SecondaryMotion {
     const spine = rig.chains.spine;
     this.chest = spine.slice(-2).map((n) => s.id(n));
     this.neckBase = s.id(rig.chains.neck[0]);
-    this.nextTwitch = lerp(t.ears.twitchMin, t.ears.twitchMax, rng());
+    this.nextEarTwitch = lerp(t.ears.twitchMin, t.ears.twitchMax, rng());
+    this.nextFinTwitch = lerp(t.fins.twitchMin, t.fins.twitchMax, rng());
   }
 
   get breathRate(): number {
@@ -101,13 +103,19 @@ export class SecondaryMotion {
       stepSpring(this.tailYaw[k], yawT, omega, t.tail.zeta, dt);
       stepSpring(this.tailPitch[k], pitchT, omega, t.tail.zeta, dt);
     }
-    this.nextTwitch -= dt;
-    if (this.nextTwitch <= 0 && this.ears.length) {
+    this.nextEarTwitch -= dt;
+    if (this.nextEarTwitch <= 0 && this.ears.length) {
       const e = this.ears[Math.min(this.ears.length - 1, Math.floor(this.rng() * this.ears.length))];
       e.s.v += (this.rng() < 0.5 ? -1 : 1) * t.ears.twitchImpulse;
-      this.nextTwitch = lerp(t.ears.twitchMin, t.ears.twitchMax, this.rng());
+      this.nextEarTwitch = lerp(t.ears.twitchMin, t.ears.twitchMax, this.rng());
     }
     for (const e of this.ears) stepSpring(e.s, e.backSign * deg(t.ears.gallopBackDeg) * inp.gallopWeight, t.ears.omega, t.ears.zeta, dt);
+    this.nextFinTwitch -= dt;
+    if (this.nextFinTwitch <= 0 && this.fins.length) {
+      const f = this.fins[Math.min(this.fins.length - 1, Math.floor(this.rng() * this.fins.length))];
+      f.s.v += (this.rng() < 0.5 ? -1 : 1) * t.fins.twitchImpulse;
+      this.nextFinTwitch = lerp(t.fins.twitchMin, t.fins.twitchMax, this.rng());
+    }
     const flutter = deg(t.fins.flutterDeg) * Math.min(1, inp.speed / t.fins.flutterFullSpeed);
     for (const f of this.fins) stepSpring(f.s, flutter * Math.sin(TAU * t.fins.flutterHz * this.time + f.phase), t.fins.omega, t.fins.zeta, dt);
     const target = inp.exertion ?? Math.min(1, inp.speed / t.breath.exertionFullSpeed);
@@ -130,7 +138,11 @@ export class SecondaryMotion {
   /** Tail, ears and fins (nothing downstream depends on them), then FK and the tail's ground avoidance. */
   applyAppendages(s: RigSkeleton): void {
     for (let k = 0; k < this.tail.length; k++) {
-      s.localQuat[this.tail[k]].multiply(_qa.setFromAxisAngle(AZ, this.tailYaw[k].x)).multiply(_qb.setFromAxisAngle(AX, this.tailPitch[k].x));
+      // Write-time clamp (mirrors look.ts's apply()): the spring value can overshoot the target it was driven
+      // toward (it's underdamped), so the WRITTEN angle — not just the target — must respect the rig's chain limit.
+      const yaw = clamp(this.tailYaw[k].x, -this.tailYawLimit, this.tailYawLimit);
+      const pitch = clamp(this.tailPitch[k].x, -this.tailPitchLimit, this.tailPitchLimit);
+      s.localQuat[this.tail[k]].multiply(_qa.setFromAxisAngle(AZ, yaw)).multiply(_qb.setFromAxisAngle(AX, pitch));
     }
     for (const e of this.ears) s.localQuat[e.bone].multiply(_qa.setFromAxisAngle(AX, e.s.x));
     for (const f of this.fins) s.localQuat[f.bone].multiply(_qa.setFromAxisAngle(AX, f.s.x));
@@ -138,13 +150,18 @@ export class SecondaryMotion {
     // Ground avoidance, base → tip: lift each segment whose end would dip below ground + clearance + radius.
     // The probe window (1.5 m up, 4 m down) is a numerical ray-probe range, not a tuning knob (Ruling 14) —
     // generous enough for any slope under the tail, mirroring footPlanner's own auxiliary lift-clearance probes.
+    // The lift itself is capped so the bone's total written pitch (clamped spring value + lift) never exceeds
+    // the rig's chain limit; a segment capped this way still leaves every later segment free to lift up to its
+    // own limit (each is computed independently, from its own spring value and the shared chain-limit budget).
     for (let k = 0; k < this.tail.length; k++) {
       const i = this.tail[k];
       s.tail(i, _p);
       if (!this.world.groundAt(_p.x, _p.z, _p.y + 1.5, 4, _hit)) continue;
       const need = _hit.point.y + this.t.tail.clearance + this.radius[k] - _p.y;
       if (need <= 0) continue;
-      s.localQuat[i].multiply(_qa.setFromAxisAngle(AX, Math.asin(clamp(need / s.length[i], 0, 1))));
+      const pitchNow = clamp(this.tailPitch[k].x, -this.tailPitchLimit, this.tailPitchLimit);
+      const lift = clamp(Math.asin(clamp(need / s.length[i], 0, 1)), 0, this.tailPitchLimit - pitchNow);
+      s.localQuat[i].multiply(_qa.setFromAxisAngle(AX, lift));
       s.fk();
     }
   }

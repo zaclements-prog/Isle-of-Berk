@@ -4,6 +4,7 @@ import { SecondaryMotion, type SecondaryInput } from '../../src/characters/drago
 import { RigSkeleton } from '../../src/characters/dragon/motion/skeleton';
 import { DEFAULT_TUNING } from '../../src/characters/dragon/motion/tuning';
 import { CollisionWorld } from '../../src/world/collision';
+import { twistAngle } from '../../src/characters/dragon/motion/math';
 import { mulberry32 } from '../../src/core/rng';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
 import { box, floor, flatWorld } from '../fixtures/worlds';
@@ -65,5 +66,54 @@ describe('SecondaryMotion', () => {
     run(a, {}, 10);
     run(b, {}, 10);
     expect(a.sec.ears.map((e) => e.s.x)).toEqual(b.sec.ears.map((e) => e.s.x));
+  });
+  it('twitches the fins/hip-wings within [twitchMin, twitchMax], changing spring state, deterministically', () => {
+    const a = make(flatWorld(), 11);
+    const b = make(flatWorld(), 11);
+    const before = DEFAULT_TUNING.fins.twitchMin - 0.1;
+    const after = DEFAULT_TUNING.fins.twitchMax - DEFAULT_TUNING.fins.twitchMin + 0.2;
+    // speed stays 0 throughout, so the flutter target is exactly 0 for every fin — any nonzero spring state
+    // below can only come from a twitch impulse, not the ongoing flutter.
+    run(a, {}, before);
+    run(b, {}, before);
+    expect(a.sec.fins.every((f) => f.s.x === 0 && f.s.v === 0)).toBe(true);
+    run(a, {}, after);
+    run(b, {}, after);
+    expect(a.sec.fins.some((f) => f.s.v !== 0 || f.s.x !== 0)).toBe(true);
+    expect(a.sec.fins.map((f) => f.s.x)).toEqual(b.sec.fins.map((f) => f.s.x));
+    expect(a.sec.fins.map((f) => f.s.v)).toEqual(b.sec.fins.map((f) => f.s.v));
+  });
+  it('keeps every written tail yaw within the rig chain limit through an abrupt high-speed turn', () => {
+    const m = make();
+    const yawLimit = THREE.MathUtils.degToRad(rig.chainLimitsDeg.tail.yaw);
+    const AZ = new THREE.Vector3(0, 0, 1);
+    const q = new THREE.Quaternion();
+    run(m, { yawRate: 3, speed: 10 }, 60 * DT);
+    run(m, { yawRate: -3, speed: 10 }, 60 * DT);
+    for (const n of rig.chains.tail) {
+      const i = m.s.id(n);
+      q.copy(m.s.bindLocalQuat[i]).invert().multiply(m.s.localQuat[i]);
+      const yaw = twistAngle(q, AZ);
+      expect(Math.abs(yaw)).toBeLessThanOrEqual(yawLimit + 1e-6);
+    }
+  });
+  it('caps each tail segment’s written pitch to the rig limit under a tall obstacle, while the tail tip still rises', () => {
+    const tall = CollisionWorld.fromObjects([floor(), box(4, 1.2, 6, 0, 0.6, -3)]);
+    const flat = make(flatWorld());
+    const m = make(tall);
+    run(flat, {}, 1);
+    run(m, {}, 1);
+    const pitchLimit = THREE.MathUtils.degToRad(rig.chainLimitsDeg.tail.pitch);
+    const AX = new THREE.Vector3(1, 0, 0);
+    const q = new THREE.Quaternion();
+    for (const n of rig.chains.tail) {
+      const i = m.s.id(n);
+      q.copy(m.s.bindLocalQuat[i]).invert().multiply(m.s.localQuat[i]);
+      const pitch = twistAngle(q, AX);
+      expect(Math.abs(pitch)).toBeLessThanOrEqual(pitchLimit + 1e-6);
+    }
+    const tipFlat = flat.s.tail(flat.s.id('tail_12'), new THREE.Vector3());
+    const tipObstacle = m.s.tail(m.s.id('tail_12'), new THREE.Vector3());
+    expect(tipObstacle.y).toBeGreaterThan(tipFlat.y);
   });
 });
