@@ -99,27 +99,21 @@ describe('CollisionWorld', () => {
     expect(!contact || contact.depth < 1e-3).toBe(true);
   });
 
-  it('grazes a wall edge diagonally (corner contact)', () => {
+  it('stops at a vertical wall EDGE when the path passes just outside the side face', () => {
+    // wallWorld(2)'s first box spans x ∈ [-5, 5], y ∈ [0, 2], z ∈ [2.5, 3.5]. A sweep along +z at x = 5.2
+    // stays 0.2 m outside the x = 5 side face, so the first contact is the vertical edge (x = 5, z = 2.5):
+    // it happens when the centre reaches z = 2.5 − √(r² − 0.2²).
     const w = wallWorld(2);
-    const radius = 0.3;
-    // Sweep diagonally toward the wall's corner
-    // Wall is at Z=2.5-3.5, height 0-2; sweep diagonally past the corner
-    const from = V(0, 1, 0);
-    const to = V(0, 1, 5);
-    const stats = { queries: 0 };
-    const t = w.sphereCast(from, to, radius, stats);
-    // Should stop before completing the sweep (hits the wall at z≈2.2)
-    expect(t).toBeGreaterThan(0);
-    expect(t).toBeLessThan(1);
-    // Invariant: result point is not inside collision (spec §8.1)
-    const resultPoint = from.clone().lerp(to, t);
-    const contact = w.sphereContact(resultPoint, radius);
-    expect(!contact || contact.depth < 1e-4).toBe(true);
-
-    // Clear sweep: stay below the wall (z < 2.5 - radius = 2.2)
-    const fromClear = V(0, 1, 0);
-    const toClear = V(0, 1, 1.5);
-    const t2 = w.sphereCast(fromClear, toClear, radius);
-    expect(t2).toBe(1);
+    const r = 0.3;
+    const from = V(5.2, 1, 0);
+    const to = V(5.2, 1, 5);
+    const t = w.sphereCast(from, to, r);
+    const zEdge = 2.5 - Math.sqrt(r * r - 0.2 * 0.2); // ≈ 2.2764
+    expect(t * 5).toBeGreaterThan(zEdge - 0.01);
+    expect(t * 5).toBeLessThanOrEqual(zEdge + 1e-6);
+    const c = w.sphereContact(from.clone().lerp(to, t), r);
+    expect(!c || c.depth < 1e-4).toBe(true); // spec §8.1 invariant (Ruling 10 tolerance)
+    // 0.35 m outside the side face the path clears the edge (and the second box) entirely.
+    expect(w.sphereCast(V(5.35, 1, 0), V(5.35, 1, 5), r)).toBe(1);
   });
 });
