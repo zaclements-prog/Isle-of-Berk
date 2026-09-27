@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GameLoop } from '../core/loop';
 import { debug } from '../core/debug';
 import { choosePreset, gpuRendererName, type QualityPreset } from '../render/quality';
-import { createRenderer } from '../render/renderer';
+import { createRenderer, TONE_CURVES, type ToneCurve } from '../render/renderer';
 import { createPostStack, type PostStack } from '../render/post';
 import { LightingRig } from '../render/lighting';
 import { SkySystem } from '../render/sky';
@@ -112,6 +112,14 @@ export function createApp(container: HTMLElement): App {
     exposure: (v?: number) => {
       if (v !== undefined) renderer.toneMappingExposure = v;
       return renderer.toneMappingExposure;
+    },
+    /** Switch the tone curve ('agx' | 'neutral' | 'aces'); returns the current one (the names if unknown). */
+    toneMapping: (name?: ToneCurve) => {
+      if (name !== undefined) {
+        if (!Object.hasOwn(TONE_CURVES, name)) return Object.keys(TONE_CURVES);
+        renderer.toneMapping = TONE_CURVES[name]; // OutputPass rebuilds its define on its next render
+      }
+      return (Object.keys(TONE_CURVES) as ToneCurve[]).find((k) => TONE_CURVES[k] === renderer.toneMapping) ?? null;
     },
     /** N8AO's display mode ('AO' shows the AO term alone); null on presets without AO. */
     aoDisplay: (mode?: N8AODisplayMode) => {

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createPostStack } from '../../src/render/post';
 import { PRESETS } from '../../src/render/quality';
+import { TONE_CURVES } from '../../src/render/renderer';
 
 function stubRenderer(): THREE.WebGLRenderer {
   // No real WebGL context: just enough of the renderer surface for createPostStack + EffectComposer
@@ -42,6 +44,31 @@ describe('createPostStack', () => {
     const fs = buildStack().bloom!.materialHighPassFilter.fragmentShader;
     expect(fs).toContain('clamp( v - luminosityThreshold, 0.0, bloomMaxExcess )');
     expect(fs).not.toContain('gl_FragColor = mix( outputColor, texel, alpha );');
+  });
+
+  it('OutputPass follows a runtime renderer.toneMapping change (berk.toneMapping relies on it)', () => {
+    const output = buildStack().composer.passes.find((p) => (p as OutputPass).isOutputPass) as OutputPass;
+    const renderer = {
+      toneMapping: TONE_CURVES.agx,
+      toneMappingExposure: 1.8,
+      outputColorSpace: THREE.SRGBColorSpace,
+      autoClearColor: true, autoClearDepth: true, autoClearStencil: true,
+      setRenderTarget: () => {}, clear: () => {}, render: () => {},
+    } as unknown as THREE.WebGLRenderer;
+    const target = new THREE.WebGLRenderTarget(4, 4);
+    const frame = () => output.render(renderer, target, target, 0, false);
+    const defines = () => output.material.defines as Record<string, unknown>;
+
+    frame();
+    expect(defines().AGX_TONE_MAPPING).toBe('');
+    for (const [name, define] of [['neutral', 'NEUTRAL_TONE_MAPPING'], ['aces', 'ACES_FILMIC_TONE_MAPPING']] as const) {
+      renderer.toneMapping = TONE_CURVES[name];
+      const version = output.material.version;
+      frame();
+      expect(defines()[define], name).toBe('');
+      expect(defines().AGX_TONE_MAPPING, name).toBeUndefined();
+      expect(output.material.version, name).toBeGreaterThan(version); // recompiled
+    }
   });
 
   it('dispose() frees the bloom pass and the baked LUT texture', () => {
