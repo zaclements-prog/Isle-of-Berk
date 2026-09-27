@@ -151,4 +151,67 @@ describe('FootPlanner', () => {
       expect(Math.hypot(paw.pos.x - n.x, paw.pos.z - n.z)).toBeLessThanOrEqual(DEFAULT_TUNING.planner.forcedStepDist + 1e-9);
     });
   });
+  it('aligns the paw to the surface at plant', () => {
+    const world = rampWorld(15);
+    const p = new FootPlanner(rig, world, DEFAULT_TUNING.planner);
+    p.reset(bodyAt({ pos: V(0, 0, 0) })); // plant off the ramp first, so landing on it is a real swing
+    const body = bodyAt({ pos: V(0, 0, 3) }); // pulls leg 0's neutral stance onto the ramp face
+    const g = gaitOf();
+    g.update(0, DT);
+    p.update(body, g, [0.99, 0, 0, 0], DT); // over-stretch forces an early swing toward the ramp
+    expect(p.paws[0].planted).toBe(false);
+    let guard = 0;
+    while (!p.paws[0].justPlanted && guard++ < 80) {
+      g.update(0, DT);
+      p.update(body, g, SLACK, DT);
+    }
+    expect(p.paws[0].justPlanted).toBe(true);
+    const hit = world.groundAt(p.paws[0].pos.x, p.paws[0].pos.z, p.paws[0].pos.y + 1, 2);
+    if (!hit) throw new Error('expected the ramp fixture to have ground under the landed paw');
+    expect(hit.normal.y).toBeLessThan(0.99); // sanity: actually landed on the sloped face, not flat ground
+    expect(Math.abs(p.paws[0].normal.x - hit.normal.x)).toBeLessThan(1e-6);
+    expect(Math.abs(p.paws[0].normal.y - hit.normal.y)).toBeLessThan(1e-6);
+    expect(Math.abs(p.paws[0].normal.z - hit.normal.z)).toBeLessThan(1e-6);
+  });
+  it('blends smoothly when the target moves mid-swing', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const g = gaitOf();
+    const body = { pos: V(0, 0, 0), heading: 0, velocity: V(0, 0, 1.4), yawRate: 0, up: V(0, 1, 0) };
+    p.reset(body);
+    const LEG = 1;
+    const q = V(0, 0, 0);
+    let guard = 0;
+    while (p.paws[LEG].planted && guard++ < 240) {
+      body.pos.addScaledVector(body.velocity, DT);
+      g.update(body.velocity.length(), DT);
+      p.update(body, g, SLACK, DT);
+    }
+    expect(p.paws[LEG].planted).toBe(false); // sanity: a swing actually started
+    let prevPoint = p.swingPoint(LEG, q).clone();
+    let maxBefore = 0;
+    const afterDeltas: number[] = [];
+    let changed = false;
+    const targetBeforeChange = V(0, 0, 0);
+    guard = 0;
+    while (p.paws[LEG].s < 1 && guard++ < 240) {
+      if (!changed && p.paws[LEG].s >= 0.5) {
+        targetBeforeChange.copy(p.paws[LEG].to);
+        body.velocity.set(0, 0, 2.4); // sudden command change mid-swing
+        changed = true;
+      }
+      body.pos.addScaledVector(body.velocity, DT);
+      g.update(body.velocity.length(), DT);
+      p.update(body, g, SLACK, DT);
+      const pt = p.swingPoint(LEG, q).clone();
+      const d = pt.distanceTo(prevPoint);
+      if (changed) afterDeltas.push(d);
+      else maxBefore = Math.max(maxBefore, d);
+      prevPoint = pt;
+    }
+    expect(changed).toBe(true); // sanity: the change landed mid-swing, before freezeRetargetAt
+    expect(p.paws[LEG].to.distanceTo(targetBeforeChange)).toBeGreaterThanOrEqual(0.1);
+    expect(Math.max(...afterDeltas)).toBeLessThanOrEqual(3 * maxBefore);
+    expect(p.paws[LEG].planted).toBe(true);
+    expect(p.paws[LEG].pos.distanceTo(p.paws[LEG].to)).toBeLessThan(1e-9);
+  });
 });

@@ -14,6 +14,10 @@ export interface MotionTuning {
     forcedStepDist: number; forcedSwingTime: number; forcedLift: number;
     overstretch: number; clearance: number; minSwingTime: number; maxAirborne: number; maxStepUp: number; maxStepDown: number;
     reachFrac: number; sideLead: number; strainLookahead: number;
+    /** Fraction of a leg's fore-aft envelope the Raibert lead may use (distinct from reachFrac, the 3D hip-reach limit). */
+    leadEnvelopeFrac: number;
+    /** Cap (s) on an over-stretch recovery swing while moving, so a stretched leg re-plants quickly. */
+    overstretchSwingMax: number;
   };
   body: {
     heightOmega: number; tiltOmega: number; maxTiltDeg: number;
@@ -61,7 +65,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     raibertGain: 0.45, castUp: 0.8, castDown: 1.8, maxSlopeDeg: 75, edgeDrop: 0.15, edgeProbe: 0.1, candidateOffset: 0.12,
     retargetHalfLife: 0.04, freezeRetargetAt: 0.8, forcedStepDist: 0.2, forcedSwingTime: 0.28,
     forcedLift: 0.09, overstretch: 0.97, clearance: 0.05, minSwingTime: 0.12, maxAirborne: 2, maxStepUp: 0.6, maxStepDown: 1.0,
-    reachFrac: 0.9, sideLead: 0.2, strainLookahead: 3,
+    reachFrac: 0.9, sideLead: 0.2, strainLookahead: 3, leadEnvelopeFrac: 0.9, overstretchSwingMax: 0.4,
   },
   body: {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,

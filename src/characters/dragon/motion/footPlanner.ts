@@ -60,6 +60,7 @@ const _probe: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3()
 const _foot: Foothold = { point: new THREE.Vector3(), normal: new THREE.Vector3(), ok: false };
 const OFFSETS_FULL: ReadonlyArray<[number, number]> = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
 const OFFSETS_ONE: ReadonlyArray<[number, number]> = [[0, 0]];
+const EDGE_DIRS: ReadonlyArray<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 /**
  * Plant/swing state machine for the four paws (spec §6.4). Lift-off comes from the gait phase (stance → swing),
@@ -126,7 +127,7 @@ export class FootPlanner {
     rotY(this.neutral[i], heading + body.yawRate * stance * t.raibertGain, _a).sub(out); // rotational lead
     rotY(body.velocity, body.yawRate * remaining, _c).multiplyScalar(stance * t.raibertGain); // linear lead
     _a.add(_c);
-    const along = clamp(_a.x * fx + _a.z * fz, -0.9 * this.envBackward[i], 0.9 * this.envForward[i]);
+    const along = clamp(_a.x * fx + _a.z * fz, -t.leadEnvelopeFrac * this.envBackward[i], t.leadEnvelopeFrac * this.envForward[i]);
     const side = clamp(_a.x * fz - _a.z * fx, -t.sideLead, t.sideLead);
     out.add(body.pos).addScaledVector(body.velocity, remaining);
     out.x += along * fx + side * fz;
@@ -255,7 +256,7 @@ export class FootPlanner {
       const p = this.paws[i];
       if (!p.planted || p.justPlanted || (stopped && airborne >= t.maxAirborne)) continue;
       if (stretch[i] > t.overstretch) {
-        this.lift(i, body, gait, stopped ? t.forcedSwingTime : Math.min(gait.swingDuration, 0.4), stopped);
+        this.lift(i, body, gait, stopped ? t.forcedSwingTime : Math.min(gait.swingDuration, t.overstretchSwingMax), stopped);
         airborne++;
       }
     }
@@ -355,8 +356,8 @@ export class FootPlanner {
   /** A spot is an edge when any probe around it misses or sits more than edgeDrop above/below it. */
   private isEdge(point: THREE.Vector3, up: THREE.Vector3): boolean {
     const r = this.t.edgeProbe;
-    for (const [dx, dz] of [[r, 0], [-r, 0], [0, r], [0, -r]] as const) {
-      _c.set(point.x + dx, point.y, point.z + dz);
+    for (const [ux, uz] of EDGE_DIRS) {
+      _c.set(point.x + ux * r, point.y, point.z + uz * r);
       if (!this.cast(_c, up, _probe)) return true;
       const dh = (_probe.point.x - point.x) * up.x + (_probe.point.y - point.y) * up.y + (_probe.point.z - point.z) * up.z;
       if (Math.abs(dh) > this.t.edgeDrop) return true;
