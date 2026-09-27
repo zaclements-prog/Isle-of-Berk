@@ -12,7 +12,40 @@ export interface DragonAsset {
   clips: Map<string, THREE.AnimationClip>;
   morphNames: string[];
   setMorph(name: string, weight: number): void;
+  /** Blink one eye, w in [0, 1] (clamped): blends the rig's three blink keys piecewise-linearly (blinkWeights). */
+  setBlink(side: 'L' | 'R', w: number): void;
   materials: DragonMaterials;
+}
+
+/**
+ * Blink weight w in [0, 1] (clamped) -> weights of the keys at 1/3, 2/3 and all of the blink. Each key is a true
+ * partial blink (the lid rotated that far), so the lid follows its arc instead of cutting through the eye, as one
+ * linear morph of a large rotation would.
+ */
+export function blinkWeights(w: number): [number, number, number] {
+  const t = Math.min(1, Math.max(0, w));
+  if (t <= 1 / 3) return [3 * t, 0, 0];
+  if (t <= 2 / 3) return [2 - 3 * t, 3 * t - 1, 0];
+  return [0, 3 - 3 * t, 3 * t - 2];
+}
+
+/**
+ * The jaw's rest: the sculpt keeps the mouth ajar at bind, so turn the jaw bone by rig.jaw.restCloseRad about its
+ * local X, and every clip's jaw rotation with it (clips hold absolute local rotations authored from the bind pose;
+ * playing `bind` would otherwise reopen the mouth). Opening angles stay measured from the closed rest.
+ */
+function closeJawAtRest(bones: Map<string, THREE.Bone>, clips: THREE.AnimationClip[], rig: RigMeta): void {
+  const close = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rig.jaw.restCloseRad);
+  bones.get(rig.jaw.bone)?.quaternion.multiply(close);
+  const q = new THREE.Quaternion();
+  for (const clip of clips) {
+    for (const track of clip.tracks) {
+      if (track.name !== `${rig.jaw.bone}.quaternion`) continue;
+      for (let i = 0; i < track.values.length; i += 4) {
+        q.fromArray(track.values, i).multiply(close).toArray(track.values, i);
+      }
+    }
+  }
 }
 
 /**
@@ -75,6 +108,13 @@ export async function loadDragonAsset(opts: {
     if (m.morphTargetInfluences) m.morphTargetInfluences.fill(0); // never trust file default weights
   }
   const morphNames = Object.keys(meshes[0].morphTargetDictionary ?? {});
+  closeJawAtRest(bones, poses.animations, rig);
+  const setMorph = (name: string, weight: number) => {
+    for (const m of meshes) {
+      const i = m.morphTargetDictionary?.[name];
+      if (i !== undefined && m.morphTargetInfluences) m.morphTargetInfluences[i] = weight;
+    }
+  };
   return {
     root: gltf.scene,
     meshes,
@@ -83,11 +123,10 @@ export async function loadDragonAsset(opts: {
     rig,
     clips: new Map(poses.animations.map((c) => [c.name, c])),   // tracks bind to bones by name
     morphNames,
-    setMorph(name, weight) {
-      for (const m of meshes) {
-        const i = m.morphTargetDictionary?.[name];
-        if (i !== undefined && m.morphTargetInfluences) m.morphTargetInfluences[i] = weight;
-      }
+    setMorph,
+    setBlink(side, w) {
+      const weights = blinkWeights(w);
+      rig.blink[side].forEach((name, k) => setMorph(name, weights[k]));
     },
     materials,
   };

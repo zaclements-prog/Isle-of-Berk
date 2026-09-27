@@ -5,6 +5,7 @@ import qa_render as QR
 REF_SIDE = r"C:\Users\zacle\Pictures\Screenshots\Screenshot 2026-06-12 155402.png"
 REF_TOP = r"C:\Users\zacle\Pictures\Screenshots\Screenshot 2026-06-12 155348.png"
 REF_FRONT = r"C:\Users\zacle\dragon-walk\tools\ref_dtv.png"
+REF_THREE_QUARTER = r"C:\Users\zacle\Pictures\Screenshots\Screenshot 2026-06-12 155430.png"
 
 
 def _composite(out_dir, name, render, ref):
@@ -91,6 +92,39 @@ FACE_POSES = {"blink": {"blink_L": 1, "blink_R": 1}, "squint": {"squint": 1}, "s
               "snarl": {"snarl": 1, "teeth_out": 1}, "roar": {"teeth_out": 1}}
 
 
+def close_jaw_at_rest(rig, jaw=0.0):
+    """The engine's rest jaw: the lips meet (anatomy.JAW_REST_CLOSE_RAD about the jaw's local X, composed with any
+    opening — both about the same axis, so they add)."""
+    import bpy
+    import anatomy as A
+    pb = rig.pose.bones["jaw"]
+    pb.rotation_mode = "XYZ"
+    pb.rotation_euler = (A.JAW_REST_CLOSE_RAD + A.JAW_OPEN_SIGN * 0.62 * jaw, 0.0, 0.0)
+    bpy.context.view_layer.update()
+
+
+def look_renders(sc, rig, out_dir):
+    """The look pass's clay set (Task 9), the mouth closed at rest as in the engine: hero (wings folded), face
+    close-up, and side / three-quarter with the wings spread beside the film references (the raw side and
+    three-quarter frames are only composite inputs)."""
+    import rig as R
+    R.reset_pose(rig)
+    R.fold_wings(rig, 1.0)
+    close_jaw_at_rest(rig)
+    paths = [QR.shoot(sc, out_dir, "look_hero", loc=(-4.4, -5.0, 2.6), target=(0, 0.2, 1.0)),
+             QR.shoot(sc, out_dir, "look_face", loc=(-1.45, -2.75, 1.55), target=(0, -1.9, 1.45), lens=50)]
+    R.reset_pose(rig)
+    close_jaw_at_rest(rig)
+    raw = [QR.shoot(sc, out_dir, "_look_side", loc=(9.0, 1.3, 1.1), target=(0, 1.3, 1.1), ortho=7.9),
+           QR.shoot(sc, out_dir, "_look_three_quarter", loc=(-8.2, -3.6, 2.3), target=(0, 0.9, 0.8), lens=35)]
+    R.reset_pose(rig)
+    paths += _composite(out_dir, "look_side_vs_ref", "_look_side", REF_SIDE)
+    paths += _composite(out_dir, "look_three_quarter_vs_ref", "_look_three_quarter", REF_THREE_QUARTER)
+    for p in raw:
+        os.remove(p)
+    return paths
+
+
 def deform_renders(sc, rig, body, out_dir):
     import rig as R
     keys = body.data.shape_keys.key_blocks
@@ -99,8 +133,7 @@ def deform_renders(sc, rig, body, out_dir):
     def pose(bones, fold=1.0, jaw=0.0):
         R.reset_pose(rig)
         R.fold_wings(rig, fold)
-        if jaw:
-            R.pose_jaw(rig, jaw)
+        close_jaw_at_rest(rig, jaw)
         for name, rot in bones.items():
             pb = rig.pose.bones[name]
             pb.rotation_mode = "XYZ"

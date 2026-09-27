@@ -111,13 +111,16 @@ def _row_vert(mb, row, p, w, pleat):
 
 def fan_panels(mb, hub, tips, ribs, scallop, billow, down, nu=14, nv=6, hub_weights=None, hub_zone=0.08, mat=0,
                pleat=0.0):
-    """Panels between consecutive ribs. `down` = unit vector the membrane billows toward; `pleat` = accordion
+    """Panels between consecutive ribs. `scallop` = trailing-edge cut depth (fraction of the way to the hub), one
+    for every panel or a list per panel; `down` = unit vector the membrane billows toward; `pleat` = accordion
     offset amplitude for the pleat key (panel i bulges along +down when i is even, -down when odd)."""
     hub = _vec(hub)
     tips = [_vec(t) for t in tips]
     down = _vec(down)
+    scallops = list(scallop) if isinstance(scallop, (list, tuple)) else [scallop] * (len(tips) - 1)
     for i in range(len(tips) - 1):
         sign = 1 if i % 2 == 0 else -1
+        scallop = scallops[i]
         grid = []
         for iu in range(nu + 1):
             u = iu / nu
@@ -225,7 +228,7 @@ def build_main_wing(rig, M, s, sfx):
     ribs = [(f"wing_rib{i + 1}_a_{sfx}", f"wing_rib{i + 1}_b_{sfx}") for i in range(len(tips))]
     humerus, forearm = f"wing_humerus_{sfx}", f"wing_forearm_{sfx}"
     mb = MeshBuilder()
-    fan_panels(mb, hub, tips, ribs, W["scallop"], W["billow"], (0, 0, -1), hub_weights={forearm: 1.0}, pleat=0.035)
+    fan_panels(mb, hub, tips, ribs, W["scallop"], W["billow"], (0, 0, -1), hub_weights={forearm: 1.0}, pleat=0.05)
     attach = [m(p) for p in W["attach"]]
     last = tips[-1]
 
@@ -273,7 +276,7 @@ def build_main_wing(rig, M, s, sfx):
         return _blend((1 - g, base), (g, rib_weights(ribs[-1], t)))
 
     coons_panel(mb, top=arm, bottom=trailing, left=lambda t: root, right=lambda t: hub.lerp(last, t),
-                weight_fn=weights, ni=14, nj=10, sag=0.1, pleat=0.03)
+                weight_fn=weights, ni=14, nj=10, sag=0.06, pleat=0.045)
     spar(mb, root, elbow, 0.075, 0.055, {humerus: 1.0}, mat=1)
     spar(mb, elbow, hub, 0.055, 0.036, {forearm: 1.0}, mat=1)
     for i, tip in enumerate(tips):

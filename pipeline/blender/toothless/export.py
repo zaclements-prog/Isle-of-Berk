@@ -68,7 +68,9 @@ def rig_json(rig, mesh):
         "limbs": limbs, "contacts": contacts,
         "proxies": [{"name": n, "bone": b, "center": G(c), "radius": r} for n, b, c, r in A.PROXIES],
         "anchors": {k: {"bone": b, "position": G(p)} for k, (b, p) in A.ANCHORS.items()},
-        "jaw": {"bone": "jaw", "openSign": A.JAW_OPEN_SIGN, "maxOpenRad": 0.62},
+        "jaw": {"bone": "jaw", "openSign": A.JAW_OPEN_SIGN, "maxOpenRad": 0.62, "restCloseRad": A.JAW_REST_CLOSE_RAD},
+        # blink keys per eye at 1/3, 2/3 and all of the blink (parts.BLINK_STEPS): blend piecewise-linearly
+        "blink": {side: [f"blink_{side}_a", f"blink_{side}_b", f"blink_{side}"] for side in ("L", "R")},
         "chainLimitsDeg": A.CHAIN_LIMITS,
         "wings": {side: {"humerus": f"wing_humerus_{side}", "forearm": f"wing_forearm_{side}", "thumb": f"wing_thumb_{side}",
                          "ribs": [[f"wing_rib{i}_a_{side}", f"wing_rib{i}_b_{side}"] for i in range(1, 8)],

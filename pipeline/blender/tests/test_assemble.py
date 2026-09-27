@@ -74,6 +74,34 @@ class AssembleHelperTests(unittest.TestCase):
         bind({"tail_07": 16})
         AS.check_heat_weights(body, rig)
 
+    def test_seal_lips_hands_the_lower_lip_to_the_jaw_and_the_upper_to_the_head(self):
+        """Around the lips the jaw's weight becomes the sculpt's opening weight: 1 on the lower lip (it closes with the
+        full rest rotation), 0 on the upper; far from the mouth nothing changes."""
+        import anatomy as A
+        SC.reset()
+        front = SB.MOUTH_LINE_L[0]
+        h = SB.slit_opening(front[1])
+        pts = [(0.0, front[1] + 0.01, SB.MOUTH_Z + 0.01),        # upper lip
+               (0.0, front[1] + 0.01, SB.MOUTH_Z - h - 0.01),    # lower lip (the bind slit's floor is h down)
+               (0.3, 0.0, 1.0)]                                  # the flank
+        me = bpy.data.meshes.new("body")
+        me.from_pydata(pts, [], [])
+        body = bpy.data.objects.new("body", me)
+        bpy.context.scene.collection.objects.link(body)
+        for name in ("jaw", "head", "spine_02"):
+            body.vertex_groups.new(name=name)
+        body.vertex_groups["jaw"].add([0, 1], 0.5, "REPLACE")
+        body.vertex_groups["head"].add([0, 1], 0.5, "REPLACE")
+        body.vertex_groups["spine_02"].add([2], 1.0, "REPLACE")
+        self.assertEqual(AS.seal_lips(body), 2)
+        w = lambda i, g: body.vertex_groups[g].weight(i)
+        self.assertAlmostEqual(w(0, "jaw"), 0.0, places=3)
+        self.assertAlmostEqual(w(0, "head"), 1.0, places=3)
+        self.assertAlmostEqual(w(1, "jaw"), 1.0, places=3)
+        self.assertAlmostEqual(w(1, "head"), 0.0, places=3)
+        self.assertAlmostEqual(w(2, "spine_02"), 1.0, places=6)
+        self.assertGreater(A.JAW_REST_CLOSE_RAD, 0.0)
+
     def test_dorsal_weight_marks_spike_bases_only(self):
         spikes = SB.dorsal_spikes()
         base = Vector(spikes[10][0])

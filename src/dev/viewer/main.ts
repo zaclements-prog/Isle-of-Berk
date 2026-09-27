@@ -178,6 +178,10 @@ async function loadToothless(): Promise<DragonAsset> {
   for (const n of asset.morphNames) face.add(weights, n, 0, 1, 0.01).onChange((w: number) => asset.setMorph(n, w));
   const u = asset.materials.uniforms;
   const eyes = gui.addFolder('Eyes');
+  const blink = { L: 0, R: 0 };
+  for (const side of ['L', 'R'] as const) {
+    eyes.add(blink, side, 0, 1, 0.01).name(`blink ${side}`).onChange((w: number) => asset.setBlink(side, w));
+  }
   eyes.add(u.pupil, 'value', 0, 1, 0.01).name('pupil');
   eyes.add(u.eyeGlow, 'value', 0, 1, 0.01).name('glow');
   eyes.add(u.irisDepth, 'value', 0, 0.2, 0.005).name('iris depth');
@@ -189,6 +193,7 @@ async function loadToothless(): Promise<DragonAsset> {
   debug.register('dragon', {
     clip: (name: string) => playClip(name),
     morph: (name: string, w: number) => asset.setMorph(name, w),
+    blink: (side: 'L' | 'R', w: number) => asset.setBlink(side, w),
     pupil: (v: number) => { u.pupil.value = v; },
     stats: () => ({ ...stats(), morphs: asset.morphNames, bones: asset.skeleton.bones.length }),
   });

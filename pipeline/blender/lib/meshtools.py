@@ -1,8 +1,10 @@
 """Mesh utilities for the asset pipeline (Blender)."""
+import math
 import bpy
 import bmesh
 import numpy as np
 from mathutils import Vector, kdtree
+from mathutils.bvhtree import BVHTree
 
 
 def select_only(ob):
@@ -156,22 +158,104 @@ def canonical_order(ob, quantum=1e-5):
     return n
 
 
-def quadriflow(ob, target_faces, symmetry=True, seed=0):
+def _quadriflow_once(ob, request, symmetry, seed):
     select_only(ob)
     ob.data.use_mirror_x = symmetry
-    result = bpy.ops.object.quadriflow_remesh(use_mesh_symmetry=symmetry, mode="FACES", target_faces=target_faces, seed=seed)
+    result = bpy.ops.object.quadriflow_remesh(use_mesh_symmetry=symmetry, mode="FACES", target_faces=request, seed=seed)
     if result != {"FINISHED"}:
         raise RuntimeError("QuadriFlow refused the mesh — run manifold_voxel_remesh + clean_degenerate first")
-    if symmetry:
-        # Blender's symmetric mode remeshes one half and mirrors it WITHOUT welding: two islands meeting along
-        # X = 0 as open boundaries (seen in Blender 5.1). Weld them into one closed surface.
-        weld_mirror_seam(ob)
-    canonical_order(ob)
-    left = unfold(ob, mirror_x=symmetry)
-    if left:
-        raise RuntimeError(f"QuadriFlow left {left} folded faces after repair (see meshtools.unfold)")
+    return len(ob.data.polygons)
+
+
+def surface_deviation(src_points, ob, q=99.0):
+    """The q-th percentile distance (metres) from `src_points` (points on the surface QuadriFlow was given) to the
+    object's surface: how much of the input shape the remesh lost."""
+    bvh = BVHTree.FromPolygons([v.co for v in ob.data.vertices], [p.vertices for p in ob.data.polygons])
+    return float(np.percentile([bvh.find_nearest(p)[3] for p in src_points], q))
+
+
+def crease_fraction(src_bvh, ob, max_angle=35.0):
+    """Fraction of the object's vertices whose normal turns more than `max_angle` degrees from the input surface's
+    at the nearest point: a narrow crease or crumpled band the distance percentiles barely register."""
+    ob.data.update()
+    limit = math.radians(max_angle)
+    bad = sum(1 for v in ob.data.vertices if v.normal.length > 0 and v.normal.angle(src_bvh.find_nearest(v.co)[1]) > limit)
+    return bad / max(1, len(ob.data.vertices))
+
+
+QUADRIFLOW_JITTER = (1.0, 1.05, 0.95, 1.1, 0.9, 1.15, 0.85, 1.2, 0.8)
+
+
+def quadriflow(ob, target_faces, symmetry=True, seed=0, tolerance=0.08, max_dev=0.016, max_crease=0.005, tries=10):
+    """QuadriFlow remesh to ~target_faces quads, then weld the mirrored halves, canonicalise the order and repair folds.
+
+    QuadriFlow is a chaotic function of its input and request: the look-pass body came out at 14.5k faces for 24k
+    requested (the Task 3 body at 22.3k), and at 39.6k requested it came out at 24.8k faces but with the waist
+    pinched shut — in symmetric mode it remeshes a half-body whose cut boundary it may drag off the midline, and
+    the mirror seam then sinks up to 17 cm somewhere (belly, chin, waist: a different place per request; p99
+    input->output distance 23-200 mm, against 4-16 mm for a sound remesh); other draws crease a band of quads (one
+    ringed the waist: 0.9 % of the vertices turned > 35 deg from the input's normals, against 0.2-0.3 % on sound
+    draws, all at the sculpted eye and mouth edges) or leave folds the repair cannot undo. So each attempt must pass
+    four checks: the face count within `tolerance` of target_faces, the p99 distance from the input surface to the
+    result within `max_dev`, at most `max_crease` of the vertices creased, and a complete fold repair. The next
+    request aims at target_faces through the median output/request ratio seen so far, stepped through
+    QUADRIFLOW_JITTER after each shape or fold failure. Deterministic: the same input gives the same requests.
+    Returns {"request", "faces", "dev_p99_mm", "crease_pct", "attempts"}."""
+    src = ob.data.copy()
+    name = ob.data.name
+    points = [v.co.copy() for v in src.vertices][::7]
+    src_bvh = BVHTree.FromPolygons([v.co for v in src.vertices], [p.vertices for p in src.polygons])
+    request, done, log, ratios, misses, tried = target_faces, None, [], [], 0, {target_faces}
+    try:
+        for attempt in range(tries):
+            if attempt:
+                spent = ob.data
+                ob.data = src.copy()
+                bpy.data.meshes.remove(spent)
+                ob.data.name = name
+            _quadriflow_once(ob, request, symmetry, seed)
+            if symmetry:
+                # Blender's symmetric mode remeshes one half and mirrors it WITHOUT welding: two islands meeting
+                # along X = 0 as open boundaries (seen in Blender 5.1). Weld them into one closed surface.
+                weld_mirror_seam(ob)
+            got = len(ob.data.polygons)
+            ratios.append(got / request)
+            dev = surface_deviation(points, ob)
+            crease = crease_fraction(src_bvh, ob)
+            verdict = "ok"
+            if dev > max_dev:
+                verdict = "shape lost"
+            elif crease > max_crease:
+                verdict = "creased"
+            elif abs(got - target_faces) > tolerance * target_faces:
+                verdict = "count"
+            else:
+                canonical_order(ob)
+                left = unfold(ob, mirror_x=symmetry)
+                if left:
+                    verdict = f"{left} folds left"
+            log.append(f"request {request} -> {got} faces, p99 {dev * 1000:.1f} mm, creased {crease:.2%}: {verdict}")
+            print(f"quadriflow attempt {attempt + 1}: {log[-1]}")
+            if verdict == "ok":
+                done = {"request": request, "faces": got, "dev_p99_mm": round(dev * 1000, 1),
+                        "crease_pct": round(100 * crease, 2), "attempts": attempt + 1}
+                break
+            if verdict != "count":
+                misses += 1
+            aim = target_faces / float(np.median(ratios))
+            while True:
+                request = int(round(aim * QUADRIFLOW_JITTER[misses % len(QUADRIFLOW_JITTER)]))
+                if request not in tried:
+                    break
+                misses += 1
+            tried.add(request)
+    finally:
+        bpy.data.meshes.remove(src)
+    if done is None:
+        raise RuntimeError(f"QuadriFlow found no sound remesh of {ob.name} in {tries} attempts: {log}")
     for p in ob.data.polygons:
         p.use_smooth = True
+    return done
 
 
 def mesh_report(ob):

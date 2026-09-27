@@ -20,7 +20,10 @@ export interface RigMeta {
   contacts: Record<LimbKey, RigContact>;
   proxies: RigProxy[];
   anchors: Record<string, RigAnchor>;
-  jaw: { bone: string; openSign: 1 | -1; maxOpenRad: number };
+  /** restCloseRad: rotation about the jaw's local X that closes the lips at rest (the sculpt keeps the mouth ajar). */
+  jaw: { bone: string; openSign: 1 | -1; maxOpenRad: number; restCloseRad: number };
+  /** Per eye, the blink morphs at 1/3, 2/3 and all of the blink: DragonAsset.setBlink blends them piecewise. */
+  blink: Record<'L' | 'R', [string, string, string]>;
   chainLimitsDeg: Record<'spine' | 'neck' | 'tail', { pitch: number; yaw: number; roll: number }>;
   wings: Record<'L' | 'R', RigWing>;
   ears: Record<'L' | 'R', string[]>;
@@ -31,7 +34,10 @@ export interface RigMeta {
 
 const LIMBS: LimbKey[] = ['front_L', 'front_R', 'hind_L', 'hind_R'];
 
-/** Checks the version and that every bone reference resolves to a bone in `bones`; throws naming the first bad one. */
+/**
+ * Checks the version, that every bone reference resolves to a bone in `bones` and every blink key to a listed morph,
+ * and the jaw's rest close; throws naming the first bad one.
+ */
 export function validateRig(raw: unknown): RigMeta {
   const r = raw as RigMeta;
   if (!r || r.version !== 1) throw new Error(`rig.json: unsupported version ${(r as { version?: unknown })?.version}`);
@@ -48,10 +54,15 @@ export function validateRig(raw: unknown): RigMeta {
   r.proxies.forEach((p) => need(`proxy ${p.name}`, p.bone));
   for (const [k, a] of Object.entries(r.anchors)) need(`anchor ${k}`, a.bone);
   need('jaw', r.jaw.bone);
+  if (!Number.isFinite(r.jaw.restCloseRad)) throw new Error('rig.json: jaw.restCloseRad missing');
+  const morphs = new Set(r.morphs);
   for (const side of ['L', 'R'] as const) {
     const w = r.wings[side];
     [w.humerus, w.forearm, w.thumb, ...w.ribs.flat(), ...w.hipRibs, ...w.finRibs].forEach((b) => need(`wing ${side}`, b));
     r.ears[side].forEach((b) => need(`ear ${side}`, b));
+    const keys = r.blink?.[side];
+    if (!keys || keys.length !== 3) throw new Error(`rig.json: blink ${side} must list 3 morphs`);
+    for (const k of keys) if (!morphs.has(k)) throw new Error(`rig.json: blink ${side} references missing morph '${k}'`);
   }
   return r;
 }

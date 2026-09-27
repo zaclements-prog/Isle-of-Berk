@@ -24,8 +24,11 @@ class MeshToolsTests(unittest.TestCase):
         MT.clean_degenerate(ob)
         rep = MT.mesh_report(ob)
         self.assertEqual((rep["boundary_edges"], rep["nonmanifold_edges"], rep["islands"], rep["short_edges"]), (0, 0, 1, 0))
-        MT.quadriflow(ob, 2000)
+        src = [v.co.copy() for v in ob.data.vertices]
+        remesh = MT.quadriflow(ob, 2000)
         self.assertTrue(1500 <= len(ob.data.polygons) <= 2600, len(ob.data.polygons))
+        self.assertEqual(remesh["faces"], len(ob.data.polygons))
+        self.assertLess(MT.surface_deviation(src, ob), 0.02)
         self.assertLess(MT.symmetry_error(ob), 0.01)
         rep = MT.mesh_report(ob)   # the mirrored halves must come back welded into one closed surface
         self.assertEqual((rep["boundary_edges"], rep["nonmanifold_edges"], rep["islands"]), (0, 0, 1))

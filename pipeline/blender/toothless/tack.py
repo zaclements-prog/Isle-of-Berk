@@ -210,12 +210,14 @@ def build_all(rig, body, M):
     _bind(strap, rig, lambda co: {"pedal_L": 1.0} if co.z < edge.z - 0.1 else {"saddle": 1.0})
     objs += [pedal, strap]
 
-    # fin-linkage cable: pedal -> along the left flank -> along the tail's upper left -> the prosthetic fin hub
+    # fin-linkage cable: pedal -> along the left flank -> along the tail's upper left -> the prosthetic fin hub.
+    # The flank samples are cast sideways at the pedal's height: the panther waist is too slim for a drop from above
+    # at the old x, and a drop further in would lay the cable along the wing membrane's root on the back.
     path = [plate + Vector((0.0, 0.08, 0.0))]
     for y in (0.1, 0.5, 0.85):
-        hit, n = _drop(bvh, 0.30, y)
+        hit, n, _, _ = bvh.ray_cast(Vector((1.5, y, pz)), Vector((-1, 0, 0)))
         if hit is None:
-            raise RuntimeError(f"cable ray missed the flank at y={y}")
+            raise RuntimeError(f"cable ray missed the flank at y={y}, z={pz}")
         path.append(hit + n * 0.02)
     # detour around the hip-wing root: a straight hop from the last back sample to the first tail point would
     # cut within ~1.5 cm of the hip-wing hub (fan root, y=1.45), notching its membrane. The hip-wing fan only

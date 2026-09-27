@@ -6,7 +6,8 @@ const DIR = 'public/assets/characters/toothless/';
 const gltf = readGlbJson(`${DIR}toothless.glb`);
 const poses = readGlbJson(`${DIR}toothless.poses.glb`);
 const rig = JSON.parse(readFileSync(`${DIR}toothless.rig.json`, 'utf8'));
-const MORPHS = ['blink_L', 'blink_R', 'squint', 'teeth_out', 'membrane_pleat_L', 'membrane_pleat_R', 'smile', 'snarl', 'nostril_flare'];
+const MORPHS = ['blink_L', 'blink_R', 'blink_L_a', 'blink_L_b', 'blink_R_a', 'blink_R_b', 'squint', 'teeth_out',
+  'membrane_pleat_L', 'membrane_pleat_R', 'smile', 'snarl', 'nostril_flare'];
 const MATERIALS = ['skin', 'membrane', 'eye', 'mouth', 'teeth', 'claw', 'prosthetic', 'leather', 'metal'];
 const CLIPS = ['bind', 'wings_fold_25', 'wings_half', 'wings_fold_75', 'wings_folded', 'jaw_open'];
 
@@ -85,5 +86,15 @@ describe('toothless.rig.json', () => {
   it('records the locked proportions', () => {
     expect(rig.proportions.length).toBeGreaterThan(7.1);
     expect(rig.proportions.wingspan).toBeGreaterThan(13.0);
+  });
+  it('has the blink map and the jaw rest close, and every listed morph exists in the GLB', () => {
+    const targets: string[] = gltf.meshes[0].extras.targetNames;
+    for (const side of ['L', 'R']) {
+      expect(rig.blink[side]).toEqual([`blink_${side}_a`, `blink_${side}_b`, `blink_${side}`]);
+      for (const k of rig.blink[side]) expect(targets).toContain(k);
+    }
+    for (const k of rig.morphs) expect(targets).toContain(k);
+    expect(rig.jaw.restCloseRad).toBeGreaterThan(0);   // closes: against openSign -1
+    expect(rig.jaw.restCloseRad).toBeLessThan(0.2);
   });
 });

@@ -27,14 +27,17 @@ HEAT_W, HEAT_COVERAGE, HEAT_MIN_VERTS = 0.2, 0.5, 5
 # (legs ~0.45 m apart, belly ~0.6 m above the paws); at 0.5 m the armpits and under the jaw barely registered (0.90,
 # 0.97). 96 rays halve the blotches the 48-ray set left on smooth flanks.
 AO_DIST, AO_RAYS = 1.0, 96
+AO_GAMMA = 1.6    # stored AO = raw ** gamma: deeper armpits, under-jaw and leg creases; open skin (1.0) is untouched
 # face key offsets (metres; +y = back, +z = up)
 LIP_REACH = 0.07                                   # lip offsets fade out this far from the lip line
-SMILE_UPPER = Vector((0, 0.015, 0.03))             # side upper lip: up and back (the gums show)
-SMILE_LOWER = Vector((0, 0.015, 0.0))              # side lower lip only draws back: the lips part
-SMILE_CORNER = Vector((0, 0.025, 0.035))           # corners and cheeks draw up and back
-SNARL_LIP = Vector((0, 0.006, 0.04))               # upper lip clears the extended teeth (~2 cm into the slit)
-SNARL_LOWER = Vector((0, 0.0, -0.012))             # front lower lip drops
-SNARL_NOSE = Vector((0, 0.006, 0.012))             # nose wrinkles up
+SMILE_UPPER = Vector((0, 0.02, 0.042))             # side upper lip: up and back (the gums show)
+SMILE_LOWER = Vector((0, 0.02, -0.006))            # side lower lip draws back and a little down: the lips part
+SMILE_CORNER = Vector((0, 0.035, 0.05))            # corners and cheeks draw up and back into the gummy grin
+SNARL_LIP = Vector((0, 0.012, 0.055))              # upper lip lifts well clear of the extended teeth and draws back
+SNARL_PEEL = 0.014                                 # ... and peels outward, rolling the lip edge away from the teeth
+SNARL_LOWER = Vector((0, 0.004, -0.02))            # front lower lip drops
+SNARL_NOSE = Vector((0, 0.008, 0.016))             # nostrils ride up
+SNARL_CRINKLE = (0.10, 0.013, 0.008, 0.042)        # bridge crinkle: reach, bunch (back + up), crease height, crease pitch
 
 
 def smoothstep(e0, e1, x):
@@ -149,7 +152,47 @@ def skin_body(body, rig):
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.object.vertex_group_smooth(group_select_mode="ALL", factor=0.5, repeat=SMOOTH_REPEAT)
     bpy.ops.object.mode_set(mode="OBJECT")
+    seal_lips(body)
     return coverage
+
+
+LIP_SEAL_REACH = (0.03, 0.06)   # the jaw-weight correction is whole within 3 cm of the lip line, gone by 6 cm
+
+
+def seal_lips(body):
+    """Scripted correction (spec §5.6): the sculpt sets the lower jaw open by the rest-close angle (sculpt.jaw_weight
+    says how much of it each point took) and the engine closes the jaw by that angle at rest. Around the lips, where
+    the smoothed heat weights blend head and jaw across the thin corners of the slit, the jaw's weight is set to the
+    sculpt's own opening weight — the rest close then puts the lips back exactly where they were sculpted shut.
+    The other bones share what is left in their old proportions (the head takes it if there are none). Whole near
+    the lip line, faded out across LIP_SEAL_REACH. Returns the number of vertices changed."""
+    me = body.data
+    groups = {g.name: g for g in body.vertex_groups}
+    index = {g.index: g.name for g in body.vertex_groups}
+    lip = [Vector((-p[0], p[1], p[2])) for p in reversed(SB.MOUTH_LINE_L[1:])] + [Vector(p) for p in SB.MOUTH_LINE_L]
+    P = np.array([tuple(body.matrix_world @ v.co) for v in me.vertices])
+    target = SB.jaw_weight(P)
+    shut = SB.close_jaw(P, target * A.JAW_REST_CLOSE_RAD)   # measured with the mouth closed
+    changed = 0
+    for v, p, t in zip(me.vertices, shut, target):
+        reach = 1.0 - smoothstep(*LIP_SEAL_REACH, _polyline_distance(Vector(p), lip))
+        if reach <= 0.0:
+            continue
+        old = {index[g.group]: g.weight for g in v.groups}
+        jaw = old.get("jaw", 0.0)
+        new_jaw = jaw + (float(t) - jaw) * reach
+        rest = {k: w for k, w in old.items() if k != "jaw" and w > 0.0}
+        total = sum(rest.values())
+        if abs(new_jaw - jaw) < 1e-6:
+            continue
+        groups["jaw"].add([v.index], new_jaw, "REPLACE")
+        if total > 0.0:
+            for k, w in rest.items():
+                groups[k].add([v.index], w * (1.0 - new_jaw) / total, "REPLACE")
+        else:
+            groups["head"].add([v.index], 1.0 - new_jaw, "REPLACE")
+        changed += 1
+    return changed
 
 
 def _falloff(d, radius):
@@ -162,11 +205,15 @@ def _polyline_distance(p, pts):
 
 def lip_mobility(points):
     """1 on the outer skin, fading to 0 from 0.5 to 3 cm inside the lip line within the slit (the gums, whose
-    retracted teeth sit 3 cm in, stay put). Smooth in xy and z, unlike the stair-stepped mouth-material border."""
-    depth = -polygon_slab(SB.mouth_polygon(outset=0.0), SB.MOUTH_Z, 1.0).fn(np.array([tuple(p) for p in points]))
+    retracted teeth sit just inside, stay put). Smooth in xy and z, unlike the stair-stepped mouth-material border.
+    The slit is the bind wedge (sculpt.mouth_slit): "within" is measured from its mid-surface, at its local height."""
+    P = np.array([tuple(p) for p in points])
+    depth = -polygon_slab(SB.mouth_polygon(outset=0.0), SB.MOUTH_Z, 1.0).fn(P)
+    side = SB.slit_side(P)
     out = []
-    for p, d in zip(points, depth):
-        in_slit = 1.0 - smoothstep(0.012, 0.022, abs(p.z - SB.MOUTH_Z))
+    for p, d, s in zip(points, depth, side):
+        half = 0.5 * SB.slit_opening(p.y) + SB.SLIT_ROUNDING
+        in_slit = 1.0 - smoothstep(half, half + 0.01, abs(float(s)))
         out.append(1.0 - in_slit * smoothstep(0.005, 0.03, float(d)))
     return out
 
@@ -177,10 +224,12 @@ def add_face_keys(body):
     Lip offsets fall off with the distance to the lip line (the whole U, not its sample points: those sit ~10 cm apart)
     and split smoothly into upper and lower lip across the slit, so the lips part without tearing at the corners. Inside
     the slit they fade out from the lip line to 3 cm deep (`lip_mobility`): the gums at the teeth line stay, keep the
-    retracted teeth covered and show where the lips part.
+    retracted teeth covered and show where the lips part. The keys are shaped on the closed face (the engine's rest):
+    each vertex is measured where the sculpt's jaw warp (sculpt.jaw_weight) carries it shut.
     - smile (gummy grin): the corners draw up and back, the side lips part and show the gums; strongest at the sides.
-    - snarl: the upper lip lifts clear of the extended teeth (teeth_out) over the front and canines, the front lower
-      lip drops, and the nose wrinkles up.
+    - snarl: the upper lip lifts well clear of the extended teeth (teeth_out) over the front and canines and peels
+      outward (the lip edge rolls away from the teeth), the front lower lip drops, the nostrils ride up and the skin of
+      the bridge bunches back toward the eyes in a few creases (the nose crinkle).
     """
     if body.data.shape_keys is None:
         body.shape_key_add(name="Basis")
@@ -189,27 +238,41 @@ def add_face_keys(body):
     corner = Vector(SB.MOUTH_LINE_L[-1])
     corners = [corner, Vector((-corner.x, corner.y, corner.z))]
     lip = [Vector((-p[0], p[1], p[2])) for p in reversed(SB.MOUTH_LINE_L[1:])] + [Vector(p) for p in SB.MOUTH_LINE_L]
-    nostrils = [Vector((s * 0.062, -2.2, 1.708)) + Vector(A.HEAD_OFFSET) for s in (1, -1)]
+    half = corner.x                                                     # the lip line's half-width
+    mouth_centre = Vector((0.0, corner.y + 0.01, SB.MOUTH_Z))
+    nostrils = [Vector((s * SB.NOSTRIL_L[0], SB.NOSTRIL_L[1], SB.NOSTRIL_L[2])) for s in (1, -1)]
+    reach, bunch, crease, pitch = SNARL_CRINKLE
+    bridge = Vector((0.0, SB.NOSTRIL_L[1] + 0.075, SB.NOSTRIL_L[2] + 0.035))   # the snout top behind the nostrils
     smile = body.shape_key_add(name="smile", from_mix=False)
     snarl = body.shape_key_add(name="snarl", from_mix=False)
     flare = body.shape_key_add(name="nostril_flare", from_mix=False)
     for key in (smile, snarl, flare):
         key.value = 0.0   # Blender 5.1 creates shape keys at value 1.0; the bind pose must show the neutral face
-    for i, p in enumerate(rest):
+    P = np.array([tuple(p) for p in rest])
+    jaw = SB.jaw_weight(P)                                              # the sculpt's warp: 1 on the lower-jaw side
+    shut = SB.close_jaw(P, jaw * A.JAW_REST_CLOSE_RAD)
+    for i, p0 in enumerate(rest):
+        upper = 1.0 - float(jaw[i])                                     # 1 on the upper lip side, 0 on the lower
+        p = Vector(shut[i])                                             # where it sits with the mouth closed
         near_lip = _falloff(_polyline_distance(p, lip), LIP_REACH) * mobile[i]
-        upper = smoothstep(SB.MOUTH_Z - 0.009, SB.MOUTH_Z + 0.009, p.z)   # 1 on the upper lip, 0 on the lower
-        side = smoothstep(0.08, 0.30, abs(p.x))                          # 0 at the front of the U, 1 toward a corner
+        side = smoothstep(0.33 * half, 1.2 * half, abs(p.x))            # 0 at the front of the U, 1 toward a corner
         d_corner = min((p - c).length for c in corners)
         grin = (SMILE_UPPER * upper + SMILE_LOWER * (1.0 - upper)) * side * near_lip
-        smile.data[i].co = p + grin + SMILE_CORNER * (_falloff(d_corner, 0.09) * mobile[i])
-        canine = 1.0 - smoothstep(0.18, 0.32, abs(p.x))                  # front and canines, fading at the corners
-        off = (SNARL_LIP * upper + SNARL_LOWER * (1.0 - upper) * (1.0 - side)) * (canine * near_lip)
+        smile.data[i].co = p0 + grin + SMILE_CORNER * (_falloff(d_corner, 0.09) * mobile[i])
+        canine = 1.0 - smoothstep(0.65 * half, 1.1 * half, abs(p.x))    # front and canines, fading at the corners
+        out = Vector((p.x - mouth_centre.x, p.y - mouth_centre.y, 0.0))
+        out = out.normalized() if out.length > 1e-6 else Vector()
+        off = (SNARL_LIP + out * SNARL_PEEL) * (upper * canine * near_lip)
+        off += SNARL_LOWER * ((1.0 - upper) * (1.0 - side) * canine * near_lip)
         near = min(nostrils, key=lambda c: (p - c).length)
         d_nostril = (p - near).length
         off += SNARL_NOSE * _falloff(d_nostril, 0.05)
-        snarl.data[i].co = p + off
+        crinkle = (_falloff((p - bridge).length, reach) * smoothstep(SB.MOUTH_Z + 0.06, SB.MOUTH_Z + 0.13, p.z)
+                   * (1.0 - smoothstep(0.07, 0.15, abs(p.x))))
+        off += Vector((0.0, bunch, 0.5 * bunch + crease * math.sin(2.0 * math.pi * (p.y - bridge.y) / pitch))) * crinkle
+        snarl.data[i].co = p0 + off
         radial = Vector((p.x - near.x, p.y - near.y, 0.0))
-        flare.data[i].co = p + (radial.normalized() * 0.006 * _falloff(d_nostril, 0.035) if radial.length > 1e-6 else Vector())
+        flare.data[i].co = p0 + (radial.normalized() * 0.006 * _falloff(d_nostril, 0.035) if radial.length > 1e-6 else Vector())
 
 
 class Dir(namedtuple("Dir", "x y z")):
@@ -282,7 +345,8 @@ def _write_mask(ob, rows):
 
 def add_masks(objs):
     """_MASK on every mesh before joining (the join merges same-named attributes).
-    Wing membranes are not occluders — spread in the bind pose they would roof over the flanks."""
+    Wing membranes are not occluders — spread in the bind pose they would roof over the flanks. The dorsal plates
+    (parts.make_spikes) are the dorsal channel; on the body it marks the skin around their bases."""
     wings = [o for o in objs if o.name.startswith(WING_PARTS)]
     solid = [o for o in objs if o not in wings]
     bvh = occluder_bvh(solid)
@@ -294,14 +358,17 @@ def add_masks(objs):
             continue
         ao = vertex_ao(ob, bvh, dirs, AO_DIST)
         nm = ob.matrix_world.to_3x3().inverted().transposed()
-        is_body = ob.name == "Toothless"
+        is_body, is_plates = ob.name == "Toothless", ob.name == "Spikes"
         rows = []
         for v, occ in zip(ob.data.vertices, ao):
             p = ob.matrix_world @ v.co
             n = (nm @ v.normal).normalized()
             under = smoothstep(-0.15, -0.65, n.z) if is_body else 0.0
-            dorsal = dorsal_weight(p, spikes) if is_body and abs(p.x) < 0.12 and p.z > 0.4 else 0.0
-            rows.append((occ, under, dorsal))
+            if is_plates:
+                dorsal = 1.0
+            else:
+                dorsal = dorsal_weight(p, spikes) if is_body and abs(p.x) < 0.12 and p.z > 0.4 else 0.0
+            rows.append((occ ** AO_GAMMA, under, dorsal))
         _write_mask(ob, rows)
 
 

@@ -60,14 +60,14 @@ def stage_model():
     SC.move_to(body, coll)
     MT.manifold_voxel_remesh(body, VOX)
     MT.clean_degenerate(body)
-    MT.quadriflow(body, FACES)
+    remesh = MT.quadriflow(body, FACES)
     body.data.materials.append(M["skin"])
     P.assign_mouth_material(body, M["mouth"], inset=0.03)
     parts = (P.make_eyes(rig, M["eye"]) + P.make_lids(rig, M["skin"]) + [P.make_teeth(rig, M["teeth"]), P.make_tongue(rig, M["mouth"])]
-             + P.make_ears(rig, M["skin"]) + P.make_claws(rig, M["claw"]))
+             + P.make_ears(rig, M["skin"]) + P.make_claws(rig, M["claw"]) + P.make_spikes(rig, M["skin"]))
     for ob in parts:
         SC.move_to(ob, coll)
-    print("MODEL", MT.mesh_report(body), "symmetry", round(MT.symmetry_error(body), 5))
+    print("MODEL", MT.mesh_report(body), "symmetry", round(MT.symmetry_error(body), 5), "quadriflow", remesh)
     QR.setup_clay(sc)
     qa.model_renders(sc, QA_DIR)
     SC.save(os.path.join(BUILD, "toothless_model.blend"))
@@ -102,6 +102,7 @@ def stage_assemble():
     AS.run(rig, body)
     QR.setup_clay(sc)
     qa.deform_renders(sc, rig, body, QA_DIR)
+    qa.look_renders(sc, rig, QA_DIR)
     SC.save(os.path.join(BUILD, "toothless_assembled.blend"))
 
 

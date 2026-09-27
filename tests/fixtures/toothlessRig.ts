@@ -25,13 +25,13 @@ const FRONT = { scapula: v(0.2, -0.5, 1.28), shoulder: v(0.31, -0.74, 0.95), elb
 const HIND = { hip: v(0.29, 0.62, 0.97), knee: v(0.34, 0.36, 0.6), hock: v(0.33, 0.74, 0.3), paw: v(0.33, 0.6, 0.07), toe: v(0.33, 0.44, 0.04) };
 /** name, root, length, pitch, yaw, roll (degrees; yaw/roll mirror with side) */
 const EARS: Array<[string, V, number, number, number, number]> = [
-  ['ear_1', add(v(0.125, -1.62, 1.87), HO), 0.34, 62, -14, -12],
-  ['ear_2', add(v(0.25, -1.62, 1.77), HO), 0.2, 30, -40, -30],
-  ['ear_3', add(v(0.315, -1.7, 1.61), HO), 0.13, 10, -68, -45],
+  ['ear_1', add(v(0.125, -1.62, 1.87), HO), 0.34, 32, -12, 0],
+  ['ear_2', add(v(0.25, -1.62, 1.77), HO), 0.2, 22, -24, 0],
+  ['ear_3', add(v(0.315, -1.7, 1.61), HO), 0.13, 8, -28, 0],
 ];
-const MAIN_WING = { root: v(0.26, -0.72, 1.42), elbow: v(1.05, -0.45, 1.55), hub: v(2.05, -0.62, 1.62), angles: [-6, 10, 26, 42, 58, 75, 94], lengths: [4.75, 4.2, 3.6, 3.05, 2.6, 2.2, 1.9] };
+const MAIN_WING = { root: v(0.26, -0.72, 1.42), elbow: v(1.05, -0.45, 1.55), hub: v(2.05, -0.62, 1.62), angles: [-5, 10, 26, 43, 62, 84, 108], lengths: [4.75, 2.95, 2.45, 2.1, 1.85, 1.75, 1.65] };
 const HIP_WING = { hub: v(0.16, 1.45, 1.13), angles: [4, 30, 56, 82], lengths: [1.45, 1.3, 1.1, 0.85] };
-const TAIL_FIN = { hub: v(0.04, 3.8, 0.69), angles: [48, 62, 76], lengths: [0.85, 1.05, 1.18] };
+const TAIL_FIN = { hub: v(0.04, 3.8, 0.69), angles: [36, 54, 72], lengths: [1.0, 1.15, 1.25] };
 const SADDLE_SEAT = v(0, -0.36, 1.46);
 const PEDAL_L = v(0.38, -0.28, 1.02);
 
@@ -171,6 +171,6 @@ export function toothlessFixtureRig(): MotionRig {
     chainLimitsDeg: { spine: { pitch: 15, yaw: 12, roll: 8 }, neck: { pitch: 35, yaw: 40, roll: 15 }, tail: { pitch: 25, yaw: 30, roll: 10 } },
     wings: { L: wing('L'), R: wing('R') },
     ears: { L: ['ear_1_L', 'ear_2_L', 'ear_3_L'], R: ['ear_1_R', 'ear_2_R', 'ear_3_R'] },
-    proportions: { length: 7.18, wingspan: 13.548, shoulderHeight: 1.28, hipHeight: 0.97, headTop: 1.815 },
+    proportions: { length: 7.18, wingspan: 13.5638, shoulderHeight: 1.28, hipHeight: 0.97, headTop: 1.815 },
   };
 }

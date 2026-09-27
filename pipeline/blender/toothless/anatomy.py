@@ -45,11 +45,14 @@ HIND_LEG_L = {  # hip -> knee -> hock -> paw -> toe tip
     "paw": V(0.33, 0.60, 0.07), "toe": V(0.33, 0.44, 0.04),
 }
 
-# ear plates: root, length, width, thickness, pitch, yaw, roll (degrees; yaw/roll mirror with side)
+# ear plates: root, length, width, thickness, pitch, yaw, roll (degrees; yaw/roll mirror with side). With roll 0 the
+# pitch is the ear's rise above straight back and -yaw its sweep outward: the film's flaps lie back along the skull,
+# the big pair ~30 deg up, the smaller pairs lower and tucked behind/below it (no sideways horns). The plate's twist
+# about its own length axis is part of its shape (sculpt.EAR_TWIST_DEG).
 EARS_L = [
-    ("ear_1", V(0.125, -1.62, 1.87) + HEAD_OFFSET, 0.34, 0.15, 0.05, 62, -14, -12),
-    ("ear_2", V(0.25, -1.62, 1.77) + HEAD_OFFSET, 0.20, 0.09, 0.04, 30, -40, -30),
-    ("ear_3", V(0.315, -1.70, 1.61) + HEAD_OFFSET, 0.13, 0.06, 0.035, 10, -68, -45),
+    ("ear_1", V(0.125, -1.62, 1.87) + HEAD_OFFSET, 0.34, 0.15, 0.05, 32, -12, 0),
+    ("ear_2", V(0.25, -1.62, 1.77) + HEAD_OFFSET, 0.20, 0.09, 0.04, 22, -24, 0),
+    ("ear_3", V(0.315, -1.70, 1.61) + HEAD_OFFSET, 0.13, 0.06, 0.035, 8, -28, 0),
 ]
 
 
@@ -70,21 +73,24 @@ def ear_axis(ear, side):
 
 
 # fan wings: root joint(s), then a fan of ribs radiating from `hub` (wrist) in the bind pose
+# The film's wing: the leading rib runs on out along the leading edge to a long pointed tip, far longer than the
+# others; the rest are short and fan toward the rear. Scallops (per panel, tip -> body) stay shallow — near-straight
+# across the tip panel, deepening toward the trailing edge — over a gently billowed membrane.
 MAIN_WING_L = {
     "root": V(0.26, -0.72, 1.42), "elbow": V(1.05, -0.45, 1.55), "hub": V(2.05, -0.62, 1.62),
-    "rib_angles": [-6, 10, 26, 42, 58, 75, 94], "rib_lengths": [4.75, 4.2, 3.6, 3.05, 2.6, 2.2, 1.9],
-    "attach": [V(0.26, -0.72, 1.42), V(0.25, -0.1, 1.40), V(0.25, 0.62, 1.30)],   # membrane root along the back
-    "scallop": 0.2, "billow": 0.08,
+    "rib_angles": [-5, 10, 26, 43, 62, 84, 108], "rib_lengths": [4.75, 2.95, 2.45, 2.1, 1.85, 1.75, 1.65],
+    "attach": [V(0.26, -0.72, 1.42), V(0.22, -0.1, 1.26), V(0.25, 0.62, 1.30)],   # membrane root along the back
+    "scallop": [0.03, 0.06, 0.08, 0.10, 0.12, 0.14], "billow": 0.035,
 }
 HIP_WING_L = {   # the secondary wing pair sits on the base of the tail
     "hub": V(0.16, 1.45, 1.13),
     "rib_angles": [4, 30, 56, 82], "rib_lengths": [1.45, 1.3, 1.1, 0.85],
     "scallop": 0.18, "billow": 0.03,
 }
-TAIL_FIN_L = {   # long rudder-like fin along the tail end (left = the red prosthetic)
+TAIL_FIN_L = {   # the tail-end sails (left = the red prosthetic): wide and distinct, within the nose-to-tail length
     "hub": V(0.04, 3.80, 0.69),
-    "rib_angles": [48, 62, 76], "rib_lengths": [0.85, 1.05, 1.18],
-    "scallop": 0.16, "billow": 0.0,
+    "rib_angles": [36, 54, 72], "rib_lengths": [1.0, 1.15, 1.25],
+    "scallop": 0.12, "billow": 0.0,
 }
 
 SADDLE_SEAT = V(0, -0.36, 1.46)
@@ -154,6 +160,11 @@ def bone_specs():
 
 
 JAW_OPEN_SIGN = -1          # the jaw opens with a NEGATIVE rotation about its local X (verified in the prototype)
+# The sculpt models the head with the mouth closed and sets the lower jaw open by this angle at bind (heat weighting
+# needs the lips apart, and the mouth slit needs >= ~2 voxels, 1.6 cm, at the lip corners 0.175 m in front of the
+# hinge: 0.09 x 0.175). This closing rotation about the jaw's local X (sign = -JAW_OPEN_SIGN) brings the lips back
+# together at rest: the engine applies it to the jaw's rest rotation (rig.json jaw.restCloseRad).
+JAW_REST_CLOSE_RAD = 0.09
 MOUTH_ANCHOR = V(0, -2.20, 1.375)   # front of the mouth slit (plasma muzzle)
 
 # paw contact points (left; mirror X for right) — sole centre, toe tip, heel. Derived from the sculpted paws
@@ -166,7 +177,7 @@ CONTACTS_L = {
 # saddle footprint (shared by tack.py and sculpt.dorsal_spikes): between the wing roots and the waist
 SADDLE_Y = (-0.58, -0.16)
 SADDLE_HALF_WIDTH = 0.20      # stays inside the membrane attach line (x = 0.25)
-CRANIUM_TOP = 1.72 + HEAD_OFFSET[2] + 0.235   # top of the cranium ellipsoid in sculpt.build (centre z 1.72 + HO, radius z 0.235)
+CRANIUM_TOP = 1.72 + HEAD_OFFSET[2] + 0.235   # 1.815: top of the skull ellipsoid in sculpt.head_volumes (centre z 1.60, radius z 0.215)
 
 # collision proxies: (name, bone, centre, radius) — all on the midline, fitted to the sculpt's main masses
 PROXIES = [
