@@ -115,7 +115,7 @@ export class CollisionWorld {
     return r;
   }
 
-  /** Deepest-point contact of a sphere with the world, or null. Centres behind a face (inside a solid) push out along its normal. */
+  /** Deepest-point contact of a sphere with the world, or null. Centres behind a face (inside a solid) push out along its normal. Contacts are searched within one radius; a centre embedded deeper is not resolved. */
   sphereContact(center: THREE.Vector3, radius: number, out?: SphereContact): SphereContact | null {
     const s = this.closestPoint(center, radius, this.scratchSurface);
     if (!s) return null;
@@ -147,28 +147,28 @@ export class CollisionWorld {
 
   /**
    * Fraction t ∈ [0, 1] of the segment a sphere can travel from `from` toward `to` before touching the world.
-   * Samples every radius/2 (no tunnelling through walls thinner than the step), then bisects the first hit.
+   * Uses conservative advancement: at each step, queries the clearance to the nearest surface and advances by that distance.
+   * The returned t is always non-contacting by construction (with a 1e-6 safety margin for floating-point error). Caps at 64 iterations.
    */
-  sphereCast(from: THREE.Vector3, to: THREE.Vector3, radius: number): number {
+  sphereCast(from: THREE.Vector3, to: THREE.Vector3, radius: number, stats?: { queries: number }): number {
     if (this.closestPoint(from, radius, this.scratchSurface)) return 0;
+    if (stats) stats.queries++;
     const len = from.distanceTo(to);
     if (len < 1e-9) return 1;
-    const n = Math.max(1, Math.ceil(len / Math.max(radius * 0.5, 0.02)));
-    let prev = 0;
-    for (let k = 1; k <= n; k++) {
-      const t = k / n;
-      if (this.closestPoint(_p.lerpVectors(from, to, t), radius, this.scratchSurface)) {
-        let lo = prev;
-        let hi = t;
-        for (let b = 0; b < 10; b++) {
-          const mid = (lo + hi) / 2;
-          if (this.closestPoint(_p.lerpVectors(from, to, mid), radius, this.scratchSurface)) hi = mid;
-          else lo = mid;
-        }
-        return lo;
-      }
-      prev = t;
+    const dir = _v.subVectors(to, from).normalize();
+    let t = 0;
+    for (let iter = 0; iter < 64; iter++) {
+      const remainingLen = len * (1 - t);
+      _p.copy(from).addScaledVector(dir, len * t);
+      const hit = this.closestPoint(_p, remainingLen + radius, this.scratchSurface);
+      if (stats) stats.queries++;
+      if (!hit) return 1; // Rest of path is clear
+      const clearance = hit.distance - radius;
+      if (clearance <= 1e-4) return t; // Close enough to stop; t is still clear by construction
+      // Advance with 1e-6 safety margin to avoid floating-point penetration
+      t += Math.max(0, clearance - 1e-6) / len;
+      if (t >= 1) return 1;
     }
-    return 1;
+    return t;
   }
 }

@@ -40,3 +40,8 @@ export function stepWorld(h: number, z0 = 1): CollisionWorld {
 export function dropWorld(drop: number, z0 = 3): CollisionWorld {
   return CollisionWorld.fromObjects([box(40, 1, 20, 0, -0.5, z0 - 10), box(40, 1, 20, 0, -drop - 0.5, z0 + 10)]);
 }
+
+/** Concave two-plane corner: floor plus wall for testing corner convergence. */
+export function cornerWorld(): CollisionWorld {
+  return CollisionWorld.fromObjects([floor(), box(1, 2, 40, -0.5, 1, 0)]);
+}
