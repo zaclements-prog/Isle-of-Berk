@@ -49,7 +49,10 @@ export function buildCourse(seed = 7): Course {
     const z0 = -14; // near (bottom) edge
     add(`ramp${a}`, new THREE.BoxGeometry(5, thick, len), mats.ramp,
       [x, rise / 2 - (thick / 2) * Math.cos(deg(a)), z0 - run / 2], [deg(a), 0, 0]);
-    add(`plateau${a}`, new THREE.BoxGeometry(5, rise, 6), mats.step, [x, rise / 2, z0 - run - 3]);
+    // The ramp's top face is set back from z0 - run by (thick/2)*sin(a) once tilted (its top-face
+    // far edge, at local (0, +thick/2, -len/2), lands at world z = z0 - run + (thick/2)*sin(a)).
+    // Shift the plateau the same amount so its near edge (Box3 max.z) meets that edge with no gap.
+    add(`plateau${a}`, new THREE.BoxGeometry(5, rise, 6), mats.step, [x, rise / 2, z0 - run - 3 + (thick / 2) * Math.sin(deg(a))]);
   });
 
   // 20° side slope (tilted about Z), for body-roll tests.

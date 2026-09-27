@@ -5,6 +5,7 @@ import GUI from 'lil-gui';
 import { createApp } from '../../app/createApp';
 import { createGltfLoader } from '../../render/loaders';
 import { createTestScene } from '../../world/testScene';
+import { disposeObject } from '../disposeObject';
 import { debug } from '../../core/debug';
 
 const app = createApp(document.getElementById('app')!);
@@ -104,7 +105,16 @@ function buildClipUi(): void {
 
 async function load(url: string) {
   const gltf = await loader.loadAsync(url);
-  if (current) app.scene.remove(current);
+  if (current) {
+    app.scene.remove(current);
+    if (mixer) {
+      mixer.stopAllAction();
+      mixer.uncacheRoot(current);
+    }
+    disposeObject(current);
+  }
+  helper?.removeFromParent();
+  helper?.dispose();
   current = gltf.scene;
   current.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -117,7 +127,6 @@ async function load(url: string) {
   frameObject(current);
   clips = gltf.animations;
   mixer = clips.length ? new THREE.AnimationMixer(current) : null;
-  helper?.removeFromParent();
   helper = new THREE.SkeletonHelper(current);
   helper.visible = state.skeleton;
   app.scene.add(helper);

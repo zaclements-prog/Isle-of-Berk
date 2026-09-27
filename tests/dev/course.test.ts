@@ -31,6 +31,20 @@ describe('buildCourse', () => {
     }
   });
 
+  it('meets each ramp top exactly at its plateau (no seam gap)', () => {
+    const c = buildCourse();
+    for (const a of [15, 30, 45, 60]) {
+      const ramp = c.surfaces.find((m) => m.name === `ramp${a}`)!;
+      const plateau = c.surfaces.find((m) => m.name === `plateau${a}`)!;
+      ramp.updateMatrixWorld(true);
+      const { height, depth } = (ramp.geometry as THREE.BoxGeometry).parameters;
+      const rampTopFarEdge = new THREE.Vector3(0, height / 2, -depth / 2).applyMatrix4(ramp.matrixWorld);
+      const plateauBox = new THREE.Box3().setFromObject(plateau);
+      expect(Math.abs(rampTopFarEdge.z - plateauBox.max.z), `ramp${a} z gap`).toBeLessThan(0.001);
+      expect(Math.abs(rampTopFarEdge.y - plateauBox.max.y), `ramp${a} y gap`).toBeLessThan(0.001);
+    }
+  });
+
   it('is deterministic for a seed', () => {
     const a = buildCourse(7).surfaces.find((m) => m.name === 'boulder3')!.position.toArray();
     const b = buildCourse(7).surfaces.find((m) => m.name === 'boulder3')!.position.toArray();
