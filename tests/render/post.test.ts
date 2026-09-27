@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createPostStack } from '../../src/render/post';
 import { PRESETS, type QualityPreset } from '../../src/render/quality';
-import { TONE_CURVES } from '../../src/render/renderer';
+import { DEFAULT_TONE_CURVE, TONE_CURVES } from '../../src/render/renderer';
 
 function stubRenderer(): THREE.WebGLRenderer {
   // No real WebGL context: just enough of the renderer surface for createPostStack + EffectComposer
@@ -131,7 +131,7 @@ describe('createPostStack', () => {
   it('OutputPass follows a runtime renderer.toneMapping change (berk.toneMapping relies on it)', () => {
     const output = buildStack().composer.passes.find((p) => (p as OutputPass).isOutputPass) as OutputPass;
     const renderer = {
-      toneMapping: TONE_CURVES.agx,
+      toneMapping: TONE_CURVES[DEFAULT_TONE_CURVE], // Neutral, as createRenderer ships it
       toneMappingExposure: 1.8,
       outputColorSpace: THREE.SRGBColorSpace,
       autoClearColor: true, autoClearDepth: true, autoClearStencil: true,
@@ -140,16 +140,19 @@ describe('createPostStack', () => {
     const target = new THREE.WebGLRenderTarget(4, 4);
     const frame = () => output.render(renderer, target, target, 0, false);
     const defines = () => output.material.defines as Record<string, unknown>;
+    const DEFINES = { agx: 'AGX_TONE_MAPPING', neutral: 'NEUTRAL_TONE_MAPPING', aces: 'ACES_FILMIC_TONE_MAPPING' } as const;
 
     frame();
-    expect(defines().AGX_TONE_MAPPING).toBe('');
-    for (const [name, define] of [['neutral', 'NEUTRAL_TONE_MAPPING'], ['aces', 'ACES_FILMIC_TONE_MAPPING']] as const) {
+    expect(defines()[DEFINES[DEFAULT_TONE_CURVE]]).toBe('');
+    let previous: keyof typeof DEFINES = DEFAULT_TONE_CURVE;
+    for (const name of ['agx', 'aces', 'neutral'] as const) {
       renderer.toneMapping = TONE_CURVES[name];
       const version = output.material.version;
       frame();
-      expect(defines()[define], name).toBe('');
-      expect(defines().AGX_TONE_MAPPING, name).toBeUndefined();
+      expect(defines()[DEFINES[name]], name).toBe('');
+      expect(defines()[DEFINES[previous]], `${previous} -> ${name}`).toBeUndefined();
       expect(output.material.version, name).toBeGreaterThan(version); // recompiled
+      previous = name;
     }
   });
 
