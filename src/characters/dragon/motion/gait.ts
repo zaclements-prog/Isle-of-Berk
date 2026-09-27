@@ -110,7 +110,8 @@ export class GaitEngine {
     this.swingHeight = swing * mods.swingScale;
     let c = (cadence * mods.cadenceScale) / mods.strideScale;
     const floor = (speed * duty) / (this.maxTravel * mods.strideScale);
-    if (floor > c) c = Math.min(floor, Math.max(c, this.opts.maxCadence ?? Infinity));
+    c = Math.min(Math.max(c, floor), this.opts.maxCadence ?? Infinity);
+    // raise to the stride floor, never above maxCadence (strides may then exceed maxTravel; the foot planner's over-stretch lift handles it)
     this.cadence = speed < this.opts.stopSpeed ? 0 : c;
     this.phase = fract(this.phase + this.cadence * dt);
   }

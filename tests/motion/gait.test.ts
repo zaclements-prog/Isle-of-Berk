@@ -79,4 +79,11 @@ describe('GaitEngine', () => {
     expect(g.cadence).toBeCloseTo((base * 0.8) / 0.7, 9);
     expect(g.swingHeight).toBeCloseTo(0.12 * 1.5, 9);
   });
+  it('enforces maxCadence as an absolute ceiling even with gait mods', () => {
+    const g = new GaitEngine({ hysteresis: 0.3, blendTime: 0.3, stopSpeed: 0.05, maxCadence: 3 });
+    g.setStrideLimit(0.3);
+    hold(g, 8, 3);
+    g.update(8, DT, { cadenceScale: 2, strideScale: 1, swingScale: 1 });
+    expect(g.cadence).toBeLessThanOrEqual(3 + 1e-9);
+  });
 });
