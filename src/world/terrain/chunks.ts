@@ -129,5 +129,5 @@ export function selectLod(distance: number, current: number, thresholds: readonl
   }
   if (target === current || current < 0) return target;
   if (target > current) return distance > thresholds[current] * (1 + hysteresis) ? target : current;
-  return distance < thresholds[target] * (1 - hysteresis) ? target : current;
+  return distance < thresholds[current - 1] * (1 - hysteresis) ? target : current;
 }

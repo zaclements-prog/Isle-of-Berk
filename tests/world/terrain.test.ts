@@ -85,6 +85,17 @@ describe('terrain chunks', () => {
     expect(selectLod(60, 1, th)).toBe(0);
     expect(selectLod(500, 0, th)).toBe(3);
   });
+  it('refines straight to the target on a multi-level jump instead of sticking (C1 regression)', () => {
+    const th = [70, 140, 240];
+    // A chunk stuck 3 levels too coarse: distance is well inside the L0 band, but the buggy code
+    // compared against thresholds[target] instead of the current LOD's near boundary and stuck at L3.
+    expect(selectLod(66, 3, th)).toBe(0);
+    // Two-level jump (L2 -> L0) in one call, distance just inside the L0 band.
+    expect(selectLod(69, 2, th)).toBe(0);
+    // Hysteresis still holds at the CURRENT boundary: just under the L2/L3 threshold (240), but inside
+    // the 8 % band above it (thresholds[2] * (1 - h) < d < thresholds[2]), so L3 is kept.
+    expect(selectLod(230, 3, th)).toBe(3);
+  });
 });
 
 describe('terrain collision', () => {

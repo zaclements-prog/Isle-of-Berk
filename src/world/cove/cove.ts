@@ -103,8 +103,14 @@ export class CoveRegion implements Region {
   }
 
   dispose(): void {
-    for (const d of this.disposers.splice(0).reverse()) d();
+    // app.remove runs first: it releases every material still under this.root from CSM (including the
+    // terrain material) and disposes the subtree. The disposers run after — terrain.dispose() detaching
+    // its already-removed root, and every material/texture dispose() below, are harmless no-ops/idempotent
+    // on objects app.remove already tore down, but they still free the cached extra LOD geometries and the
+    // splat/layer textures that app.remove's generic scan never reaches (they're plain uniform values, not
+    // material properties).
     this.app.remove(this.root);
+    for (const d of this.disposers.splice(0).reverse()) d();
   }
 }
 

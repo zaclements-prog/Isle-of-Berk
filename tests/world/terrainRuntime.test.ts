@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { Terrain, TERRAIN_LOD_DISTANCES } from '../../src/world/terrain/terrain';
-import { bumpy } from './terrainFixtures';
+import { bumpy, testHeader } from './terrainFixtures';
+import { CoveRegion } from '../../src/world/cove/cove';
+import { removeFromApp, type App } from '../../src/app/createApp';
+import { createSplatMaterial, createSplatUniforms } from '../../src/world/terrain/splatShader';
+import type { LayerArrays } from '../../src/world/terrain/layers';
 
 describe('Terrain', () => {
   const hf = bumpy(481); // 3 × 3 chunks of 160 cells
@@ -30,5 +34,32 @@ describe('Terrain', () => {
   it('keeps its collision root out of the scene graph', () => {
     expect(terrain.collisionRoot.parent).toBeNull();
     expect(terrain.collisionRoot.getObjectByName('terrain-collision')).toBeTruthy();
+  });
+});
+
+describe('CoveRegion.dispose (C2 regression)', () => {
+  it('releases the terrain material from CSM instead of losing it when terrain.dispose() detaches its root', () => {
+    const header = testHeader(65);
+    const hf = bumpy(65);
+    const splat = createSplatUniforms();
+    const material = createSplatMaterial(splat, true);
+    const terrain = new Terrain(hf, material);
+    const layers = { dispose: vi.fn() } as unknown as LayerArrays;
+    const releaseMaterial = vi.fn();
+    const scene = new THREE.Scene();
+    // Minimal stub: CoveRegion's constructor only reads app.preset.name, and dispose() only calls
+    // app.remove(root) — exactly App.remove's real body (removeFromApp), with a spy lighting.
+    const app = {
+      preset: { name: 'low' },
+      remove: (root: THREE.Object3D) => removeFromApp(scene, { releaseMaterial }, root),
+    } as unknown as App;
+
+    const region = new CoveRegion(app, 'assets/', header, hf, terrain, splat, layers);
+    scene.add(region.root);
+
+    region.dispose();
+
+    const terrainMaterialCalls = releaseMaterial.mock.calls.filter((c) => c[0] === material);
+    expect(terrainMaterialCalls).toHaveLength(1);
   });
 });
