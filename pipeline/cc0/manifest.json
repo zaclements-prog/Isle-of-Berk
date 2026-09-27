@@ -20,6 +20,11 @@
         "path": "forest_ground_04_arm_2k.jpg",
         "md5": "c688030cc91fbaab71cbc71fc6b280fe",
         "size": 3418726
+      },
+      {
+        "path": "forest_ground_04_disp_2k.png",
+        "md5": "aee602747c99de3ecee2c4d969775aaf",
+        "size": 5851483
       }
     ]
   },
@@ -54,6 +59,151 @@
         "path": "textures/rock_moss_set_01_diff_1k.jpg",
         "md5": "b8742301e6b4bc5683d2de712e83f772",
         "size": 168099
+      }
+    ]
+  },
+  {
+    "id": "sparse_grass",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/sparse_grass",
+    "files": [
+      {
+        "path": "sparse_grass_diff_2k.jpg",
+        "md5": "b181e9c61bae87c1bb9b14eecd767d65",
+        "size": 3733797
+      },
+      {
+        "path": "sparse_grass_nor_gl_2k.png",
+        "md5": "890a75197a9aa1e44a29a0af64634576",
+        "size": 24333251
+      },
+      {
+        "path": "sparse_grass_arm_2k.jpg",
+        "md5": "d30e667f7d576bc19fface66e98f7ce2",
+        "size": 3835537
+      },
+      {
+        "path": "sparse_grass_disp_2k.png",
+        "md5": "c9f328ac5e7e29d65abe10b9943efb64",
+        "size": 7172026
+      }
+    ]
+  },
+  {
+    "id": "mossy_rock",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/mossy_rock",
+    "files": [
+      {
+        "path": "mossy_rock_diff_2k.jpg",
+        "md5": "8e55bbeeef1db0d2d0cae85515812c46",
+        "size": 4535360
+      },
+      {
+        "path": "mossy_rock_nor_gl_2k.png",
+        "md5": "b5385cc9f6239f4720a43e0acbed6015",
+        "size": 8716359
+      },
+      {
+        "path": "mossy_rock_arm_2k.jpg",
+        "md5": "7aa8634ba2202439a413113c9e617b83",
+        "size": 3799947
+      },
+      {
+        "path": "mossy_rock_disp_2k.png",
+        "md5": "2ec6243afcf5345fd329ee7b3535fd1d",
+        "size": 6906485
+      }
+    ]
+  },
+  {
+    "id": "mud_forest",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/mud_forest",
+    "files": [
+      {
+        "path": "mud_forest_diff_2k.jpg",
+        "md5": "e78c6eae192daae3d00a677a588d1739",
+        "size": 3683329
+      },
+      {
+        "path": "mud_forest_nor_gl_2k.png",
+        "md5": "e6132199d99d207825f9eb9e846ebadd",
+        "size": 24357908
+      },
+      {
+        "path": "mud_forest_arm_2k.jpg",
+        "md5": "5e46adb654cda4ca023f1e983a363a71",
+        "size": 3326167
+      },
+      {
+        "path": "mud_forest_disp_2k.png",
+        "md5": "70a9f1e1d2dfd59153a31cb5780bf711",
+        "size": 9369270
+      }
+    ]
+  },
+  {
+    "id": "pebble_ground_01",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/pebble_ground_01",
+    "files": [
+      {
+        "path": "pebble_ground_01_diff_2k.jpg",
+        "md5": "461b9c53ebd5b16e15b09ca020c6f5e2",
+        "size": 1982412
+      },
+      {
+        "path": "pebble_ground_01_nor_gl_2k.png",
+        "md5": "90a33308977911e93ce649d6d61be949",
+        "size": 25057613
+      },
+      {
+        "path": "pebble_ground_01_arm_2k.jpg",
+        "md5": "d9bc41cc905bc88450c3c512f01d8d1c",
+        "size": 588632
+      },
+      {
+        "path": "pebble_ground_01_disp_2k.png",
+        "md5": "2fca327fc4a815831fd7aa57c8fb2bde",
+        "size": 7686826
+      }
+    ]
+  },
+  {
+    "id": "rock_wall_02",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/rock_wall_02",
+    "files": [
+      {
+        "path": "rock_wall_02_diff_2k.jpg",
+        "md5": "b345c9b1c95e11418d4f989b46d2b4dc",
+        "size": 1209071
+      },
+      {
+        "path": "rock_wall_02_nor_gl_2k.png",
+        "md5": "7aac8d0cd0ea8732d87d516aff074aa0",
+        "size": 6892472
+      },
+      {
+        "path": "rock_wall_02_arm_2k.jpg",
+        "md5": "725dd6f8aaec29ec82358c677c791c97",
+        "size": 848763
+      },
+      {
+        "path": "rock_wall_02_disp_2k.png",
+        "md5": "35bbdad773a4a58bdc581fb4c68b2457",
+        "size": 7360842
       }
     ]
   }
