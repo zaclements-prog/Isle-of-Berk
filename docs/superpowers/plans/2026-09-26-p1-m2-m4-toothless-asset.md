@@ -585,12 +585,12 @@ ANCHORS = {
 LIMBS = {
     "front": {"bones": ["front_scapula", "front_humerus", "front_radius", "front_metacarpal", "front_toes"],
               "pole": V(0, 1, 0),
-              "limits": {"front_scapula": [-25, 25], "front_humerus": [-70, 60], "front_radius": [-5, 120],
-                         "front_metacarpal": [-60, 70], "front_toes": [-40, 45]}},
+              "limits": {"front_scapula": [-25, 25], "front_humerus": [-70, 60], "front_radius": [-35, 120],
+                         "front_metacarpal": [-90, 90], "front_toes": [-80, 80]}},
     "hind": {"bones": ["hind_femur", "hind_tibia", "hind_metatarsal", "hind_toes"],
              "pole": V(0, -1, 0),
-             "limits": {"hind_femur": [-70, 75], "hind_tibia": [-120, 5], "hind_metatarsal": [-10, 110],
-                        "hind_toes": [-40, 45]}},
+             "limits": {"hind_femur": [-70, 75], "hind_tibia": [-55, 70], "hind_metatarsal": [-45, 110],
+                        "hind_toes": [-80, 80]}},
 }
 
 
@@ -2452,6 +2452,7 @@ Toothless is near-black in the film look, so the silhouette and the eyes carry t
   - rig.json `blink: { L: ["blink_L_a", "blink_L_b", "blink_L"], R: [...] }` and `jaw.restCloseRad`.
   - `DragonAsset.setBlink(side: 'L' | 'R', w: number)`: a piecewise-linear mapping over the three keys.
   - `anatomy.JAW_REST_CLOSE_RAD`.
+- Cross-plan: Plan 3's `tests/fixtures/toothlessRig.ts` mirrors every bone head/tail/xAxis and `LIMB_LIMITS`; if `EARS_L` changes here, update that fixture's ear angles in the same commit, or Plan 3's exported-rig test fails.
 - Contract change (ruling): the look pass may change `EARS_L` pitch/yaw/roll, which moves the six ear bones' rest orientation. Bone names, hierarchy and every body joint stay locked, and `rig.json` is re-exported.
 
 - [ ] **Step 1: Blink in-betweens with a no-penetration test**

@@ -188,12 +188,12 @@ ANCHORS = {
 LIMBS = {
     "front": {"bones": ["front_scapula", "front_humerus", "front_radius", "front_metacarpal", "front_toes"],
               "pole": V(0, 1, 0),
-              "limits": {"front_scapula": [-25, 25], "front_humerus": [-70, 60], "front_radius": [-5, 120],
-                         "front_metacarpal": [-60, 70], "front_toes": [-40, 45]}},
+              "limits": {"front_scapula": [-25, 25], "front_humerus": [-70, 60], "front_radius": [-35, 120],
+                         "front_metacarpal": [-90, 90], "front_toes": [-80, 80]}},
     "hind": {"bones": ["hind_femur", "hind_tibia", "hind_metatarsal", "hind_toes"],
              "pole": V(0, -1, 0),
-             "limits": {"hind_femur": [-70, 75], "hind_tibia": [-120, 5], "hind_metatarsal": [-10, 110],
-                        "hind_toes": [-40, 45]}},
+             "limits": {"hind_femur": [-70, 75], "hind_tibia": [-55, 70], "hind_metatarsal": [-45, 110],
+                        "hind_toes": [-80, 80]}},
 }
 
 
