@@ -1,0 +1,60 @@
+[
+  {
+    "id": "forest_ground_04",
+    "type": "textures",
+    "res": "2k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/forest_ground_04",
+    "files": [
+      {
+        "path": "forest_ground_04_diff_2k.jpg",
+        "md5": "f6ce9c8af4316c2627a4b3fbab8ad944",
+        "size": 4529321
+      },
+      {
+        "path": "forest_ground_04_nor_gl_2k.png",
+        "md5": "c7bf8a98de1dee39cb6028e06b8bdd37",
+        "size": 9987026
+      },
+      {
+        "path": "forest_ground_04_arm_2k.jpg",
+        "md5": "c688030cc91fbaab71cbc71fc6b280fe",
+        "size": 3418726
+      }
+    ]
+  },
+  {
+    "id": "rock_moss_set_01",
+    "type": "models",
+    "res": "1k",
+    "license": "CC0",
+    "source": "https://polyhaven.com/a/rock_moss_set_01",
+    "files": [
+      {
+        "path": "rock_moss_set_01_1k.gltf",
+        "md5": "75113cc1c21806cca5d8badad4737af7",
+        "size": 9987
+      },
+      {
+        "path": "textures/rock_moss_set_01_nor_gl_1k.jpg",
+        "md5": "eb7ebd31ad08e78d0497900652ff1568",
+        "size": 209975
+      },
+      {
+        "path": "rock_moss_set_01.bin",
+        "md5": "207a51c9f56d34732e9814bbf9cc07b1",
+        "size": 1466380
+      },
+      {
+        "path": "textures/rock_moss_set_01_rough_1k.jpg",
+        "md5": "ed9d8a2c863262f76f881346e8047c6a",
+        "size": 82624
+      },
+      {
+        "path": "textures/rock_moss_set_01_diff_1k.jpg",
+        "md5": "b8742301e6b4bc5683d2de712e83f772",
+        "size": 168099
+      }
+    ]
+  }
+]
