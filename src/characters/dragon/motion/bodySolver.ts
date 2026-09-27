@@ -111,7 +111,7 @@ export class BodySolver {
     const lowerHind = Math.max(shortfall[0], shortfall[2], 0) * t.shortfallLower;
     const lowerFront = Math.max(shortfall[1], shortfall[3], 0) * t.shortfallLower;
     const w = gait.weights;
-    const moving = clamp(kin.speed, 0, 1);
+    const moving = clamp(kin.speed / t.crouchFullSpeed, 0, 1);
     const crouch = (w[0] * t.crouchWalk + w[1] * t.crouchTrot + w[2] * t.crouchGallop) * moving;
     const ph = gait.phase;
     const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph));
