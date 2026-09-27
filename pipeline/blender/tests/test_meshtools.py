@@ -1,5 +1,6 @@
 import os, unittest
 import bpy
+import bmesh
 import berk_sdf as S
 import meshtools as MT
 import scene as SC
@@ -28,6 +29,19 @@ class MeshToolsTests(unittest.TestCase):
         self.assertLess(MT.symmetry_error(ob), 0.01)
         rep = MT.mesh_report(ob)   # the mirrored halves must come back welded into one closed surface
         self.assertEqual((rep["boundary_edges"], rep["nonmanifold_edges"], rep["islands"]), (0, 0, 1))
+        self.assertEqual(rep["folded_faces"], 0)
+
+    def test_folded_faces_detects_a_flipped_face(self):
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8)
+        ob = bpy.context.active_object
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        bm.faces.ensure_lookup_table()
+        self.assertEqual(MT.folded_faces(bm), [])
+        flipped = bm.faces[len(bm.faces) // 2]
+        bmesh.ops.reverse_faces(bm, faces=[flipped])
+        self.assertEqual(MT.folded_faces(bm), [flipped])
+        bm.free()
 
 
 if __name__ == "__main__":

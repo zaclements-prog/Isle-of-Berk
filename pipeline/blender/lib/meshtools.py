@@ -71,7 +71,8 @@ def folded_faces(bm, limit=-0.5):
     bm.normal_update()
     out = []
     for f in bm.faces:
-        if all(f.normal.dot(g.normal) < -0.2 for e in f.edges for g in e.link_faces if g is not f):
+        neighbours = {g for e in f.edges for g in e.link_faces if g is not f}
+        if neighbours and all(f.normal.dot(g.normal) < -0.2 for g in neighbours):
             out.append(f)
             continue
         ring = Vector()
@@ -114,7 +115,9 @@ def quadriflow(ob, target_faces, symmetry=True, seed=0):
         # Blender's symmetric mode remeshes one half and mirrors it WITHOUT welding: two islands meeting along
         # X = 0 as open boundaries (seen in Blender 5.1). Weld them into one closed surface.
         weld_mirror_seam(ob)
-    unfold(ob, mirror_x=symmetry)
+    left = unfold(ob, mirror_x=symmetry)
+    if left:
+        raise RuntimeError(f"QuadriFlow left {left} folded faces after repair (see meshtools.unfold)")
     for p in ob.data.polygons:
         p.use_smooth = True
 
@@ -130,6 +133,7 @@ def mesh_report(ob):
         "boundary_edges": sum(1 for e in bm.edges if e.is_boundary),
         "nonmanifold_edges": sum(1 for e in bm.edges if not e.is_manifold and not e.is_boundary),
         "short_edges": sum(1 for e in bm.edges if e.calc_length() < 1e-4),
+        "folded_faces": len(folded_faces(bm)),
     }
     seen, islands = set(), 0
     for f in bm.faces:
