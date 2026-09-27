@@ -43,8 +43,10 @@ export class BodyProxies {
    * Slide-resolve a body displacement against steep geometry: each proxy moved by `delta` is pushed out along the
    * horizontal part of its contact normal (moving s along n_h removes s·|n_h| of depth, so s = depth / |n_h|).
    * Ground-like contacts (normal.y ≥ maxNormalY) are left to the body solver, so slopes and steps never block.
+   * `maxNormalY` is a hand-set motion constant (spec §6.16) and must come from live tuning — callers pass
+   * `tuning.body.wallNormalY`, never a literal, so no call site can silently drift from the one typed config.
    */
-  resolveMove(world: CollisionWorld, delta: THREE.Vector3, maxNormalY = 0.64): THREE.Vector3 {
+  resolveMove(world: CollisionWorld, delta: THREE.Vector3, maxNormalY: number): THREE.Vector3 {
     this.blocked = false;
     let deepest = 0;
     for (let pass = 0; pass < 2; pass++) {

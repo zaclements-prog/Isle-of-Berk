@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { BodyProxies } from '../../src/characters/dragon/motion/proxies';
 import { RigSkeleton } from '../../src/characters/dragon/motion/skeleton';
+import { DEFAULT_TUNING } from '../../src/characters/dragon/motion/tuning';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
 import { wallWorld, rampWorld } from '../fixtures/worlds';
 
@@ -22,7 +23,7 @@ describe('BodyProxies', () => {
   it('stops the body at a wall and keeps the tangential slide', () => {
     const p = setup();
     const world = wallWorld(3, 3); // near face at z = 2.5 — just ahead of the muzzle (z 2.02, r 0.2)
-    const d = p.resolveMove(world, new THREE.Vector3(0.5, 0, 0.5));
+    const d = p.resolveMove(world, new THREE.Vector3(0.5, 0, 0.5), DEFAULT_TUNING.body.wallNormalY);
     expect(p.blocked).toBe(true);
     expect(d.x).toBeCloseTo(0.5, 6);
     expect(d.z).toBeLessThan(0.3);
@@ -34,8 +35,15 @@ describe('BodyProxies', () => {
   it('ignores ground-like contacts so slopes never block walking', () => {
     const p = setup();
     // 15° ramp whose surface just meets the belly: every contact along the body is the ramp's top face
-    const d = p.resolveMove(rampWorld(15, -2.7), new THREE.Vector3(0, 0, 0.3));
+    const d = p.resolveMove(rampWorld(15, -2.7), new THREE.Vector3(0, 0, 0.3), DEFAULT_TUNING.body.wallNormalY);
     expect(d.z).toBeCloseTo(0.3, 9);
     expect(p.blocked).toBe(false);
+  });
+  it('honours a stricter maxNormalY: the same ramp now counts as wall-like', () => {
+    const p = setup();
+    // Same 15° ramp (normal.y ≈ cos(15°) ≈ 0.966) but with maxNormalY raised past that — no longer ground-like.
+    const d = p.resolveMove(rampWorld(15, -2.7), new THREE.Vector3(0, 0, 0.3), 0.99);
+    expect(p.blocked).toBe(true);
+    expect(d.z).not.toBeCloseTo(0.3, 6);
   });
 });
