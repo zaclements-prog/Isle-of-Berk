@@ -41,14 +41,32 @@ export interface MotionTuning {
     yawLimitDeg: number; pitchLimitDeg: number; headOmega: number; eyeOmega: number; eyeLimitDeg: number;
     leadGain: number; aheadDist: number; idleCameraDelay: number; glanceMin: number; glanceMax: number; glanceHold: number;
     weights: number[];
+    /** Distance (m) of the idle-glance look target from the head. */
+    glanceDist: number;
+    /** Half-range (deg) of a random idle glance's yaw, sampled uniformly in ±this. */
+    glanceYawRangeDeg: number;
+    /** Half-range (deg) of a random idle glance's pitch, sampled uniformly in ±this. */
+    glancePitchRangeDeg: number;
   };
   tail: {
     omegaBase: number; omegaTip: number; zeta: number; droopDeg: number; turnGain: number;
     latAccelGain: number; vertAccelGain: number; gallopRaiseDeg: number; clearance: number;
+    /** Fallback tail radius (m) used only if the rig defines no tail proxies. */
+    defaultRadius: number;
   };
   ears: { omega: number; zeta: number; twitchMin: number; twitchMax: number; twitchImpulse: number; gallopBackDeg: number };
-  fins: { omega: number; zeta: number; flutterDeg: number; flutterHz: number };
-  breath: { calmPerMin: number; exertedPerMin: number; recoverTime: number; amplitudeDeg: number };
+  fins: {
+    omega: number; zeta: number; flutterDeg: number; flutterHz: number;
+    /** Phase offset (rad) between successive fin ribs' flutter, for a travelling-wave look. */
+    phaseStep: number;
+    /** Speed (m/s) at which fin flutter reaches full amplitude; it ramps in below this. */
+    flutterFullSpeed: number;
+  };
+  breath: {
+    calmPerMin: number; exertedPerMin: number; recoverTime: number; amplitudeDeg: number;
+    /** Speed (m/s) at which exertion (and breath rate) reaches its maximum, absent an explicit `exertion` input. */
+    exertionFullSpeed: number;
+  };
   climb: {
     climbMinDeg: number; wallMinDeg: number; climbSpeed: number; scrambleSpeed: number; maxTiltDeg: number;
     cadenceScale: number; strideScale: number; swingScale: number; wingsOpen: number;
@@ -86,14 +104,15 @@ export const DEFAULT_TUNING: MotionTuning = {
   look: {
     yawLimitDeg: 100, pitchLimitDeg: 40, headOmega: 5, eyeOmega: 28, eyeLimitDeg: 25, leadGain: 0.35, aheadDist: 6,
     idleCameraDelay: 1.5, glanceMin: 3, glanceMax: 7, glanceHold: 1.2, weights: [0.12, 0.18, 0.22, 0.23, 0.25],
+    glanceDist: 5, glanceYawRangeDeg: 60, glancePitchRangeDeg: 15,
   },
   tail: {
     omegaBase: 14, omegaTip: 6, zeta: 0.45, droopDeg: 1.5, turnGain: 0.1, latAccelGain: 0.02, vertAccelGain: 0.015,
-    gallopRaiseDeg: 2.5, clearance: 0.04,
+    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05,
   },
   ears: { omega: 16, zeta: 0.35, twitchMin: 1.5, twitchMax: 5, twitchImpulse: 5, gallopBackDeg: 25 },
-  fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3 },
-  breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8 },
+  fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5 },
+  breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8, exertionFullSpeed: 10 },
   climb: {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
     swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 1.5, hopUpSpeed: 1.2, probeAhead: 1.2,
