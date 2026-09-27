@@ -6,10 +6,14 @@ import { createRenderer } from '../render/renderer';
 import { createPostStack, type PostStack } from '../render/post';
 import { LightingRig } from '../render/lighting';
 import { SkySystem } from '../render/sky';
-import { installFogChunks, applyBerkFog, setFogParams, GOLDEN_FOG } from '../render/fog';
+import { installFogChunks, applyBerkFog, setFogParams, GOLDEN_FOG, berkFogProxy } from '../render/fog';
 import { createMaterialPipeline, type MaterialPipeline } from '../render/materials';
 import { gpuFence, measureRenderCost, rendererStats } from '../dev/perf';
 import { disposeObject } from '../dev/disposeObject';
+import type { N8AODisplayMode } from 'n8ao';
+
+/** N8AO's display modes in its own index order (configuration.renderMode). */
+const AO_DISPLAY_MODES: readonly N8AODisplayMode[] = ['Combined', 'AO', 'No AO', 'Split', 'Split AO'];
 
 export interface App {
   readonly renderer: THREE.WebGLRenderer;
@@ -59,6 +63,9 @@ export function createApp(container: HTMLElement): App {
   const renderer = createRenderer(container, preset);
   renderer.info.autoReset = false; // several renders per frame (AO, bloom...) — reset once per frame
   const scene = new THREE.Scene();
+  // Not the look (Berk materials ignore it, see fog.ts): N8AO only fades AO under scene.fog, so this
+  // FogExp2 stand-in, refit by every setFogParams, keeps AO from darkening the Berk haze.
+  scene.fog = berkFogProxy;
   const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 6000);
 
   const lighting = new LightingRig(scene, camera, preset);
@@ -105,6 +112,12 @@ export function createApp(container: HTMLElement): App {
     exposure: (v?: number) => {
       if (v !== undefined) renderer.toneMappingExposure = v;
       return renderer.toneMappingExposure;
+    },
+    /** N8AO's display mode ('AO' shows the AO term alone); null on presets without AO. */
+    aoDisplay: (mode?: N8AODisplayMode) => {
+      if (!post.ao) return null;
+      if (mode !== undefined) post.ao.setDisplayMode(mode);
+      return AO_DISPLAY_MODES[post.ao.configuration.renderMode] ?? null;
     },
     perf: (frames = 30) => {
       renderer.info.reset();

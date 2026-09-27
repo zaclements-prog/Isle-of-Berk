@@ -13,7 +13,8 @@ app.add(course.root);
 
 const grid = new THREE.GridHelper(160, 160, 0x445566, 0x2b3440);
 grid.position.y = 0.01;
-app.scene.add(grid);
+grid.material.fog = false; // a dev overlay: keep it crisp under scene.fog (the N8AO fog proxy)
+app.scene.add(grid); // exempt from the material pipeline (Ruling 3)
 
 app.camera.position.set(0, 18, 38);
 const controls = new OrbitControls(app.camera, app.renderer.domElement);

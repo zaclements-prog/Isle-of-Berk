@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { berkFogFactor, GOLDEN_FOG, applyBerkFog, fogUniforms, installFogChunks } from '../../src/render/fog';
+import {
+  berkFogFactor, GOLDEN_FOG, applyBerkFog, fogUniforms, installFogChunks, berkFogProxy, setFogParams,
+} from '../../src/render/fog';
 import type { ShaderParams } from '../../src/render/materials';
 
 describe('berkFogFactor', () => {
@@ -28,6 +30,41 @@ describe('berkFogFactor', () => {
     const f = berkFogFactor(p, cam, new THREE.Vector3(0, 2, -100));
     const expected = 1 - Math.exp(-p.density * Math.exp(-p.heightFalloff * (2 - p.baseHeight)) * 100);
     expect(f).toBeCloseTo(expected, 9);
+  });
+});
+
+describe('berkFogProxy (three scene.fog stand-in that N8AO fades AO under)', () => {
+  const sunDir = new THREE.Vector3(0, 1, 0);
+  const eye = new THREE.Vector3(0, 1.6, 0);
+  // N8AO's EffectCompositer fades AO by FogExp2's curve over view depth: 1 - exp(-(density * d)^2).
+  const proxyOpacity = (d: number) => 1 - Math.exp(-((berkFogProxy.density * d) ** 2));
+  const berkLevel = (d: number) => berkFogFactor(GOLDEN_FOG, eye, new THREE.Vector3(0, 1.6, -d));
+
+  it('is a FogExp2 whose density and colour are recomputed whenever setFogParams runs', () => {
+    expect(berkFogProxy).toBeInstanceOf(THREE.FogExp2);
+    setFogParams(GOLDEN_FOG, sunDir);
+    const golden = berkFogProxy.density;
+    expect(golden).toBeGreaterThan(0);
+    expect(berkFogProxy.color.equals(GOLDEN_FOG.color)).toBe(true);
+
+    const thicker = { ...GOLDEN_FOG, density: GOLDEN_FOG.density * 2, color: new THREE.Color(0.3, 0.2, 0.1) };
+    setFogParams(thicker, sunDir);
+    expect(berkFogProxy.density).toBeGreaterThan(golden);
+    expect(berkFogProxy.color.equals(thicker.color)).toBe(true);
+
+    setFogParams(GOLDEN_FOG, sunDir);
+    expect(berkFogProxy.density).toBe(golden);
+  });
+
+  it('matches the golden Berk fog opacity at 120 m on a level ray at 1.6 m eye height (within 0.05)', () => {
+    setFogParams(GOLDEN_FOG, sunDir);
+    expect(Math.abs(proxyOpacity(120) - berkLevel(120))).toBeLessThan(0.05);
+  });
+
+  it('stays within 0.08 of the golden Berk fog across the 75–150 m fit range', () => {
+    // exp² under-fades near and over-fades far versus the Berk fog's exp; these are the fit's residuals.
+    setFogParams(GOLDEN_FOG, sunDir);
+    for (const d of [75, 100, 150]) expect(Math.abs(proxyOpacity(d) - berkLevel(d)), `${d} m`).toBeLessThan(0.08);
   });
 });
 

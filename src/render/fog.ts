@@ -45,6 +45,41 @@ export const fogUniforms = {
   berkFogMaxOpacity: { value: 1 },
 };
 
+/**
+ * three's own fog, set as `scene.fog` (createApp) as a stand-in for the Berk fog wherever only three's
+ * fog is understood. N8AO fades AO out under `scene.fog` alone: its EffectCompositer reads the
+ * FogExp2 density and does `ao = mix(ao, 1, 1 - exp(-(density * viewDepth)^2))`. Without this, AO
+ * darkens distant geometry the Berk fog has already hazed (dark smudges in the haze).
+ *
+ * Berk materials are unaffected. With scene.fog set, three defines USE_FOG (and FOG_EXP2) on every
+ * `fog: true` material, but our fog_fragment (installFogChunks) tests BERK_FOG first and only falls
+ * back to three's fog code in its #else branch; USE_FOG just adds three's (unused) fogColor/fogDensity
+ * uniforms and vFogDepth varying. So the proxy colours only non-Berk `fog: true` materials — none
+ * but the dev overlays, which turn fog off (lab grid, viewer skeleton).
+ *
+ * Colour follows the Berk haze colour; density is refit on every setFogParams (fogProxyDensity).
+ */
+export const berkFogProxy = new THREE.FogExp2(0x000000, 0);
+
+/** Eye height above the fog base (m) and distance (m) at which the proxy matches the Berk fog. */
+export const FOG_PROXY_EYE_HEIGHT = 1.6;
+export const FOG_PROXY_MATCH_DISTANCE = 120;
+
+/**
+ * FogExp2 density whose opacity equals the Berk fog's at FOG_PROXY_MATCH_DISTANCE on a level ray at
+ * FOG_PROXY_EYE_HEIGHT: 1 - exp(-(ρ·120)²) = berkFogFactor → ρ = sqrt(-ln(1 - F)) / 120.
+ * Match at 120 m (closed form) rather than a least-squares fit: for GOLDEN_FOG it lands within 0.2%
+ * of the continuous least-squares fit over 75–150 m (ρ ≈ 0.00525 vs 0.00526). exp² can't follow the
+ * Berk fog's exp everywhere: it under-fades near (75 m: 0.14 vs 0.22) and over-fades far (150 m:
+ * 0.46 vs 0.39), so near AO is barely touched and distant AO is gone a little early. The fit
+ * ignores camera height and view angle (N8AO fades by view-space depth, not ray distance).
+ */
+export function fogProxyDensity(p: FogParams): number {
+  const y = p.baseHeight + FOG_PROXY_EYE_HEIGHT;
+  const f = berkFogFactor(p, new THREE.Vector3(0, y, 0), new THREE.Vector3(0, y, -FOG_PROXY_MATCH_DISTANCE));
+  return Math.sqrt(-Math.log(1 - Math.min(f, 0.999))) / FOG_PROXY_MATCH_DISTANCE;
+}
+
 export function setFogParams(p: FogParams, sunDir: THREE.Vector3): void {
   fogUniforms.berkFogColor.value.copy(p.color);
   fogUniforms.berkFogSunColor.value.copy(p.sunColor);
@@ -54,6 +89,8 @@ export function setFogParams(p: FogParams, sunDir: THREE.Vector3): void {
   fogUniforms.berkFogBaseHeight.value = p.baseHeight;
   fogUniforms.berkFogInscatterExp.value = p.inscatterExponent;
   fogUniforms.berkFogMaxOpacity.value = p.maxOpacity;
+  berkFogProxy.color.copy(p.color);
+  berkFogProxy.density = fogProxyDensity(p);
 }
 
 /** CPU reference of the shader maths (tests + tools): exponential height fog integrated along the view ray. */
@@ -111,6 +148,8 @@ export function installFogChunks(): void {
   uniform float berkFogMaxOpacity;
 #endif
 `;
+  // BERK_FOG is tested before three's own fog code, which survives only in the #else branch: a Berk
+  // material ignores scene.fog (the N8AO proxy, berkFogProxy) even though three defines USE_FOG on it.
   C.fog_fragment = `
 #ifdef BERK_FOG
   {

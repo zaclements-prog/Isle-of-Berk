@@ -6,7 +6,12 @@ declare module 'n8ao' {
     | 'Performance' | 'Low' | 'Medium' | 'High' | 'Ultra'
     | 'Neural-Low' | 'Neural-Medium' | 'Neural-High';
 
+  /** setDisplayMode(name) stores the name's index in this list as configuration.renderMode. */
+  export type N8AODisplayMode = 'Combined' | 'AO' | 'No AO' | 'Split' | 'Split AO';
+
   export interface N8AOConfiguration {
+    /** Index into the N8AODisplayMode list, in its declared order (0 = 'Combined'). */
+    renderMode: number;
     aoRadius: number;
     distanceFalloff: number;
     intensity: number;
@@ -28,7 +33,7 @@ declare module 'n8ao' {
     configuration: N8AOConfiguration;
     beautyRenderTarget: WebGLRenderTarget;
     setQualityMode(mode: N8AOQualityMode): void;
-    setDisplayMode(mode: 'Combined' | 'AO' | 'No AO' | 'Split' | 'Split AO'): void;
+    setDisplayMode(mode: N8AODisplayMode): void;
     setSize(width: number, height: number): void;
   }
 }

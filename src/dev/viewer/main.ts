@@ -128,7 +128,8 @@ async function load(url: string) {
   mixer = clips.length ? new THREE.AnimationMixer(current) : null;
   helper = new THREE.SkeletonHelper(current);
   helper.visible = state.skeleton;
-  app.scene.add(helper);
+  (helper.material as THREE.LineBasicMaterial).fog = false; // a dev overlay: keep it crisp under scene.fog (the N8AO fog proxy)
+  app.scene.add(helper); // exempt from the material pipeline (Ruling 3)
   buildMorphUi();
   buildClipUi();
   return stats();
