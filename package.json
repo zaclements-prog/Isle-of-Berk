@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "cc0:fetch": "node pipeline/cc0/fetch.mjs",
-    "cc0:textures": "node pipeline/cc0/process-textures.mjs"
+    "cc0:textures": "node pipeline/cc0/process-textures.mjs",
+    "terrain:bake": "node pipeline/terrain/bake.mjs"
   },
   "dependencies": {
     "lil-gui": "0.21.0",

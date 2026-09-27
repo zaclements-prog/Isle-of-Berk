@@ -248,3 +248,43 @@ describe('masks', () => {
     expect(wet[8 * size + 8]).toBeGreaterThan(wet[8 * size + 1]);
   });
 });
+
+import { readFileSync, existsSync } from 'node:fs';
+import sharp from 'sharp';
+
+const DIR = 'public/assets/world/cove/';
+describe.skipIf(!existsSync(`${DIR}terrain.json`))('committed Cove terrain', () => {
+  const header = existsSync(`${DIR}terrain.json`) ? JSON.parse(readFileSync(`${DIR}terrain.json`, 'utf8')) : null;
+  it('has a consistent header and a size² uint16 heightfield', () => {
+    expect(header.version).toBe(1);
+    expect(header.size).toBe(1024);
+    expect(readFileSync(DIR + header.files.height).length).toBe(header.size * header.size * 2);
+    expect(header.layers).toEqual(['grass', 'forest', 'moss', 'mud', 'pebbles', 'rock']);
+  });
+  it('puts half the hollow floor in the sun (spec §7.8)', () => {
+    expect(header.stats.floorLitFraction).toBeGreaterThan(0.4);
+    expect(header.stats.floorLitFraction).toBeLessThan(0.6);
+  });
+  it('spawns on the lit hollow floor, away from the pond', () => {
+    const s = header.spawn[0];
+    expect(Math.hypot(s.x, s.z)).toBeLessThan(30);
+    const p = header.pond;
+    const a = (p.angle * Math.PI) / 180;
+    const u = (s.x - p.cx) * Math.cos(a) + (s.z - p.cz) * Math.sin(a);
+    const v = -(s.x - p.cx) * Math.sin(a) + (s.z - p.cz) * Math.cos(a);
+    expect((u / p.a) ** 2 + (v / p.b) ** 2).toBeGreaterThan(1.5);
+  });
+  it('splat maps are 1024² RGBA with six layer weights summing to 255', async () => {
+    const A = await sharp(DIR + header.files.splatA).raw().toBuffer({ resolveWithObject: true });
+    const B = await sharp(DIR + header.files.splatB).raw().toBuffer({ resolveWithObject: true });
+    for (const img of [A, B]) {
+      expect(img.info.width).toBe(1024);
+      expect(img.info.height).toBe(1024);
+      expect(img.info.channels).toBe(4);
+    }
+    for (let k = 0; k < 1024 * 1024; k += 997) {
+      const s = A.data[k * 4] + A.data[k * 4 + 1] + A.data[k * 4 + 2] + A.data[k * 4 + 3] + B.data[k * 4] + B.data[k * 4 + 1];
+      expect(s).toBe(255);
+    }
+  });
+});
