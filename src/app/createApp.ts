@@ -52,6 +52,50 @@ export function removeFromApp(
   disposeObject(root);
 }
 
+/** What the per-frame render touches (narrowed so tests can stub it). */
+export interface FrameParts {
+  renderer: Pick<THREE.WebGLRenderer, 'info' | 'shadowMap'>;
+  camera: THREE.Camera;
+  lighting: Pick<LightingRig, 'update'>;
+  sky: Pick<SkySystem, 'update'>;
+  post: Pick<PostStack, 'render'>;
+  simTime: () => number;
+}
+
+/**
+ * The main per-frame render: createApp runs it at loop priority 1000 and berk.perf times it.
+ * Shadow maps update exactly once per frame. autoUpdate is off, and needsUpdate is raised here at
+ * the top of the frame: the frame's first scene render (N8AO's beauty pass, or RenderPass on Low)
+ * redraws the cascades and clears the flag, and every later scene render reuses the maps — N8AO's
+ * two transparency re-renders now, mirror / refraction passes later. Full-screen passes carry no
+ * lights, so they never consume the flag. Anything that renders the scene outside this function
+ * (e.g. the lab's film strip) sees the maps from the last frame.
+ */
+export function createFrameRender(p: FrameParts): () => void {
+  p.renderer.shadowMap.autoUpdate = false;
+  return () => {
+    p.renderer.info.reset(); // several renders per frame (AO, bloom...) — reset once per frame
+    p.renderer.shadowMap.needsUpdate = true;
+    p.camera.updateMatrixWorld();
+    p.lighting.update();
+    p.sky.update(p.simTime());
+    p.post.render(0);
+  };
+}
+
+/**
+ * bfcache. renderer.ts disposes the renderer (and loses its context) on pagehide, so a page restored
+ * from the back/forward cache would keep rendering into a dead context. Stop the loop on pagehide,
+ * and reload a restored page (pageshow with persisted = true). A normal first load has persisted =
+ * false.
+ */
+export function bindPageLifecycle(target: EventTarget, loop: Pick<GameLoop, 'stop'>, reload: () => void): void {
+  target.addEventListener('pagehide', () => loop.stop());
+  target.addEventListener('pageshow', (e) => {
+    if ((e as PageTransitionEvent).persisted) reload();
+  });
+}
+
 export function createApp(container: HTMLElement): App {
   installFogChunks();
   // Probe the GPU name before choosing a preset (the real renderer is created with that preset).
@@ -61,7 +105,7 @@ export function createApp(container: HTMLElement): App {
   const preset = choosePreset(gpuName, location.search);
 
   const renderer = createRenderer(container, preset);
-  renderer.info.autoReset = false; // several renders per frame (AO, bloom...) — reset once per frame
+  renderer.info.autoReset = false; // the frame render resets it once per frame (createFrameRender)
   const scene = new THREE.Scene();
   // Not the look (Berk materials ignore it, see fog.ts): N8AO only fades AO under scene.fog, so this
   // FogExp2 stand-in, refit by every setFogParams, keeps AO from darkening the Berk haze.
@@ -78,13 +122,19 @@ export function createApp(container: HTMLElement): App {
   const post = createPostStack(renderer, scene, camera, preset);
   const loop = new GameLoop();
 
-  loop.addRender(() => {
-    renderer.info.reset();
-    camera.updateMatrixWorld();
-    lighting.update();
-    sky.update(loop.simTime);
-    post.render(0);
-  }, 1000);
+  const renderFrame = createFrameRender({ renderer, camera, lighting, sky, post, simTime: () => loop.simTime });
+  loop.addRender(renderFrame, 1000);
+  bindPageLifecycle(window, loop, () => location.reload());
+
+  // WebGL context restore (e.g. after a GPU reset). three r186 handles most of it itself: its own
+  // webglcontextrestored listener (registered in the WebGLRenderer constructor, so it runs before
+  // this one) re-runs initGLContext(), which rebuilds all renderer state from scratch — fresh
+  // WebGLProperties, program cache, textures, geometries — so every material recompiles (our
+  // onBeforeCompile hooks run again) and every texture / render target re-uploads on its next use,
+  // with no needsUpdate marking; it also restores shadowMap.enabled/autoUpdate/needsUpdate/type and
+  // info.autoReset. What it cannot restore is content that was drawn on the GPU once: the PMREM
+  // environment baked from the sky. Shadow maps and post targets are redrawn every frame anyway.
+  renderer.domElement.addEventListener('webglcontextrestored', () => sky.onContextRestored());
 
   addEventListener('resize', () => {
     const w = container.clientWidth;
@@ -128,11 +178,10 @@ export function createApp(container: HTMLElement): App {
       return AO_DISPLAY_MODES[post.ao.configuration.renderMode] ?? null;
     },
     perf: (frames = 30) => {
-      renderer.info.reset();
-      post.render(0);
+      renderFrame(); // one whole frame (one shadow update + the post stack) for the per-frame stats
       const stats = rendererStats(renderer);
       // gpuFence, not the context itself: Chrome's WebGL finish() doesn't wait for the GPU.
-      const cost = measureRenderCost(() => post.render(0), gpuFence(renderer.getContext()), frames);
+      const cost = measureRenderCost(renderFrame, gpuFence(renderer.getContext()), frames);
       return { ...cost, fpsEquivalent: 1000 / cost.msPerFrame, ...stats, preset: preset.name, gpu: gpuName };
     },
   });

@@ -41,7 +41,7 @@ const GradeShader = {
       vec3 graded = texture(tLut, uvw).rgb;
       vec2 d = vUv - 0.5;
       d.x *= aspect;
-      float v = smoothstep(0.9, 0.3, length(d));
+      float v = 1.0 - smoothstep(0.3, 0.9, length(d)); // edges in order: GLSL ES leaves edge0 >= edge1 undefined
       graded *= mix(1.0 - vignette, 1.0, v);
       gl_FragColor = vec4(graded, c.a);
     }`,
@@ -83,13 +83,23 @@ function patchBloomPrefilter(bloom: UnrealBloomPass): void {
       '\t\t\tgl_FragColor = vec4( texel.rgb * ( excess / max( v, 1e-4 ) ), 1.0 );');
 }
 
-/** n8ao 2.0.1 has no dispose(): free every render target / material / texture it holds directly. */
+/**
+ * n8ao 2.0.1 has no dispose(): free every render target / material / texture it holds directly, and
+ * the material inside each of its FullScreenTriangle wrappers (effectCompositerQuad, effectShaderQuad,
+ * accumulationQuad, poissonBlurQuad, and depthDownsampleQuad / depthCopyPass when half-res /
+ * transparency-aware). Never call a wrapper's own dispose(): it also disposes the module-level
+ * triangle geometry that every wrapper of every N8AOPass shares. Each resource is freed once.
+ */
 function disposeN8AOResources(pass: N8AOPass): void {
+  const owned = new Set<{ dispose(): void }>();
   for (const value of Object.values(pass as unknown as Record<string, unknown>)) {
     if (value instanceof THREE.WebGLRenderTarget || value instanceof THREE.Material || value instanceof THREE.Texture) {
-      value.dispose();
+      owned.add(value);
+    } else if (value && (value as { material?: unknown }).material instanceof THREE.Material) {
+      owned.add((value as { material: THREE.Material }).material);
     }
   }
+  for (const r of owned) r.dispose();
 }
 
 export function createPostStack(
@@ -125,6 +135,9 @@ export function createPostStack(
     ao.configuration.intensity = 2.2;
     ao.setQualityMode(preset.aoQuality);
     ao.configuration.halfRes = preset.aoHalfRes;
+    // Explicit, so N8AO stops auto-detecting: that walks the whole scene every frame until the first
+    // transparent object appears, then allocates two full-size targets mid-game (a hitch).
+    ao.configuration.transparencyAware = true;
     if (useMsaa) {
       const beauty = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: preset.msaaSamples });
       beauty.depthTexture = new THREE.DepthTexture(size.x, size.y, THREE.UnsignedIntType);
@@ -177,6 +190,7 @@ export function createPostStack(
       // never disposes the passes it holds, so each one is freed explicitly first.
       for (const pass of composer.passes) (pass as { dispose?: () => void }).dispose?.();
       if (ao) disposeN8AOResources(ao);
+      bloom?.materialHighPassFilter.dispose(); // UnrealBloomPass.dispose() skips its high-pass material
       (gradePass.uniforms.tLut.value as THREE.Data3DTexture).dispose();
       composer.dispose();
     },

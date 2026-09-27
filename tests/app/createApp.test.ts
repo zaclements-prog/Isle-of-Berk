@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { removeFromApp } from '../../src/app/createApp';
+import { removeFromApp, createFrameRender, bindPageLifecycle, type FrameParts } from '../../src/app/createApp';
 import { LightingRig } from '../../src/render/lighting';
 import { applyBerkFog } from '../../src/render/fog';
 import { createMaterialPipeline, type ShaderParams } from '../../src/render/materials';
@@ -35,5 +35,61 @@ describe('removeFromApp (App.remove)', () => {
     material.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
     expect(shader.uniforms.berkFogColor).toBeDefined();
     expect(shader.uniforms.CSM_cascades).toBeUndefined();
+  });
+});
+
+describe('createFrameRender (the main per-frame render, loop priority 1000)', () => {
+  it('updates the shadow maps exactly once per frame, however often the post stack renders the scene', () => {
+    let needsUpdate = false;
+    let needsUpdateSets = 0;
+    let shadowPasses = 0;
+    const shadowMap = {
+      autoUpdate: true,
+      get needsUpdate() { return needsUpdate; },
+      set needsUpdate(v: boolean) { if (v) needsUpdateSets++; needsUpdate = v; },
+    };
+    // What WebGLShadowMap.render (r186) does at the start of every renderer.render(scene, ...):
+    // skip unless autoUpdate or needsUpdate; after redrawing the maps, clear needsUpdate.
+    const renderScene = () => {
+      if (!shadowMap.autoUpdate && !shadowMap.needsUpdate) return;
+      shadowPasses++;
+      shadowMap.needsUpdate = false;
+    };
+    const order: string[] = [];
+    const frame = createFrameRender({
+      renderer: { info: { reset: () => order.push('info.reset') }, shadowMap } as unknown as FrameParts['renderer'],
+      camera: new THREE.PerspectiveCamera(),
+      lighting: { update: () => order.push('lighting.update') },
+      sky: { update: () => order.push('sky.update') },
+      // N8AO with transparencyAware: beauty + two transparency renders of the scene.
+      post: { render: () => { order.push('post.render'); renderScene(); renderScene(); renderScene(); } },
+      simTime: () => 0,
+    });
+    expect(shadowMap.autoUpdate).toBe(false);
+
+    frame();
+    expect(needsUpdateSets).toBe(1);
+    expect(shadowPasses).toBe(1);
+    expect(order).toEqual(['info.reset', 'lighting.update', 'sky.update', 'post.render']);
+
+    frame();
+    expect(needsUpdateSets).toBe(2);
+    expect(shadowPasses).toBe(2);
+  });
+});
+
+describe('bindPageLifecycle (bfcache)', () => {
+  it('stops the loop on pagehide and reloads only a page restored from the back/forward cache', () => {
+    const target = new EventTarget();
+    const loop = { stop: vi.fn() };
+    const reload = vi.fn();
+    bindPageLifecycle(target, loop, reload);
+
+    target.dispatchEvent(new Event('pagehide'));
+    expect(loop.stop).toHaveBeenCalledTimes(1);
+    target.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false })); // first load
+    expect(reload).not.toHaveBeenCalled();
+    target.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true })); // bfcache restore
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

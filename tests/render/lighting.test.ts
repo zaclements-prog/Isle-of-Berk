@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+import * as CSMShaderModule from 'three/addons/csm/CSMShader.js';
 import { LightingRig } from '../../src/render/lighting';
 import { applyBerkFog } from '../../src/render/fog';
 import { PRESETS } from '../../src/render/quality';
@@ -97,5 +98,79 @@ describe('LightingRig', () => {
     buildRig(); // each CSM constructor re-installs its unrepaired chunk
     const chunk = THREE.ShaderChunk.lights_fragment_begin;
     expect(chunk.split('material.dfg = texture2D').length - 1).toBe(1);
+  });
+
+  it('sets up MeshToonMaterial for CSM (unset, it would take every cascade light at full strength)', () => {
+    const rig = buildRig();
+    const m = new THREE.MeshToonMaterial();
+    rig.setupMaterial(m);
+    expect(rig.csm.shaders.has(m)).toBe(true);
+  });
+
+  it('skips CSM for an iridescent material and logs an error (CSM\'s chunk writes iridescenceF0)', () => {
+    const rig = buildRig();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const m = new THREE.MeshPhysicalMaterial({ iridescence: 1 });
+      rig.setupMaterial(m);
+      expect(rig.csm.shaders.has(m)).toBe(false);
+      expect((m as unknown as { defines?: Record<string, unknown> }).defines?.USE_CSM).toBeUndefined();
+      expect(error).toHaveBeenCalledTimes(1);
+      const plain = new THREE.MeshPhysicalMaterial(); // iridescence 0: set up as usual
+      rig.setupMaterial(plain);
+      expect(rig.csm.shaders.has(plain)).toBe(true);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('dispose() frees every cascade light\'s shadow map', () => {
+    const rig = buildRig();
+    const maps = rig.csm.lights.map((l) => {
+      l.shadow.map = new THREE.WebGLRenderTarget(1, 1); // the renderer allocates it on the first shadow pass
+      return vi.spyOn(l.shadow.map, 'dispose');
+    });
+    rig.dispose();
+    expect(maps.length).toBe(PRESETS.low.shadowCascades);
+    for (const spy of maps) expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Each CSM constructor installs CSMShader.lights_fragment_begin; mutating it simulates a three
+// upgrade reaching repairCsmLightsChunk()'s guard paths.
+describe('CSM lights-chunk repair guards', () => {
+  // @types/three declares CSMShader as an interface only; at runtime the module exports the object.
+  const csm = (CSMShaderModule as unknown as { CSMShader: { lights_fragment_begin: string } }).CSMShader;
+  const ANCHOR = 'IncidentLight directLight;';
+
+  function withChunk(chunk: (original: string) => string, check: (installed: string, error: ReturnType<typeof vi.spyOn>) => void) {
+    const original = csm.lights_fragment_begin;
+    const installedBefore = THREE.ShaderChunk.lights_fragment_begin;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const mutated = chunk(original);
+      expect(mutated).not.toBe(original);
+      csm.lights_fragment_begin = mutated;
+      buildRig();
+      check(mutated, error);
+    } finally {
+      csm.lights_fragment_begin = original;
+      THREE.ShaderChunk.lights_fragment_begin = installedBefore;
+      error.mockRestore();
+    }
+  }
+
+  it('leaves the chunk untouched and logs an error when the splice anchor is missing', () => {
+    withChunk((c) => c.replace(ANCHOR, 'IncidentLight  directLight;'), (installed, error) => {
+      expect(THREE.ShaderChunk.lights_fragment_begin).toBe(installed);
+      expect(error).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('is a no-op (idempotent) once the installed chunk already sets material.dfg', () => {
+    withChunk((c) => c.replace(ANCHOR, `/* material.dfg set up upstream */\n${ANCHOR}`), (installed, error) => {
+      expect(THREE.ShaderChunk.lights_fragment_begin).toBe(installed);
+      expect(error).not.toHaveBeenCalled();
+    });
   });
 });

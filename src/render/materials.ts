@@ -21,6 +21,13 @@ const isDefaultOnBeforeCompile = (material: THREE.Material) =>
  * Compose shader patches on one material. three.js has a single onBeforeCompile slot and CSM, fog,
  * wind, etc. all need it — every patch in this project goes through here, never direct assignment.
  * A pre-existing onBeforeCompile (e.g. from CSM.setupMaterial) runs first.
+ *
+ * Contract: a hook KEY must fully determine the shader text its hook injects. three reuses a compiled
+ * program for every material whose program cache key matches, and with composed hooks that key is
+ * the wrapper's source (Material.customProgramCacheKey() is onBeforeCompile.toString() — identical
+ * for every material) plus the hook keys. So two materials whose hooks share a key but inject
+ * different text would silently share one program. Per-material values go through uniforms or
+ * `material.defines` (defines are part of the key), never through text baked in by a closure.
  */
 export function addCompileHook(material: THREE.Material, key: string, hook: CompileHook): void {
   let st = STATE.get(material);
@@ -91,6 +98,12 @@ export interface MaterialPipeline {
  * onBeforeCompile directly (e.g. CSM.setupMaterial) composes correctly with addCompileHook-based
  * steps whichever runs first, as long as it calls adoptBaseCompileHook afterward (see lighting.ts)
  * — but CSM setup first is still the convention.
+ *
+ * Contract: the pipeline only sees materials that are on the tree when app.add(root) runs. Any
+ * material assigned later — a swapped material, a runtime-created one, or a clone (material.clone()
+ * carries none of the setup: not the composed hooks, which live in a WeakMap, not the BERK_FOG / CSM
+ * defines, which Mesh*Material.copy() resets, and not CSM's registration) — must go through
+ * app.materials.prepare(m) before it renders, or it renders without CSM cascades and fog.
  */
 export function createMaterialPipeline(steps: Array<(m: THREE.Material) => void>): MaterialPipeline {
   const done = new WeakSet<THREE.Material>();

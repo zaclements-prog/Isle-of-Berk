@@ -20,10 +20,29 @@ export const GOLDEN_HOUR: LightingParams = {
   skyColor: 0xa9c8f0, groundColor: 0x4d5a36, hemiIntensity: 0.25,
 };
 
+/**
+ * Every material type that runs the directional-light loop. Each must be set up for CSM: the CSM
+ * chunk's fallback for a material without USE_CSM applies all N cascade lights at full strength (N×
+ * the sun).
+ */
 const isLit = (m: THREE.Material) =>
   (m as THREE.MeshStandardMaterial).isMeshStandardMaterial === true ||
   (m as THREE.MeshLambertMaterial).isMeshLambertMaterial === true ||
-  (m as THREE.MeshPhongMaterial).isMeshPhongMaterial === true;
+  (m as THREE.MeshPhongMaterial).isMeshPhongMaterial === true ||
+  (m as THREE.MeshToonMaterial).isMeshToonMaterial === true;
+
+/*
+ * CSM chunk gaps (three r186). CSMShader replaces three's lights_fragment_begin GLOBALLY — for every
+ * lit material, CSM-set-up or not — with a copy of an older core chunk:
+ * - it lacks the PBR DFG / multi-scattering setup: repaired below (repairCsmLightsChunk);
+ * - it still writes `material.iridescenceF0`, which r186 split into iridescenceF0Dielectric /
+ *   iridescenceF0Metallic, so ANY iridescent material (USE_IRIDESCENCE) fails to compile, with or
+ *   without CSM. setupMaterial refuses such materials loudly (console.error), but skipping CSM does
+ *   not make them compile: the chunk is global;
+ * - it has no USE_LIGHT_PROBES_GRID irradiance, no SunLight loop (NUM_SUN_LIGHTS) and no
+ *   shadow-type guard on point-light shadows.
+ * Rebuilding the chunk from core (core's chunk with CSM's cascade loop spliced in) is deferred.
+ */
 
 /** Core lights_fragment_begin as three ships it — captured before any CSM swaps in its own copy. */
 const CORE_LIGHTS_FRAGMENT_BEGIN = THREE.ShaderChunk.lights_fragment_begin;
@@ -93,6 +112,14 @@ export class LightingRig {
 
   setupMaterial(m: THREE.Material): void {
     if (!isLit(m)) return;
+    if (((m as THREE.MeshPhysicalMaterial).iridescence ?? 0) > 0) {
+      console.error(
+        `[lighting] iridescent material "${m.name || m.type}": CSM skipped — three r186's CSM lights chunk ` +
+        '(installed globally) still writes material.iridescenceF0, so this material will not compile ' +
+        'until that chunk is rebuilt from core (see the CSM chunk gaps note in lighting.ts)',
+      );
+      return;
+    }
     this.csm.setupMaterial(m); // assigns onBeforeCompile directly, clobbering any composed hooks
     adoptBaseCompileHook(m); // ...so fold that assignment back in as the base, whichever ran first
   }
@@ -143,7 +170,8 @@ export class LightingRig {
     // CSM's own assignment) and would silently strip every other composed hook (fog, wind, ...) too.
     for (const m of [...this.csm.shaders.keys()] as THREE.Material[]) this.releaseMaterial(m);
     this.csm.remove();
-    this.csm.dispose(); // its material map is empty by now
+    this.csm.dispose(); // its material map is empty by now; it never frees the lights' shadow maps
+    for (const l of this.csm.lights) l.dispose(); // r186 DirectionalLight.dispose → shadow.dispose → map + mapPass
     this.hemi.removeFromParent();
   }
 }

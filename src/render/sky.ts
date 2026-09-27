@@ -59,18 +59,28 @@ const OUT_GLSL = `vec3 berkSky = texColor * skyExposure;
 			float berkL = dot( berkSky, vec3( 0.2126, 0.7152, 0.0722 ) );
 			gl_FragColor = vec4( berkSky * ( berkSkyCeiling( berkL ) / max( berkL, 1e-6 ) ), 1.0 );`;
 
-function makeSky(p: SkyParams): Sky {
-  const sky = new Sky();
-  sky.scale.setScalar(10000);
-  const mat = sky.material;
-  mat.uniforms.skyExposure = { value: p.exposure };
+/**
+ * Splice exposure + the luminance ceiling into the sky shader — all or nothing, like the bloom
+ * prefilter patch: with either anchor gone (a three upgrade) a partial patch would be dead code or
+ * read undeclared symbols, so the shader is left exactly as three ships it and an error is logged.
+ */
+function patchSkyShader(mat: THREE.ShaderMaterial): void {
   const before = mat.fragmentShader;
   if (!before.includes(UNIFORM_ANCHOR) || !before.includes(OUT_ANCHOR)) {
     console.error('[sky] shader patch anchor missing — sky exposure and luminance ceiling NOT applied');
+    return;
   }
   mat.fragmentShader = before
     .replace(UNIFORM_ANCHOR, () => `${UNIFORM_ANCHOR}\nuniform float skyExposure;\n${CEILING_GLSL}`)
     .replace(OUT_ANCHOR, () => OUT_GLSL);
+}
+
+function makeSky(p: SkyParams): Sky {
+  const sky = new Sky();
+  sky.scale.setScalar(10000);
+  // The uniform exists even when the patch is skipped, so applySkyParams can always set it.
+  sky.material.uniforms.skyExposure = { value: p.exposure };
+  patchSkyShader(sky.material);
   applySkyParams(sky, p);
   return sky;
 }
@@ -125,6 +135,17 @@ export class SkySystem {
     this.scene.environmentIntensity = intensity;
     s.geometry.dispose();
     s.material.dispose();
+  }
+
+  /**
+   * After a WebGL context restore (see createApp): three rebuilt its state, but the baked environment
+   * was GPU content and is gone. Re-bake it — without disposing the old target first: its GPU
+   * objects died with the old context, and disposing it would run the pre-restore renderer's dispose
+   * listener, which deletes handles the new context doesn't own (INVALID_OPERATION warnings).
+   */
+  onContextRestored(): void {
+    this.envTarget = null;
+    this.bakeEnvironment(this.scene.environmentIntensity);
   }
 
   update(time: number): void {

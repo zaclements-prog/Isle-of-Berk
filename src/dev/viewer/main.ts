@@ -13,12 +13,18 @@ app.camera.position.set(6, 3, 8);
 controls.target.set(0, 1, 0);
 app.loop.addRender(() => controls.update(), 0);
 
-const floor = new THREE.Mesh(
-  new THREE.CircleGeometry(40, 96).rotateX(-Math.PI / 2),
-  new THREE.MeshStandardMaterial({ color: 0x7a7f86, roughness: 0.9 }),
-);
-floor.receiveShadow = true;
-app.add(floor);
+const assetUrl = new URLSearchParams(location.search).get('asset');
+
+// The grey studio floor is for assets only: the look-dev swatches bring their own ground at y = 0,
+// which the floor would z-fight.
+if (assetUrl) {
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(40, 96).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x7a7f86, roughness: 0.9 }),
+  );
+  floor.receiveShadow = true;
+  app.add(floor);
+}
 
 const loader = createGltfLoader();
 const state = { turntable: false, wireframe: false, skeleton: false, playing: false, clip: '', time: 0 };
@@ -169,7 +175,6 @@ debug.register('viewer', {
   },
 });
 
-const assetUrl = new URLSearchParams(location.search).get('asset');
 if (assetUrl) {
   load(assetUrl).catch((e) => console.error('[viewer] failed to load', assetUrl, e));
 } else {

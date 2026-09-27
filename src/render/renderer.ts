@@ -21,7 +21,7 @@ export function createRenderer(container: HTMLElement, preset: QualityPreset): T
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = TONE_CURVES.agx; // applied by OutputPass
   renderer.toneMappingExposure = 1.8; // M1-tuned: sunlit mid-green ground lands mid-tone (~120/255) under AgX
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = true; // redrawn once per frame: see createFrameRender (autoUpdate off)
   // r186 removed PCFSoftShadowMap (it warns and falls back to PCF); PCF now filters softly itself.
   renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);

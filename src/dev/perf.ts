@@ -6,15 +6,17 @@ export interface RenderCost {
 }
 
 /**
- * Wall-clock cost of `render` with the GPU pipeline drained (gl.finish) — independent of
- * requestAnimationFrame, so it works in throttled background tabs.
+ * Wall-clock cost of `render`: one warm-up call, then `frames` calls, with `fence.finish()` waiting
+ * for the GPU to drain before the clock starts and after the last call. Independent of
+ * requestAnimationFrame, so it works in throttled background tabs. Pass gpuFence(gl), not the
+ * context itself: Chrome's WebGL finish() only flushes, so it would time command submission alone.
  */
-export function measureRenderCost(render: () => void, gl: { finish(): void }, frames = 30): RenderCost {
+export function measureRenderCost(render: () => void, fence: { finish(): void }, frames = 30): RenderCost {
   render();
-  gl.finish();
+  fence.finish();
   const t0 = performance.now();
   for (let i = 0; i < frames; i++) render();
-  gl.finish();
+  fence.finish();
   return { msPerFrame: (performance.now() - t0) / frames, frames };
 }
 
@@ -22,6 +24,11 @@ export function measureRenderCost(render: () => void, gl: { finish(): void }, fr
  * A `{ finish }` that really waits for the GPU, for measureRenderCost. Chrome implements WebGL
  * finish() as a flush: in M1 it returned after ~0.3 ms/frame for frames that cost ~30 ms, timing
  * only command submission. Reading back one pixel blocks until every queued command has completed.
+ *
+ * It needs an 8-bit RGBA framebuffer bound when finish() runs — normally the canvas (default)
+ * framebuffer, which is bound after post.render() because the last pass draws to the screen. On a
+ * half-float (or float) render target an RGBA/UNSIGNED_BYTE readback is an invalid format/type
+ * pair: readPixels raises INVALID_OPERATION, returns at once and times nothing.
  */
 export function gpuFence(gl: WebGLRenderingContext | WebGL2RenderingContext): { finish(): void } {
   const pixel = new Uint8Array(4);
