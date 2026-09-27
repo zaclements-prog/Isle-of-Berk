@@ -68,10 +68,20 @@ def spine_weight(y):
 
 
 def tail_weight(y):
-    """Tail bone i spans TAIL_PTS[i-1] -> TAIL_PTS[i]; weights hand over across each joint (outer 30 % of each side)."""
+    """Tail bone i spans TAIL_PTS[i-1] -> TAIL_PTS[i]; weights hand over across each joint (outer 30 % of each side).
+
+    The pelvis -> tail_01 joint (y = ys[0]) needs its own blend-in from below: the loop's own hand-over already
+    gives it 50/50 pelvis/tail_01 right at ys[0] (t=0 hits the t < 0.3 branch with k=0.5), so this branch ramps
+    pelvis's weight down to match that over the same outer-30%-of-a-segment span, instead of holding pelvis at
+    1.0 all the way up to the joint and then jumping.
+    """
     ys = [float(p[1]) for p in A.TAIL_PTS]
-    if y <= ys[0]:
+    L0 = ys[1] - ys[0]
+    if y <= ys[0] - 0.3 * L0:
         return {"pelvis": 1.0}
+    if y <= ys[0]:
+        k = (y - (ys[0] - 0.3 * L0)) / (0.6 * L0)
+        return {"pelvis": 1 - k, "tail_01": k}
     for i in range(len(ys) - 1):
         if y <= ys[i + 1]:
             t = (y - ys[i]) / (ys[i + 1] - ys[i])
@@ -171,17 +181,21 @@ def girth(rig, bvh, name, y, M):
 def build_all(rig, body, M):
     bvh = _bvh(body)
     objs = saddle(rig, M, bvh)
-    # GirthFront sits well forward of the pedal/stirrup (both at y = PEDAL_L.y = -0.28) so the strap and the
-    # pedal plate read as two distinct pieces of tack instead of tangling together.
-    objs += [girth(rig, bvh, "GirthFront", -0.42, M), girth(rig, bvh, "GirthRear", -0.12, M)]
+    # GirthFront sits behind the front-leg/shoulder mass, which (per the real sculpted body, not the bone joints
+    # deep inside it) bulks out the torso back to y ~= -0.40; the whole 5 cm band stays >= 2 cm behind that.
+    # It's no longer separated from the pedal/stirrup (both at y = PEDAL_L.y = -0.28) by y alone -- that's
+    # resolved below by giving the pedal more outward clearance; a stirrup strap passing near/over the girth is
+    # normal tack, as long as nothing intersects (checked below).
+    objs += [girth(rig, bvh, "GirthFront", -0.34, M), girth(rig, bvh, "GirthRear", -0.12, M)]
 
-    # pedal plate 6 cm outside the left flank at the pedal pivot (clears the plate's own 4.5 cm half-width so it
-    # hangs clean of the flank instead of embedding in it); stirrup strap from the saddle's left edge down to it
+    # pedal plate 7.5 cm outside the left flank at the pedal pivot (clears the plate's own 4.5 cm half-width, and
+    # the girth band's radial thickness at the flank -- surface + 6 mm ray offset + 8 mm solidify -- so the two
+    # don't tangle even though they're no longer far apart in y); stirrup strap from the saddle's edge down to it
     py, pz = float(A.PEDAL_L[1]), float(A.PEDAL_L[2])
     side, _, _, _ = bvh.ray_cast(Vector((1.5, py, pz)), Vector((-1, 0, 0)))
     if side is None:
         raise RuntimeError("pedal ray missed the flank")
-    plate = Vector((side.x + 0.06, py, pz))
+    plate = Vector((side.x + 0.075, py, pz))
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
     for v in bm.verts:
@@ -208,9 +222,10 @@ def build_all(rig, body, M):
     # extends toward the tail from its hub (every rib angle is 0-90 deg), so dropping onto the flank surface
     # short of the hub's y and well below its z clears the fan before the path rises back up to the tail points.
     hw_hub = A.HIP_WING_L["hub"]
-    detour, dn, _, _ = bvh.ray_cast(Vector((1.5, 1.25, float(hw_hub[2]) - 0.25)), Vector((-1, 0, 0)))
+    detour_y, detour_z = 1.25, float(hw_hub[2]) - 0.25
+    detour, dn, _, _ = bvh.ray_cast(Vector((1.5, detour_y, detour_z)), Vector((-1, 0, 0)))
     if detour is None:
-        raise RuntimeError("cable ray missed the flank at the hip-wing detour")
+        raise RuntimeError(f"cable ray missed the flank at the hip-wing detour y={detour_y}, z={detour_z}")
     path.append(detour + dn * 0.02)
     diag = Vector((1.0, 0.0, 1.0)).normalized()
     for p, r in zip(A.TAIL_PTS[2:10], A.TAIL_RADII[2:10]):

@@ -39,7 +39,7 @@ class TackTests(unittest.TestCase):
         self.assertLess(worst, 0.05)
 
     def test_tail_weight_is_continuous_and_normalised(self):
-        ys = [0.9 + i * 0.002 for i in range(2000)]
+        ys = [0.6 + i * 0.002 for i in range(2000)]
         for a, b in zip(ys, ys[1:]):
             wa, wb = T.tail_weight(a), T.tail_weight(b)
             self.assertAlmostEqual(sum(wa.values()), 1.0, places=9)
