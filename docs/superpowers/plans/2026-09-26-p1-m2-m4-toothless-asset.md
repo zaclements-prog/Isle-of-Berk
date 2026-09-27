@@ -2532,6 +2532,16 @@ Targets:
 - **Legs:** short and powerful, with thicker forearms and shins toward big paws (not thin lower legs under bulging thighs).
 - **Head:** broad and a little flatter on top than tall, with a rounded snout. The lip line closes shorter at the corners (less frog gape). Brows are soft with no frown.
 - **Ears:** the two big plates sweep back along the skull at roughly 25–35° above the neck line (`EARS_L` ear_1 pitch ~62° → ~30°). The two smaller pairs follow the same sweep, tucked behind and below the big pair — no sideways horns.
+- **Wings (top view against `155348`):** the membrane must read as smooth skin with the ribs as fine ridges, not as pleated paper.
+  - Scallops shallow and varying per panel: near-straight between the leading ribs, deepening toward the trailing edge.
+  - Gentler billow between ribs.
+  - A long, pointed wingtip along the leading rib, with ribs concentrated toward the rear (tune `rib_angles`, `rib_lengths` and the per-panel scallop only; `MAIN_WING_L` hub, root and elbow stay).
+  - Larger, distinct tail fins.
+  - The fold must still satisfy `test_folded_wings_tuck_against_the_body` unchanged.
+  - Also resolve the Task 4 notes:
+    - attach point A1 floats about 14 cm above the waist after the torso slims
+    - the folded bundle's rear stands off the tail base
+- Cross-plan: the rib angles/lengths feed rig.json and Plan 3's fixture rig. Update `tests/fixtures/toothlessRig.ts` in the same commit if it exists on the merged branch.
 - **Dorsal spikes:** crisp small plates. If the 24k-face mesh cannot hold them, they may become separate plate meshes weighted to the spine/tail bones. They then join the `_MASK` dorsal channel by vertex position.
 - **Jaw rest:** measure the lip gap at rest. Set `anatomy.JAW_REST_CLOSE_RAD`, the closing rotation that makes the lips meet (about the gap divided by the jaw length; close = the opposite sign of `JAW_OPEN_SIGN`). Export it as `rig.json` `jaw.restCloseRad`. `loadDragonAsset` applies it to the jaw bone at rest, so the neutral mouth shows no pink line.
 
