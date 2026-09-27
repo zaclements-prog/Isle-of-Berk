@@ -1,0 +1,5 @@
+[
+  { "id": "forest_ground_04", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm"],
+    "install": { "dir": "textures/terrain/forest_ground_04", "size": 1024 } },
+  { "id": "rock_moss_set_01", "type": "models", "res": "1k" }
+]

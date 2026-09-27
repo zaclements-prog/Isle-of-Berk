@@ -10,9 +10,27 @@ export function createTestScene(): TestScene {
   const root = new THREE.Group();
   root.name = 'TestScene';
 
+  const tl = new THREE.TextureLoader();
+  const tex = (url: string, srgb: boolean) => {
+    const t = tl.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(80, 80);
+    t.anisotropy = 8;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const base = 'assets/textures/terrain/forest_ground_04/';
+  const arm = tex(`${base}arm.webp`, false);
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0x6f8f4a, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({
+      map: tex(`${base}diff.webp`, true),
+      normalMap: tex(`${base}nor.webp`, false),
+      aoMap: arm,
+      roughnessMap: arm,
+      metalnessMap: arm,
+      metalness: 1, // the ARM texture's blue channel is metalness (0 for ground)
+    }),
   );
   ground.name = 'ground';
   ground.receiveShadow = true;
