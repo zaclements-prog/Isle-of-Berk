@@ -1,5 +1,7 @@
 import '../../styles.css';
+import type * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import GUI from 'lil-gui';
 import { createApp } from '../../app/createApp';
 import { createCove, type CoveRegion } from '../../world/cove/cove';
 import { debug } from '../../core/debug';
@@ -33,6 +35,23 @@ const setCam = (name: string) => {
 setCam('wide');
 app.loop.addRender(() => controls.update(), 0);
 
+/** Tint pickers edit the linear multipliers in place; lil-gui shows them divided by this, so 1.0 reads as #555. */
+const TINT_PICKER_SCALE = 3;
+
+/** Palette tuning: the six splat layer tints (live uniforms) and the rock macro-variation strength. */
+function addTerrainFolder(gui: GUI, c: CoveRegion): void {
+  const folder = gui.addFolder('Terrain');
+  const tints: Record<string, THREE.Color> = {};
+  c.header.layers.forEach((name, i) => {
+    tints[name] = c.splat.uLayerTint.value[i];
+    folder.addColor(tints, name, TINT_PICKER_SCALE);
+  });
+  folder.add(c.splat.uRockMacro, 'value', 0, 1, 0.01).name('rock macro');
+  // lil-gui leaves its inputs unnamed, which DevTools flags as a form-field issue; name them to keep the console clean
+  folder.domElement.querySelectorAll('input').forEach((el, k) => { el.name = `terrain-${k}`; });
+}
+
+const gui = new GUI({ title: 'Cove preview' });
 let cove: CoveRegion | null = null;
 debug.register('cam', { preset: setCam });
 hud.textContent = 'Cove preview · loading and compiling shaders…';
@@ -40,10 +59,15 @@ createCove(app)
   .then((c) => {
     cove = c;
     app.loop.addRender((_alpha, frameDt) => c.update(frameDt, { time: app.loop.simTime, camera: app.camera, interactions: [] }), 10);
+    addTerrainFolder(gui, c);
     debug.register('cove', {
       region: () => cove,
       stats: () => ({ terrain: c.terrain.stats(), collisionRoots: c.collisionRoots().length, spawn: c.spawnPoints[0] }),
       heightAt: (x: number, z: number) => c.heightAt(x, z),
+      /** The live layer tints (linear multipliers), rounded: paste into COVE_LAYER_TINTS once they're settled. */
+      tints: () => c.splat.uLayerTint.value.map((t) => [t.r, t.g, t.b].map((v) => +v.toFixed(3))),
+      /** Show or hide the tuning panel (hidden for clean captures). */
+      gui: (visible = true) => gui.show(visible),
     });
     hud.textContent = `Cove preview · quality: ${app.preset.name} · berk.cam.preset(${Object.keys(COVE_CAMERAS).join('|')})`;
     (window as unknown as { __coveReady: boolean }).__coveReady = true;

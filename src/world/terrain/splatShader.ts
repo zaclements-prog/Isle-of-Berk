@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { addCompileHook, type ShaderParams } from '../../render/materials';
+import { COVE_LAYER_TINTS } from './layers';
 
 /** Uniform objects shared by the terrain and the rock base blend (one set per region). */
 export interface SplatUniforms {
@@ -16,6 +17,13 @@ export interface SplatUniforms {
   uHeightBlend: { value: number };
   /** Camera distance where the 4.3× far-scale albedo starts fading in (anti-tiling). */
   uFarBlend: { value: number };
+  /**
+   * Per-layer albedo multiplier (linear RGB; channels may exceed 1), applied before the height blend. A uniform, not
+   * shader text, so the 'terrainSplat' hook stays identical for every splat material (the hook-key contract).
+   */
+  uLayerTint: { value: THREE.Color[] };
+  /** Rock macro-variation strength, 0..1: the 0.37× second scale (High only) and the ±12 % brightness noise. */
+  uRockMacro: { value: number };
 }
 
 export function createSplatUniforms(): SplatUniforms {
@@ -29,6 +37,9 @@ export function createSplatUniforms(): SplatUniforms {
     uLayerTile: { value: [2, 3.15, 3, 2.35, 1.5, 3.5] },
     uHeightBlend: { value: 0.2 },
     uFarBlend: { value: 30 },
+    // setRGB takes the numbers as they are (linear working space): tints are multipliers, not sRGB colours
+    uLayerTint: { value: COVE_LAYER_TINTS.map(([r, g, b]) => new THREE.Color().setRGB(r, g, b)) },
+    uRockMacro: { value: 1 },
   };
 }
 
@@ -53,6 +64,8 @@ uniform vec4 uTerrainExtent;
 uniform float uLayerTile[6];
 uniform float uHeightBlend;
 uniform float uFarBlend;
+uniform vec3 uLayerTint[6];
+uniform float uRockMacro;
 
 float berkHash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -72,6 +85,15 @@ float berkNoise2(vec2 p) {
 vec3 berkTriBlend(vec3 n) {
   vec3 b = pow(abs(n), vec3(4.0));
   return b / (b.x + b.y + b.z);
+}
+// World-space value noise at frequency f on the triplanar planes (same projections and weights as berkTriSample), so
+// it varies across a vertical wall as well as over the ground. Projections with a negligible weight are skipped.
+float berkTriNoise(vec3 p, vec3 blend, float f) {
+  float v = 0.0;
+  if (blend.x > 0.01) v += berkNoise2(p.zy * f) * blend.x;
+  if (blend.y > 0.01) v += berkNoise2(p.xz * f) * blend.y;
+  if (blend.z > 0.01) v += berkNoise2(p.xy * f) * blend.z;
+  return v / max(dot(step(vec3(0.01), blend), blend), 1e-4);
 }
 // Whiteout blend of a top-projected (uv = world xz) tangent-space normal onto the geometric normal n.
 vec3 berkWhiteoutY(vec3 tn, vec3 n) {
@@ -108,7 +130,9 @@ varying vec3 vTerrainNrm;
 /**
  * Replaces <map_fragment>: the six-layer, height-blended splat (spec §7.3). Pass 1 reads armh (AO, roughness,
  * height) for the height blend; pass 2 samples albedo + normal only for layers that survive it. Rock (layer 5) is
- * triplanar on High. Leaves tAlb / tNrmW / tRough / tAO for the replaced chunks below.
+ * triplanar on High, with macro variation (a 0.37× second scale under a world noise mask, High only, and ±12 %
+ * brightness noise). Every layer's albedo takes its uLayerTint before it joins the blend. Leaves tAlb / tNrmW / tRough /
+ * tAO for the replaced chunks below.
  */
 export const SPLAT_MAP_FRAGMENT = /* glsl */ `
 vec3 tAlb = vec3(0.0);
@@ -161,8 +185,16 @@ float tAO = 1.0;
     vec3 tnW;
     #ifndef TERRAIN_LOW
     if (i == 5) {
-      alb = berkTriSample(tTerrainAlbedo, 5.0, p, n, triB, s).rgb;
-      if (farT > 0.0) alb = mix(alb, berkTriSample(tTerrainAlbedo, 5.0, p, n, triB, s * 0.23).rgb, farT);
+      // macro variation against tiling at 20–80 m: the same rock at 0.37× blended in under a low-frequency world-space
+      // mask, never fully one scale or the other (two incommensurate lattices hide each other's repeat), both at the
+      // near tile and at the far 0.23× one; then ±12 % brightness from a second noise. uRockMacro = 0 is the plain rock.
+      float macroMask = berkTriNoise(p, triB, 1.0 / 19.0) * 0.7 + berkTriNoise(p, triB, 1.0 / 7.3) * 0.3;
+      float second = clamp(uRockMacro, 0.0, 1.0) * mix(0.2, 0.8, smoothstep(0.3, 0.7, macroMask));
+      vec3 rockBroad = berkTriSample(tTerrainAlbedo, 5.0, p, n, triB, s * 0.37).rgb;
+      alb = mix(berkTriSample(tTerrainAlbedo, 5.0, p, n, triB, s).rgb, rockBroad, second);
+      if (farT > 0.0) alb = mix(alb, mix(berkTriSample(tTerrainAlbedo, 5.0, p, n, triB, s * 0.23).rgb, rockBroad, second), farT);
+      float shade = berkTriNoise(p + vec3(37.0, 11.0, 23.0), triB, 1.0 / 23.0) * 0.6 + berkTriNoise(p + vec3(5.0, 71.0, 13.0), triB, 1.0 / 9.0) * 0.4;
+      alb *= 1.0 + 0.12 * uRockMacro * (2.0 * shade - 1.0);
       tnW = berkTriNormal(5.0, p, n, triB, s);
     } else
     #endif
@@ -170,10 +202,18 @@ float tAO = 1.0;
       vec2 uv = p.xz * s;
       alb = texture(tTerrainAlbedo, vec3(uv, float(i))).rgb;
       if (farT > 0.0) alb = mix(alb, texture(tTerrainAlbedo, vec3(uv * 0.23, float(i))).rgb, farT);
+      #ifdef TERRAIN_LOW
+      // Low keeps the rock's brightness variation but skips the second scale
+      if (i == 5) {
+        float shade = berkNoise2((p.xz + vec2(37.0, 23.0)) / 23.0) * 0.6 + berkNoise2((p.xz + vec2(5.0, 13.0)) / 9.0) * 0.4;
+        alb *= 1.0 + 0.12 * uRockMacro * (2.0 * shade - 1.0);
+      }
+      #endif
       vec3 tn = texture(tTerrainNormal, vec3(uv, float(i))).xyz * 2.0 - 1.0;
       tn.xy *= 1.0 - 0.7 * farT;
       tnW = berkWhiteoutY(tn, n);
     }
+    alb *= uLayerTint[i];
     tAlb += alb * b;
     nAcc += tnW * b;
     ar += armh[i].rg * b;

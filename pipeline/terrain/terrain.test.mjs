@@ -40,6 +40,7 @@ describe('noise', () => {
 
 import {
   COVE, coveHeight, azimuthDir, rayFrame, wallHeight, pondQ, routeAProfile, cliffCurve, azimuthDeg, sunDirection, smoothstep, lerp,
+  ringRadii, routeASteps,
 } from './coveShape.mjs';
 
 const slopeDegAt = (x, z, h = 0.4) => {
@@ -69,7 +70,8 @@ describe('cove shape', () => {
       if (inSector(az, COVE.gully.azimuth, 25) || inSector(az, COVE.routeA.azimuth, 12) || inSector(az, COVE.routeB.azimuth, 12)) continue;
       const [ux, uz] = azimuthDir(az);
       for (let r = 0; r <= 30; r += 3) expect(coveHeight(ux * r, uz * r)).toBeLessThan(1.5);
-      const rim = coveHeight(ux * 55, uz * 55);
+      const rimR = ringRadii(az).rr + 5; // 5 m past the local rim (the outline has bays)
+      const rim = coveHeight(ux * rimR, uz * rimR);
       expect(rim).toBeGreaterThan(wallHeight(az) - 3);
       expect(rim).toBeLessThan(wallHeight(az) + 4);
     }
@@ -102,11 +104,12 @@ describe('cove shape', () => {
   });
   it('route A is scramble terraces: risers ≤ 2.3 m, flat treads ≥ 2.5 m', () => {
     const ra = COVE.routeA;
-    for (let i = 0; i < ra.steps; i++) {
-      const a = ra.rStart + i * ra.tread;
+    const steps = routeASteps();
+    expect(steps).toHaveLength(ra.steps);
+    for (const { start: a, tread } of steps) {
       expect(routeAProfile(a + ra.riserRun + 0.05) - routeAProfile(a - 0.05)).toBeLessThan(2.31);
       const treadStart = a + ra.riserRun + 0.05;
-      const treadEnd = a + ra.tread - 0.05;
+      const treadEnd = a + tread - 0.05;
       expect(treadEnd - treadStart).toBeGreaterThanOrEqual(2.5);
       expect(Math.abs(routeAProfile(treadEnd) - routeAProfile(treadStart))).toBeLessThan(0.01);
     }
@@ -115,6 +118,16 @@ describe('cove shape', () => {
     for (let k = 1; k < line.length; k++) biggestJump = Math.max(biggestJump, line[k].y - line[k - 1].y);
     expect(biggestJump).toBeLessThan(2.31);
     expect(line[line.length - 1].y).toBeGreaterThan(wallHeight(ra.azimuth) - 1.5);
+    // the treads tilt across the route and the risers bow, so the riser limit must hold off the centreline too:
+    // no 0.4 m stretch (riser run + 0.1) along any line across the route climbs more than 2.3 m, first riser included
+    const [ux, uz] = azimuthDir(ra.azimuth);
+    const [px, pz] = [-uz, ux];
+    for (const lat of [-0.9, -0.5, 0.5, 0.9].map((f) => f * ra.halfWidth)) {
+      const y = (along) => coveHeight(ux * along + px * lat, uz * along + pz * lat);
+      let worst = 0;
+      for (let along = ra.rStart - 1; along <= ra.rStart + ra.steps * ra.tread - 0.5; along += 0.05) worst = Math.max(worst, y(along + 0.4) - y(along));
+      expect(worst).toBeLessThan(2.31);
+    }
   });
   it('route B is a climb-mode slope: steepest 45–70°, walkable at both ends', () => {
     const rb = COVE.routeB;

@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import {
-  COVE, coveHeight, erosionMask, samplePos, pondQ, azimuthDeg, rayFrame, ringJitter, sunDirection,
+  COVE, coveHeight, erosionMask, samplePos, pondQ, azimuthDeg, rayFrame, signedLateral, ringRadii, gullyWiggle, sunDirection,
+  OUTLINE, GULLY_WIGGLE, routeASteps,
 } from './coveShape.mjs';
 import { erode, EROSION_DEFAULTS } from './erosion.mjs';
 import {
@@ -50,16 +51,16 @@ for (let j = 0; j < size; j++) {
     const k = j * size + i;
     const [x, z] = samplePos(i, j);
     const r = Math.hypot(x, z);
-    const jit = ringJitter(azimuthDeg(x, z));
-    const rimT = (r - (COVE.floorRadius + jit)) / (COVE.rimRadius - COVE.floorRadius);
-    const ra = rayFrame(x, z, COVE.routeA.azimuth);
+    const ring = ringRadii(azimuthDeg(x, z)); // the local wall foot and rim, bays included
+    const rimT = (r - ring.rf) / (ring.rr - ring.rf);
     const rb = rayFrame(x, z, COVE.routeB.azimuth);
     const g = rayFrame(x, z, COVE.gully.azimuth);
-    const onRoute = Math.max(
-      ra.along > COVE.routeA.rStart - 1 && ra.lateral < COVE.routeA.halfWidth + 0.5 ? 1 : 0,
-      rb.along > COVE.routeB.r0 - 1 && rb.lateral < COVE.routeB.halfWidth + 1 ? 1 : 0,
-    );
-    const inGully = g.along > COVE.gully.rStart && g.lateral < COVE.gully.halfWidthIn + 1 ? 1 : 0;
+    // route B's climb slope keeps its softened rock; route A's ledges don't: its steep risers take full rock under the
+    // grassy treads, so the flight reads as rock ledges rather than grass-carpeted steps
+    const onRoute = rb.along > COVE.routeB.r0 - 1 && rb.lateral < COVE.routeB.halfWidth + 1 ? 1 : 0;
+    // the gully floor's pebble/mud band widens with its side's wall wiggle, so its edges aren't parallel either
+    const gullyBand = COVE.gully.halfWidthIn + 1 + gullyWiggle(g.along, signedLateral(x, z, COVE.gully.azimuth));
+    const inGully = g.along > COVE.gully.rStart && g.lateral < gullyBand ? 1 : 0;
     const c = splatForCell({
       slope: slope[k], height: h[k], waterLevel: COVE.water.level, pondQ: pondQ(x, z), r, rimT, curvature: curv[k],
       wetness: wet[k], noise: fbm2(x / 9, z / 9, COVE.seed + 99, 4), onRoute, inGully,
@@ -137,6 +138,17 @@ const header = {
   gully: COVE.gully,
   routeA: COVE.routeA,
   routeB: COVE.routeB,
+  // Task 8b shape parameters, so runtime code can mirror the outline, the gully walls and the ledges:
+  // outline = the resolved lobe/run harmonics and taper, plus rf/rr (wall foot, rim) sampled every 1° from azimuth 0
+  outline: {
+    ...OUTLINE,
+    stepDeg: 1,
+    rf: Array.from({ length: 360 }, (_, a) => +ringRadii(a).rf.toFixed(2)),
+    rr: Array.from({ length: 360 }, (_, a) => +ringRadii(a).rr.toFixed(2)),
+  },
+  gullyWiggle: GULLY_WIGGLE,
+  routeALedges: COVE.ledges,
+  routeASteps: routeASteps(),
   spawn,
   layers: LAYERS,
   files: { height: 'height.bin', splatA: 'splatA.png', splatB: 'splatB.png' },

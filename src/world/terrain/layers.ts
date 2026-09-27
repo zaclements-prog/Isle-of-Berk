@@ -16,6 +16,24 @@ export const COVE_LAYERS: readonly TerrainLayer[] = [
   { id: 'rock_wall_02', tile: 3.5 }, // cliffs: 1.75× the scan's scale, so the big walls don't stripe
 ];
 
+/** A per-layer albedo multiplier in linear RGB (channels may exceed 1: they shift a scan's hue, not just darken it). */
+export type LayerTint = readonly [number, number, number];
+
+/**
+ * The Cove's default layer tints (splat order), multiplied into each layer's albedo (`uLayerTint`). The scans are
+ * dry and warm, and the 14° golden sun warms them further, so the tints move them to the film Cove's palette
+ * under GOLDEN_HOUR: olive-green grass, dark brown-green forest floor, green moss, dark brown mud, grey pebbles and
+ * cool grey-brown rock that sits with the scanned mossy rocks (not orange).
+ */
+export const COVE_LAYER_TINTS: readonly LayerTint[] = [
+  [0.72, 1.9, 2.3], // grass
+  [0.32, 0.48, 0.3], // forest
+  [0.34, 0.74, 0.3], // moss
+  [0.9, 1.0, 1.1], // mud
+  [0.52, 0.66, 0.86], // pebbles
+  [0.62, 1.0, 2.25], // rock
+];
+
 export interface LayerArrays {
   /** sRGB albedo. */
   albedo: THREE.DataArrayTexture;
