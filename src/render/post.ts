@@ -58,6 +58,15 @@ export interface PostStack {
   dispose(): void;
 }
 
+/** n8ao 2.0.1 has no dispose(): free every render target / material / texture it holds directly. */
+function disposeN8AOResources(pass: N8AOPass): void {
+  for (const value of Object.values(pass as unknown as Record<string, unknown>)) {
+    if (value instanceof THREE.WebGLRenderTarget || value instanceof THREE.Material || value instanceof THREE.Texture) {
+      value.dispose();
+    }
+  }
+}
+
 export function createPostStack(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
@@ -73,6 +82,14 @@ export function createPostStack(
     samples: preset.ao ? 0 : preset.msaaSamples,
   });
   const composer = new EffectComposer(renderer, target);
+  // EffectComposer derives _width/_height from the supplied render target (device px, since `size`
+  // came from getDrawingBufferSize) instead of from the renderer's logical size. Every addPass then
+  // multiplies _width/_height by renderer.getPixelRatio() again, squaring the ratio on HiDPI. Put
+  // the composer back on its own logical-pixel convention so passes are sized once, correctly, in
+  // device pixels. The composer's own render targets are already device-sized; this setSize call
+  // re-applies that (harmless) since logical * pixelRatio === the device size we built `target` at.
+  const logical = renderer.getSize(new THREE.Vector2());
+  composer.setSize(logical.x, logical.y);
 
   let ao: N8AOPass | null = null;
   if (preset.ao) {
@@ -87,6 +104,7 @@ export function createPostStack(
       const beauty = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: preset.msaaSamples });
       beauty.depthTexture = new THREE.DepthTexture(size.x, size.y, THREE.UnsignedIntType);
       beauty.depthTexture.format = THREE.DepthFormat;
+      ao.beautyRenderTarget.dispose(); // N8AOPass's constructor already allocated a default one
       ao.beautyRenderTarget = beauty;
     }
     composer.addPass(ao);
@@ -106,7 +124,7 @@ export function createPostStack(
   const gradePass = new ShaderPass(GradeShader);
   gradePass.uniforms.tLut.value = bakeLut(grade, LUT_SIZE);
   gradePass.uniforms.vignette.value = grade.vignette;
-  gradePass.uniforms.aspect.value = size.x / size.y;
+  gradePass.uniforms.aspect.value = logical.x / logical.y;
   composer.addPass(gradePass);
 
   if (!useMsaa) composer.addPass(new SMAAPass());
@@ -129,6 +147,11 @@ export function createPostStack(
       composer.render(frameDt);
     },
     dispose() {
+      // EffectComposer.dispose() only frees its own read/write buffers and internal copy pass — it
+      // never disposes the passes it holds, so each one is freed explicitly first.
+      for (const pass of composer.passes) (pass as { dispose?: () => void }).dispose?.();
+      if (ao) disposeN8AOResources(ao);
+      (gradePass.uniforms.tLut.value as THREE.Data3DTexture).dispose();
       composer.dispose();
     },
   };
