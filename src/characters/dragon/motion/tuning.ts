@@ -47,12 +47,16 @@ export interface MotionTuning {
     glanceYawRangeDeg: number;
     /** Half-range (deg) of a random idle glance's pitch, sampled uniformly in ±this. */
     glancePitchRangeDeg: number;
+    /** Speed (m/s) above which the head looks along the travel direction; slower, he counts as idle (glances, camera). */
+    travelSpeed: number;
   };
   tail: {
     omegaBase: number; omegaTip: number; zeta: number; droopDeg: number; turnGain: number;
     latAccelGain: number; vertAccelGain: number; gallopRaiseDeg: number; clearance: number;
     /** Fallback tail radius (m) used only if the rig defines no tail proxies. */
     defaultRadius: number;
+    /** Half-life (s) of the smoothing on the pelvis vertical acceleration that lags the tail (vertAccelGain). */
+    vertAccelHalfLife: number;
   };
   ears: { omega: number; zeta: number; twitchMin: number; twitchMax: number; twitchImpulse: number; gallopBackDeg: number };
   fins: {
@@ -109,11 +113,11 @@ export const DEFAULT_TUNING: MotionTuning = {
   look: {
     yawLimitDeg: 100, pitchLimitDeg: 40, headOmega: 5, eyeOmega: 28, eyeLimitDeg: 25, leadGain: 0.35, aheadDist: 6,
     idleCameraDelay: 1.5, glanceMin: 3, glanceMax: 7, glanceHold: 1.2, weights: [0.12, 0.18, 0.22, 0.23, 0.25],
-    glanceDist: 5, glanceYawRangeDeg: 60, glancePitchRangeDeg: 15,
+    glanceDist: 5, glanceYawRangeDeg: 60, glancePitchRangeDeg: 15, travelSpeed: 0.2,
   },
   tail: {
     omegaBase: 14, omegaTip: 6, zeta: 0.45, droopDeg: 1.5, turnGain: 0.1, latAccelGain: 0.02, vertAccelGain: 0.015,
-    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05,
+    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05, vertAccelHalfLife: 0.05,
   },
   ears: { omega: 16, zeta: 0.35, twitchMin: 1.5, twitchMax: 5, twitchImpulse: 5, gallopBackDeg: 25 },
   fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5, twitchMin: 2, twitchMax: 6, twitchImpulse: 3 },

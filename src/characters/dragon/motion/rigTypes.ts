@@ -21,7 +21,7 @@ export interface MotionRig {
   proxies: ReadonlyArray<{ name: string; bone: string; center: Vec3; radius: number }>;
   anchors: Record<string, { bone: string; position: Vec3 }>;
   chainLimitsDeg: Record<'spine' | 'neck' | 'tail', { pitch: number; yaw: number; roll: number }>;
-  wings: Record<'L' | 'R', { humerus: string; forearm: string; thumb: string; ribs: [string, string][]; hipRibs: string[]; finRibs: string[] }>;
+  wings: Record<'L' | 'R', { humerus: string; forearm: string; thumb: string; ribs: [string, string][]; hipRibs: string[]; finRibs: string[]; foldClips?: string[] }>;
   ears: Record<'L' | 'R', string[]>;
   proportions: { length: number; wingspan: number; shoulderHeight: number; hipHeight: number; headTop: number };
 }
