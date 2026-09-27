@@ -27,6 +27,12 @@ export interface MotionTuning {
     bendGain: number; maxBendDeg: number; shortfallLower: number; terrainLookahead: number;
     /** Contacts with |normal.y| below this (steeper than ~50°) push the body sideways; flatter ones belong to the body solver. */
     wallNormalY: number;
+    /** Lateral-bend share for spine_01, spine_02, spine_03, chest (should sum near 1). */
+    bendShare: number[];
+    /** Speed (m/s) at which a footfall impulse reaches full strength; it scales down toward footfallMinScale below this. */
+    footfallFullSpeed: number;
+    /** Minimum footfall-impulse scale at a standstill, ramping up to full strength at footfallFullSpeed. */
+    footfallMinScale: number;
   };
   legs: { scapulaFollow: number; swingCurlDeg: number; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
   look: {
@@ -71,7 +77,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
     leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1,
-    terrainLookahead: 0.15, wallNormalY: 0.64,
+    terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
   },
   legs: { scapulaFollow: 0.35, swingCurlDeg: 35, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
   look: {
