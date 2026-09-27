@@ -1,0 +1,29 @@
+{
+  "name": "isle-of-berk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 8750 --strictPort",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cc0:fetch": "node pipeline/cc0/fetch.mjs",
+    "cc0:textures": "node pipeline/cc0/process-textures.mjs"
+  },
+  "dependencies": {
+    "lil-gui": "0.21.0",
+    "n8ao": "2.0.1",
+    "three": "0.186.1",
+    "three-mesh-bvh": "0.9.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/three": "0.186.0",
+    "sharp": "0.35.4",
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

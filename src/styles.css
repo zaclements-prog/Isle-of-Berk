@@ -1,0 +1,11 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1018; }
+#app { position: fixed; inset: 0; }
+#app canvas { display: block; width: 100%; height: 100%; }
+#hud {
+  position: fixed; left: 14px; bottom: 12px; color: #dfeaf2;
+  font: 12px/1.5 "Segoe UI", system-ui, sans-serif;
+  background: rgba(8, 14, 22, 0.55); padding: 6px 10px; border-radius: 6px; pointer-events: none;
+}
+#overlay { position: fixed; inset: 0; display: none; place-items: center; background: rgba(0, 0, 0, 0.88); z-index: 10; }
+#overlay.show { display: grid; }
+#overlay img { max-width: 98vw; max-height: 98vh; }
