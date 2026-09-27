@@ -54,7 +54,7 @@ describe('swing-twist', () => {
     expect(clampTwist(inside, axis, -0.5, 0.5)).toBe(0);
   });
   it('twistAngle returns 0 at 180° swing singularity', () => {
-    // Use q.w = -0 to trigger hypot guard: atan2(0, -0) = π on old code, hypot(0, -0) = 0 on new code
-    expect(twistAngle(new THREE.Quaternion(1, 0, 0, -0), new THREE.Vector3(0, 1, 0))).toBe(0);
+    // Near-degenerate with opposite-sign tiny components: d = +1e-15, w = -1e-15 → atan2 = 3π/4 → 3π/2 → -π/2 (old); hypot ≈ 1.4e-15 < 1e-12 → 0 (new)
+    expect(twistAngle(new THREE.Quaternion(1, 1e-15, 0, -1e-15), new THREE.Vector3(0, 1, 0))).toBe(0);
   });
 });
