@@ -25,6 +25,12 @@ def model_renders(sc, out_dir):
     return paths
 
 
+def tack_renders(sc, out_dir):
+    return [QR.shoot(sc, out_dir, "tack_hero", loc=(-3.2, -2.6, 2.4), target=(0, -0.3, 1.2)),
+            QR.shoot(sc, out_dir, "tack_side", loc=(3.5, -0.3, 1.5), target=(0, -0.3, 1.2)),
+            QR.shoot(sc, out_dir, "tack_tail", loc=(2.5, 4.0, 1.4), target=(0, 3.8, 0.7))]
+
+
 def wing_renders(sc, rig, out_dir):
     import rig as R
     paths = [QR.shoot(sc, out_dir, "wings_spread_top", loc=(0, 0.5, 14.0), target=(0, 0.5, 0.0), ortho=15.5),

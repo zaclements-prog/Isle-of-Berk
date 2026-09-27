@@ -15,6 +15,7 @@ import rig as R  # noqa: E402
 import sculpt as SB  # noqa: E402
 import parts as P  # noqa: E402
 import wings as W  # noqa: E402
+import tack as T  # noqa: E402
 import qa  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(ROOT))
@@ -81,7 +82,18 @@ def stage_wings():
     SC.save(os.path.join(BUILD, "toothless_wings.blend"))
 
 
-STAGES = {"model": stage_model, "wings": stage_wings}   # later tasks add "tack", "assemble", "export" — in that order
+def stage_tack():
+    rig, body = open_stage("wings")
+    sc = bpy.context.scene
+    coll = SC.collection("01_Toothless")
+    for ob in T.build_all(rig, body, materials()):
+        SC.move_to(ob, coll)
+    QR.setup_clay(sc)
+    qa.tack_renders(sc, QA_DIR)
+    SC.save(os.path.join(BUILD, "toothless_tack.blend"))
+
+
+STAGES = {"model": stage_model, "wings": stage_wings, "tack": stage_tack}   # later tasks add "assemble", "export" — in that order
 
 
 def main():
