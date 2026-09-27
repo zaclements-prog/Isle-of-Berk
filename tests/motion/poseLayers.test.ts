@@ -135,4 +135,37 @@ describe('withFoldClip', () => {
     const { clips, meta } = foldFixture();
     expect(() => withFoldClip(clips, meta, ['bind', 'wings_half', 'nope', 'wings_folded'])).toThrow(/nope/);
   });
+
+  it('corrects a sample stored with a negated (but equivalent) quaternion, keeping neighbours in one hemisphere', () => {
+    const { clips, meta } = foldFixture();
+    // Same physical rotation as the ordinary wings_half sample, but exported with the opposite quaternion sign —
+    // exactly what an independent per-action glTF export can produce.
+    const negatedHalf = foldQuat(FOLD_ANGLES_DEG[2]);
+    negatedHalf.set(-negatedHalf.x, -negatedHalf.y, -negatedHalf.z, -negatedHalf.w);
+    clips.set(
+      'wings_half',
+      new THREE.AnimationClip('wings_half', 0, [
+        new THREE.QuaternionKeyframeTrack(`${FOLD_BONE}.quaternion`, [0], negatedHalf.toArray()),
+      ]),
+    );
+
+    const merged = withFoldClip(clips, meta, FOLD_NAMES);
+    const track = merged.clips
+      .get('wingFold')!
+      .tracks.find(
+        (t): t is THREE.QuaternionKeyframeTrack => t instanceof THREE.QuaternionKeyframeTrack && t.name === `${FOLD_BONE}.quaternion`,
+      )!;
+    const keys = FOLD_NAMES.map(
+      (_, k) => new THREE.Quaternion(track.values[4 * k], track.values[4 * k + 1], track.values[4 * k + 2], track.values[4 * k + 3]),
+    );
+    for (let k = 1; k < keys.length; k++) expect(keys[k].dot(keys[k - 1])).toBeGreaterThanOrEqual(0);
+
+    const s = new RigSkeleton(toothlessFixtureRig());
+    s.resetToBind();
+    const stack = new PoseLayerStack(s, merged.clips, merged.meta);
+    stack.set('wingFold', 1, 0.625); // midpoint between wings_half (t=0.5) and wings_fold_75 (t=0.75)
+    stack.apply(s);
+    const want = foldQuat(90).slerp(foldQuat(135), 0.5);
+    expect(Math.abs(s.localQuat[s.id(FOLD_BONE)].dot(want))).toBeGreaterThan(1 - 1e-6);
+  });
 });
