@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createDragonMaterials } from '../../src/characters/dragon/materials';
+import { createDragonMaterials, DRAGON_MATERIAL_NAMES } from '../../src/characters/dragon/materials';
 
 describe('createDragonMaterials', () => {
   const mats = createDragonMaterials({ sunDir: new THREE.Vector3(0, 1, 0), prepare: () => {} });
   it('provides every material the GLB names', () => {
-    for (const n of ['skin', 'membrane', 'eye', 'mouth', 'teeth', 'claw', 'prosthetic', 'leather', 'metal']) {
+    expect(DRAGON_MATERIAL_NAMES).toHaveLength(9);
+    for (const n of DRAGON_MATERIAL_NAMES) {
       expect(mats.byName(n), n).toBeDefined();
     }
   });

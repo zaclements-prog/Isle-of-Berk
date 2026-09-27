@@ -144,6 +144,11 @@ function eyeHook(m: THREE.Material, u: DragonMaterials['uniforms']): void {
   });
 }
 
+/** The nine GLB material names, in the order `mats` below declares them. asset.ts validates the GLB against this. */
+export const DRAGON_MATERIAL_NAMES: readonly string[] = [
+  'skin', 'membrane', 'eye', 'mouth', 'teeth', 'claw', 'prosthetic', 'leather', 'metal',
+];
+
 export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m: THREE.Material) => void }): DragonMaterials {
   const uniforms = {
     // scaleBump: bump height in metres. 1.5 mm keeps the ~2.6 cm scales a fine texture; 3 mm read as beads.
