@@ -12,6 +12,7 @@ export default defineConfig({
         main: resolve(import.meta.dirname, 'index.html'),
         lab: resolve(import.meta.dirname, 'lab.html'),
         viewer: resolve(import.meta.dirname, 'viewer.html'),
+        cove: resolve(import.meta.dirname, 'cove.html'),
       },
     },
   },
