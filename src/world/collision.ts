@@ -152,7 +152,9 @@ export class CollisionWorld {
    */
   sphereCast(from: THREE.Vector3, to: THREE.Vector3, radius: number, stats?: { queries: number }): number {
     if (stats) stats.queries++;
-    if (this.closestPoint(from, radius, this.scratchSurface)) return 0;
+    // a real contact only: closestPoint can return a triangle beyond maxDist (three-mesh-bvh prunes boxes, not
+    // triangles), which stopped every cast that started inside a far surface's bounds (the camera fell into him)
+    if (this.sphereContact(from, radius, this.scratchContact)) return 0;
     const len = from.distanceTo(to);
     if (len < 1e-9) return 1;
     const dir = _v.subVectors(to, from).normalize();

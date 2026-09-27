@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
+import { CollisionWorld } from '../../src/world/collision';
 import { flatWorld, rampWorld, wallWorld, cornerWorld } from '../fixtures/worlds';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -52,6 +53,13 @@ describe('CollisionWorld', () => {
     const contact = w.sphereContact(resultPoint, 0.3);
     expect(!contact || contact.depth < 1e-4).toBe(true);
     expect(stats.queries).toBeLessThanOrEqual(12);
+  });
+
+  it('is not stopped at its start by a surface farther away than its radius (the start inside that surface bounds)', () => {
+    // one sloped triangle: its bounding box holds the start, the triangle itself is 2.1 m away and the path leads off it
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-5, 0, 0, 5, 0, 0, 0, 5, 5], 3));
+    const w = CollisionWorld.fromObjects([new THREE.Mesh(g)]);
+    expect(w.sphereCast(V(0, 1, 4), V(0, 1, 10), 0.3)).toBe(1);
   });
 
   it('returns 0 when starting inside collision', () => {
