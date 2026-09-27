@@ -64,6 +64,11 @@ export class KeyboardMouseInput implements InputSource {
     on('blur', () => {
       this.held.clear();
       this.btn = 0;
+      this.down = new Set();
+      this.btnDown = 0;
+      this.dx = 0;
+      this.dy = 0;
+      this.wheelAcc = 0;
     });
     on('mousemove', (e) => {
       if (!this.isLocked()) return;

@@ -87,9 +87,16 @@ describe('KeyboardMouseInput', () => {
     const inp = new KeyboardMouseInput(target);
     target.dispatchEvent(keyEvent('keydown', 'KeyA'));
     target.dispatchEvent(mouseEvent('mousedown', { button: 0 }));
+    target.dispatchEvent(mouseEvent('mousemove', { movementX: 3, movementY: 1 }));
+    target.dispatchEvent(mouseEvent('wheel', { deltaY: 5 }));
     target.dispatchEvent(new Event('blur'));
     const s = inp.sample();
     expect(s.keys.size).toBe(0);
     expect(s.buttons).toBe(0);
+    expect(s.pressed.size).toBe(0);
+    expect(s.buttonsPressed).toBe(0);
+    expect(s.mouseDX).toBe(0);
+    expect(s.mouseDY).toBe(0);
+    expect(s.wheel).toBe(0);
   });
 });
