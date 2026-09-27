@@ -26,6 +26,8 @@ class MeshToolsTests(unittest.TestCase):
         MT.quadriflow(ob, 2000)
         self.assertTrue(1500 <= len(ob.data.polygons) <= 2600, len(ob.data.polygons))
         self.assertLess(MT.symmetry_error(ob), 0.01)
+        rep = MT.mesh_report(ob)   # the mirrored halves must come back welded into one closed surface
+        self.assertEqual((rep["boundary_edges"], rep["nonmanifold_edges"], rep["islands"]), (0, 0, 1))
 
 
 if __name__ == "__main__":
