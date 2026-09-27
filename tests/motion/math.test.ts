@@ -54,8 +54,7 @@ describe('swing-twist', () => {
     expect(clampTwist(inside, axis, -0.5, 0.5)).toBe(0);
   });
   it('twistAngle returns 0 at 180° swing singularity', () => {
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
-    const twistAxis = new THREE.Vector3(0, 1, 0);
-    expect(twistAngle(q, twistAxis)).toBe(0);
+    // Use q.w = -0 to trigger hypot guard: atan2(0, -0) = π on old code, hypot(0, -0) = 0 on new code
+    expect(twistAngle(new THREE.Quaternion(1, 0, 0, -0), new THREE.Vector3(0, 1, 0))).toBe(0);
   });
 });
