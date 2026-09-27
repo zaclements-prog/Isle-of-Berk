@@ -1749,7 +1749,7 @@ Visual acceptance (Read every `deform_*` PNG; fix weights, keys or poses and re-
 - Output: `public/assets/characters/toothless/toothless.glb`, `toothless.poses.glb`, `toothless.rig.json`, `toothless.poses.json`
 
 **Interfaces:**
-- Produces: GLB (mesh `Toothless`, skin 101 joints, morphs `blink_L, blink_R, squint, teeth_out, membrane_pleat_L, membrane_pleat_R, smile, snarl, nostril_flare`, bind pose only), `toothless.poses.glb` (armature + clips `bind, wings_folded, wings_half, jaw_open` as glTF animations — spec §5.11; the full pose library lands with the motion plan, M6), `rig.json` (schema below), `poses.json` (`{"clips": {"bind": {"mask": "all"}, "wings_folded": {"mask": ["wing_", "hipwing_"]}, "wings_half": {"mask": ["wing_", "hipwing_"]}, "jaw_open": {"mask": ["jaw"]}}}`); `tests/assets/glb.ts: readGlbJson(path): any`.
+- Produces: GLB (mesh `Toothless`, skin 101 joints, morphs `blink_L, blink_R, squint, teeth_out, membrane_pleat_L, membrane_pleat_R, smile, snarl, nostril_flare`, bind pose only), `toothless.poses.glb` (armature + clips `bind, wings_fold_25, wings_half, wings_fold_75, wings_folded, jaw_open` as glTF animations — spec §5.11; the full pose library lands with the motion plan, M6), `rig.json` (schema below), `poses.json` (bone masks per clip: `bind` → all; the four wing fold samples → `["wing_", "hipwing_"]`; `jaw_open` → `["jaw"]`; `rig.json` `wings.<side>.foldClips` lists the fold samples in order for piecewise blending — Ruling 13); `tests/assets/glb.ts: readGlbJson(path): any`.
 
 - [ ] **Step 1: Pose clips** — `pipeline/blender/toothless/poses.py`:
 ```python
@@ -1757,10 +1757,12 @@ Visual acceptance (Read every `deform_*` PNG; fix weights, keys or poses and re-
 import bpy
 import rig as R
 
-CLIPS = {
+CLIPS = {   # fold samples 0 / .25 / .5 / .75 / 1: the engine blends piecewise between neighbours (Ruling 13)
     "bind": lambda rig: None,
-    "wings_folded": lambda rig: R.fold_wings(rig, 1.0),
+    "wings_fold_25": lambda rig: R.fold_wings(rig, 0.25),
     "wings_half": lambda rig: R.fold_wings(rig, 0.5),
+    "wings_fold_75": lambda rig: R.fold_wings(rig, 0.75),
+    "wings_folded": lambda rig: R.fold_wings(rig, 1.0),
     "jaw_open": lambda rig: R.pose_jaw(rig, 1.0),
 }
 
@@ -1870,16 +1872,19 @@ def rig_json(rig, mesh):
         "wings": {side: {"humerus": f"wing_humerus_{side}", "forearm": f"wing_forearm_{side}", "thumb": f"wing_thumb_{side}",
                          "ribs": [[f"wing_rib{i}_a_{side}", f"wing_rib{i}_b_{side}"] for i in range(1, 8)],
                          "hipRibs": [f"hipwing_rib{i}_{side}" for i in range(1, 5)],
-                         "finRibs": [f"tailfin_rib{i}_{side}" for i in range(1, 4)]} for side in ("L", "R")},
+                         "finRibs": [f"tailfin_rib{i}_{side}" for i in range(1, 4)],
+                         "foldClips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded"]}
+                  for side in ("L", "R")},
         "ears": {side: [f"ear_{i}_{side}" for i in range(1, 4)] for side in ("L", "R")},
         "morphs": keys,
-        "clips": ["bind", "wings_folded", "wings_half", "jaw_open"],
+        "clips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded", "jaw_open"],
         "proportions": {k: round(v, 4) for k, v in A.proportions().items()},
     }
 
 
-POSES = {"clips": {"bind": {"mask": "all"}, "wings_folded": {"mask": ["wing_", "hipwing_"]},
-                   "wings_half": {"mask": ["wing_", "hipwing_"]}, "jaw_open": {"mask": ["jaw"]}}}
+WING_MASK = {"mask": ["wing_", "hipwing_"]}
+POSES = {"clips": {"bind": {"mask": "all"}, "wings_fold_25": WING_MASK, "wings_half": WING_MASK,
+                   "wings_fold_75": WING_MASK, "wings_folded": WING_MASK, "jaw_open": {"mask": ["jaw"]}}}
 
 
 def write_all(rig, mesh, out_dir):
@@ -1932,7 +1937,7 @@ const poses = readGlbJson(`${DIR}toothless.poses.glb`);
 const rig = JSON.parse(readFileSync(`${DIR}toothless.rig.json`, 'utf8'));
 const MORPHS = ['blink_L', 'blink_R', 'squint', 'teeth_out', 'membrane_pleat_L', 'membrane_pleat_R', 'smile', 'snarl', 'nostril_flare'];
 const MATERIALS = ['skin', 'membrane', 'eye', 'mouth', 'teeth', 'claw', 'prosthetic', 'leather', 'metal'];
-const CLIPS = ['bind', 'wings_folded', 'wings_half', 'jaw_open'];
+const CLIPS = ['bind', 'wings_fold_25', 'wings_half', 'wings_fold_75', 'wings_folded', 'jaw_open'];
 
 describe('toothless.glb', () => {
   it('stays within the size budget', () => {
@@ -2104,7 +2109,7 @@ export interface RigLimb { bones: string[]; pole: Vec3; limitsDeg: Record<string
 export interface RigContact { bone: string; sole: Vec3; toe: Vec3; heel: Vec3 }
 export interface RigProxy { name: string; bone: string; center: Vec3; radius: number }
 export interface RigAnchor { bone: string; position: Vec3 }
-export interface RigWing { humerus: string; forearm: string; thumb: string; ribs: [string, string][]; hipRibs: string[]; finRibs: string[] }
+export interface RigWing { humerus: string; forearm: string; thumb: string; ribs: [string, string][]; hipRibs: string[]; finRibs: string[]; foldClips: string[] }
 export interface RigMeta {
   version: 1;
   units: 'm';
