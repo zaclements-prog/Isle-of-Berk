@@ -16,20 +16,21 @@ export interface SpringState {
  */
 export function stepSpring(s: SpringState, target: number, omega: number, zeta: number, dt: number): void {
   const y = s.x - target;
+  const w = Math.max(omega, 1e-4);
   if (zeta >= 0.9999) {
-    const e = Math.exp(-omega * dt);
-    const j = s.v + omega * y;
+    const e = Math.exp(-w * dt);
+    const j = s.v + w * y;
     s.x = target + (y + j * dt) * e;
-    s.v = (s.v - omega * j * dt) * e;
+    s.v = (s.v - w * j * dt) * e;
     return;
   }
-  const a = zeta * omega;
-  const b = omega * Math.sqrt(1 - zeta * zeta);
+  const a = zeta * w;
+  const b = w * Math.sqrt(1 - zeta * zeta);
   const e = Math.exp(-a * dt);
   const c = Math.cos(b * dt);
   const sn = Math.sin(b * dt);
   const nx = e * (y * c + ((s.v + a * y) / b) * sn);
-  const nv = e * (s.v * c - ((omega * omega * y + a * s.v) / b) * sn);
+  const nv = e * (s.v * c - ((w * w * y + a * s.v) / b) * sn);
   s.x = target + nx;
   s.v = nv;
 }
@@ -52,12 +53,23 @@ export class Vec3Spring {
   }
 
   step(target: THREE.Vector3, omega: number, zeta: number, dt: number): void {
-    for (const k of ['x', 'y', 'z'] as const) {
-      this.s.x = this.x[k];
-      this.s.v = this.v[k];
-      stepSpring(this.s, target[k], omega, zeta, dt);
-      this.x[k] = this.s.x;
-      this.v[k] = this.s.v;
-    }
+    // Unrolled to avoid allocation in loop: ['x','y','z'] as const creates a fresh array on every call
+    this.s.x = this.x.x;
+    this.s.v = this.v.x;
+    stepSpring(this.s, target.x, omega, zeta, dt);
+    this.x.x = this.s.x;
+    this.v.x = this.s.v;
+
+    this.s.x = this.x.y;
+    this.s.v = this.v.y;
+    stepSpring(this.s, target.y, omega, zeta, dt);
+    this.x.y = this.s.x;
+    this.v.y = this.s.v;
+
+    this.s.x = this.x.z;
+    this.s.v = this.v.z;
+    stepSpring(this.s, target.z, omega, zeta, dt);
+    this.x.z = this.s.x;
+    this.v.z = this.s.v;
   }
 }

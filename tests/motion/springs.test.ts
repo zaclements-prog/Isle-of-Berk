@@ -63,4 +63,12 @@ describe('springs', () => {
     for (let i = 0; i < 600; i++) sp.step(target, 8, 1, 1 / 120);
     expect(sp.x.distanceTo(target)).toBeLessThan(1e-4);
   });
+  it('stepSpring with omega≈0 stays finite', () => {
+    const s = { x: 1, v: 0.5 };
+    for (let i = 0; i < 1000; i++) {
+      stepSpring(s, 0, 0, 0.5, 1 / 120);
+      expect(Number.isFinite(s.x)).toBe(true);
+      expect(Number.isFinite(s.v)).toBe(true);
+    }
+  });
 });

@@ -53,4 +53,9 @@ describe('swing-twist', () => {
     const inside = new THREE.Quaternion().setFromAxisAngle(axis, 0.2);
     expect(clampTwist(inside, axis, -0.5, 0.5)).toBe(0);
   });
+  it('twistAngle returns 0 at 180° swing singularity', () => {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+    const twistAxis = new THREE.Vector3(0, 1, 0);
+    expect(twistAngle(q, twistAxis)).toBe(0);
+  });
 });

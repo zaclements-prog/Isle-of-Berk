@@ -67,12 +67,14 @@ export function rotY(v: THREE.Vector3, angle: number, out: THREE.Vector3): THREE
  */
 export function twistAngle(q: THREE.Quaternion, axis: THREE.Vector3): number {
   const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+  const len = Math.hypot(d, q.w);
+  if (len < 1e-12) return 0; // 180° swing: the twist is undefined, return 0
   return wrapAngle(2 * Math.atan2(d, q.w));
 }
 
 const _inv = new THREE.Quaternion();
 
-/** Split q = swing · twist (twist about the unit `axis`). Returns the twist angle. */
+/** Split q = swing · twist (twist about the unit `axis`). Returns the twist angle. `swing` and `twist` must not alias `q`. */
 export function swingTwist(q: THREE.Quaternion, axis: THREE.Vector3, swing: THREE.Quaternion, twist: THREE.Quaternion): number {
   const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
   twist.set(axis.x * d, axis.y * d, axis.z * d, q.w);
