@@ -2430,6 +2430,130 @@ if (charName === 'toothless') {
 
 ---
 
+### Task 9: Look pass — film silhouette, open eyes, blink in-betweens
+
+Added by controller Ruling 9 after the Task 3 self-review. The model met the Task 3 criteria, but against the film:
+- the torso is bulbous rather than panther-like
+- the big ear plates stand upright instead of sweeping back
+- the smaller plates read as side horns
+- the heavy neutral lids read sleepy
+- the lip line reads frog-wide
+- a linear 100° blink morph cuts the lid through the eyeball mid-blink
+
+Toothless is near-black in the film look, so the silhouette and the eyes carry the character. Judge the result in the engine viewer with the real materials, not only in clay.
+
+**Files:**
+- Modify: `pipeline/blender/toothless/sculpt.py` (volumes), `pipeline/blender/toothless/parts.py` (lid opening, blink in-betweens, ear plate shapes), `pipeline/blender/toothless/anatomy.py` (`EARS_L` angles only, plus `JAW_REST_CLOSE_RAD`), `pipeline/blender/toothless/export.py` (rig.json `jaw.restCloseRad`, `blink` map), `pipeline/blender/tests/test_parts.py` (new), `src/characters/dragon/asset.ts` (`setBlink`, rest jaw), `src/characters/dragon/rigMeta.ts` (types), `src/dev/viewer/main.ts` (blink sliders), `tests/characters/rigMeta.test.ts`, `tests/assets/toothless.test.ts`
+- Output: re-exported `public/assets/characters/toothless/*`, new `docs/progress/img/toothless/look_*.png`
+
+**Interfaces:**
+- Produces:
+  - Morphs `blink_L_a`, `blink_L_b`, `blink_R_a`, `blink_R_b` (1/3 and 2/3 of the full blink), alongside `blink_L`, `blink_R`.
+  - rig.json `blink: { L: ["blink_L_a", "blink_L_b", "blink_L"], R: [...] }` and `jaw.restCloseRad`.
+  - `DragonAsset.setBlink(side: 'L' | 'R', w: number)`: a piecewise-linear mapping over the three keys.
+  - `anatomy.JAW_REST_CLOSE_RAD`.
+- Contract change (ruling): the look pass may change `EARS_L` pitch/yaw/roll, which moves the six ear bones' rest orientation. Bone names, hierarchy and every body joint stay locked, and `rig.json` is re-exported.
+
+- [ ] **Step 1: Blink in-betweens with a no-penetration test**
+
+`pipeline/blender/tests/test_parts.py`:
+```python
+import unittest
+import bpy
+from mathutils import Vector
+import anatomy as A
+import scene as SC
+import rig as R
+import parts as P
+
+
+def piecewise(w):
+    """Blink weight w in [0, 1] -> weights of (key_a at 1/3, key_b at 2/3, key_full)."""
+    if w <= 1 / 3:
+        return (3 * w, 0.0, 0.0)
+    if w <= 2 / 3:
+        return (2 - 3 * w, 3 * w - 1, 0.0)
+    return (0.0, 3 - 3 * w, 3 * w - 2)
+
+
+class LidTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        SC.reset()
+        cls.rig = R.build_armature()
+        mat = bpy.data.materials.new("skin")
+        cls.lids = P.make_lids(cls.rig, mat)
+
+    def test_blink_path_never_cuts_deeper_than_rest(self):
+        for lid in self.lids:
+            side = 1 if lid.name.endswith("_L") else -1
+            c = Vector((A.EYE_CENTER_L[0] * side, A.EYE_CENTER_L[1], A.EYE_CENTER_L[2]))
+            kb = lid.data.shape_keys.key_blocks
+            sfx = "L" if side > 0 else "R"
+            basis, ka, kb_, kf = kb["Basis"], kb[f"blink_{sfx}_a"], kb[f"blink_{sfx}_b"], kb[f"blink_{sfx}"]
+            rest_min = min((v.co - c).length for v in basis.data)
+            for step in range(21):
+                wa, wb, wf = piecewise(step / 20)
+                worst = min(((basis.data[i].co + wa * (ka.data[i].co - basis.data[i].co) + wb * (kb_.data[i].co - basis.data[i].co)
+                              + wf * (kf.data[i].co - basis.data[i].co)) - c).length for i in range(len(basis.data)))
+                self.assertGreaterEqual(worst, rest_min - 0.001, (lid.name, step))
+
+    def test_piecewise_weights_are_continuous_and_normalised(self):
+        prev = piecewise(0.0)
+        for step in range(1, 301):
+            cur = piecewise(step / 300)
+            self.assertLessEqual(max(abs(a - b) for a, b in zip(cur, prev)), 0.011)
+            self.assertLessEqual(sum(cur), 1.0 + 1e-9)
+            prev = cur
+        self.assertEqual(piecewise(1.0), (0.0, 0.0, 1.0))
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+In `parts.make_lids`, create `blink_<side>_a` and `blink_<side>_b` by applying 1/3 and 2/3 of the full lid rotation, and the same fractions of the corner correction. Rotate about the same axis. Do not linearly interpolate the full key. Zero every key at creation. Run the suite: the new tests fail until the keys exist, then pass.
+
+- [ ] **Step 2: Open the neutral eyes**
+
+Toothless's calm, curious neutral shows most of the iris: the upper lid is a thin dark rim over its top edge, and the lower lid barely shows. Sleepy is a partial blink the engine plays, not the rest shape.
+- Raise the upper lid's rest edge (`open_edge_deg`) and lower the lower lid's rest edge until, in the face render, the upper lid covers at most ~15 % of the iris height and the lower lid at most ~8 %.
+- Recompute the blink travel so the lids still meet fully closed, corners included.
+- Keep squint at a small narrowing from the new rest.
+
+- [ ] **Step 3: Silhouette and head (sculpt volumes; the body joints stay where they are)**
+
+Check each change against the references below.
+- `C:\Users\zacle\dragon-walk\tools\ref_official.png`, `ref_face.png`, `ref_dtv.png`, `ref_9999.png`
+- `C:\Users\zacle\Pictures\Screenshots\Screenshot 2026-06-12 155329.png` (side spread), `155348` (top), `155402` (side), `155430` (three-quarter), `155447` (head close-up)
+
+Targets:
+- **Torso:** panther-like. A deep but narrower chest, a visible waist tuck behind the ribcage, and a rump that isn't ball-shaped. Keep the chest depth; reduce the side-to-side bulge of the belly and hip ellipsoids.
+- **Legs:** short and powerful, with thicker forearms and shins toward big paws (not thin lower legs under bulging thighs).
+- **Head:** broad and a little flatter on top than tall, with a rounded snout. The lip line closes shorter at the corners (less frog gape). Brows are soft with no frown.
+- **Ears:** the two big plates sweep back along the skull at roughly 25–35° above the neck line (`EARS_L` ear_1 pitch ~62° → ~30°). The two smaller pairs follow the same sweep, tucked behind and below the big pair — no sideways horns.
+- **Dorsal spikes:** crisp small plates. If the 24k-face mesh cannot hold them, they may become separate plate meshes weighted to the spine/tail bones. They then join the `_MASK` dorsal channel by vertex position.
+- **Jaw rest:** measure the lip gap at rest. Set `anatomy.JAW_REST_CLOSE_RAD`, the closing rotation that makes the lips meet (about the gap divided by the jaw length; close = the opposite sign of `JAW_OPEN_SIGN`). Export it as `rig.json` `jaw.restCloseRad`. `loadDragonAsset` applies it to the jaw bone at rest, so the neutral mouth shows no pink line.
+
+- [ ] **Step 4: Re-run the whole pipeline and every QA gate**
+
+Run: `npm run toothless:build`, `npm run blender:test`, `npm test`. All pass; do not loosen any bound. The wing attach, saddle drape and deformation renders are re-checked, because the torso changed. Then check the new renders:
+- clay renders `look_hero`, `look_face`, `look_side_vs_ref`, `look_three_quarter_vs_ref` (composited with `155430`)
+- the engine viewer screenshots `look_viewer_hero`, `look_viewer_face` (blink 0 / 0.5 / 1 via `setBlink`), `look_viewer_folded`
+
+- [ ] **Step 5: Engine blink API + viewer**
+
+- `asset.ts`: `setBlink(side, w)` uses the three keys from `rig.blink[side]` with the piecewise mapping above, clamping w to [0, 1]. Apply `rig.jaw.restCloseRad` to the jaw bone's rest rotation after load.
+- The viewer's Eyes folder gains "blink L" and "blink R" sliders.
+- vitest:
+  - rig.json has the blink map and `restCloseRad`, and every listed morph exists in the GLB.
+  - `setBlink` maps 0 / 0.5 / 1 to key weights (0,0,0) / (0.5,0.5,0) / (0,0,1).
+
+- [ ] **Step 6: Self-check against the references, then commit**
+
+Write a short verdict per target (torso, legs, head, ears, eyes, spikes, mouth) with the render that shows it. Commit: `feat(toothless): look pass — panther silhouette, open eyes, swept ears, blink in-betweens`.
+
+---
+
 ## Self-Review
 
 - **Spec coverage (§5):**
