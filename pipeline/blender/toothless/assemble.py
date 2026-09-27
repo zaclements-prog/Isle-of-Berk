@@ -18,6 +18,11 @@ WING_PARTS = ("Wing_", "hipwing_", "tailfin_")
 # inner radius, none beyond the outer (the upper arm is ~0.17 m thick, the haunch ~0.25 m)
 LIMB_ROOTS = {"front_scapula": (0.18, 0.32), "front_humerus": (0.20, 0.34), "hind_femur": (0.26, 0.42)}
 SMOOTH_REPEAT = 8
+# heat-weight canary (Ruling 15), read off the raw ARMATURE_AUTO weights before any correction or smoothing (they
+# would hide a partial failure): a bone covers a vertex it got >= HEAT_W of, and every body bone must cover at least
+# HEAT_COVERAGE of its expected region (the body vertices it is the nearest body bone to — where heat weighting
+# puts a bone's weight when its solve succeeds), and never fewer than HEAT_MIN_VERTS vertices.
+HEAT_W, HEAT_COVERAGE, HEAT_MIN_VERTS = 0.2, 0.5, 5
 # vertex AO: occluder search distance (m) and hemisphere rays. 1 m spans the neighbouring masses of this 7 m dragon
 # (legs ~0.45 m apart, belly ~0.6 m above the paws); at 0.5 m the armpits and under the jaw barely registered (0.90,
 # 0.97). 96 rays halve the blotches the 48-ray set left on smooth flanks.
@@ -72,8 +77,57 @@ def confine_limb_roots(body, rig):
     return moved
 
 
+def body_bones(rig):
+    return [b.name for b in rig.data.bones if not b.name.startswith(NON_BODY)]
+
+
+def expected_coverage(body, rig, bones):
+    """Per bone, the number of body vertices it is the nearest of `bones` to (distance to the bone segment)."""
+    me = body.data
+    n = len(me.vertices)
+    co = np.empty(3 * n)
+    me.vertices.foreach_get("co", co)
+    mw = body.matrix_world
+    P = co.reshape(n, 3) @ np.array(mw.to_3x3()).T + np.array(mw.translation)
+    d = np.empty((n, len(bones)))
+    for j, name in enumerate(bones):
+        bone = rig.data.bones[name]
+        a, b = np.array(rig.matrix_world @ bone.head_local), np.array(rig.matrix_world @ bone.tail_local)
+        ab = b - a
+        t = np.clip((P - a) @ ab / (ab @ ab), 0.0, 1.0)
+        d[:, j] = np.linalg.norm(P - (a + t[:, None] * ab), axis=1)
+    nearest = np.argmin(d, axis=1)
+    return {name: int(np.count_nonzero(nearest == j)) for j, name in enumerate(bones)}
+
+
+def heat_coverage(body, bones, w_min=HEAT_W):
+    """Per bone, the number of body vertices whose weight for it is >= w_min."""
+    index = {g.index: g.name for g in body.vertex_groups}
+    counts = dict.fromkeys(bones, 0)
+    for v in body.data.vertices:
+        for g in v.groups:
+            name = index[g.group]
+            if g.weight >= w_min and name in counts:
+                counts[name] += 1
+    return counts
+
+
+def check_heat_weights(body, rig):
+    """The heat-weight canary (Ruling 15). Blender reports a failed heat solve only as a warning, and a failure can
+    be partial (a bone the solver or the visibility rays starved). Returns {bone: (covered, expected)}."""
+    bones = body_bones(rig)
+    expected = expected_coverage(body, rig, bones)
+    got = heat_coverage(body, bones)
+    short = [f"{b} {got[b]}/{expected[b]}" for b in bones
+             if got[b] < max(HEAT_MIN_VERTS, math.ceil(HEAT_COVERAGE * expected[b]))]
+    if short or got["jaw"] < 500:
+        raise RuntimeError(f"heat weighting failed (raw ARMATURE_AUTO weights, covered/expected): {short} jaw={got['jaw']}")
+    return {b: (got[b], expected[b]) for b in bones}
+
+
 def skin_body(body, rig):
-    """Heat weights on the body with the non-body bones excluded (they would steal weights)."""
+    """Heat weights on the body with the non-body bones excluded (they would steal weights), checked by the canary
+    before the scripted corrections. Returns the canary's {bone: (covered, expected)}."""
     saved = {b.name: b.use_deform for b in rig.data.bones}
     for b in rig.data.bones:
         b.use_deform = not b.name.startswith(NON_BODY)
@@ -85,6 +139,7 @@ def skin_body(body, rig):
     bpy.ops.object.parent_set(type="ARMATURE_AUTO")
     for b in rig.data.bones:
         b.use_deform = saved[b.name]
+    coverage = check_heat_weights(body, rig)
     confine_limb_roots(body, rig)
     # scripted correction (spec §5.6): a smooth of every group evens out limb seams and the jagged edges heat weighting
     # leaves where a bone's visibility flips between neighbouring vertices. Blender 5.1 only runs vertex_group_smooth
@@ -94,17 +149,7 @@ def skin_body(body, rig):
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.object.vertex_group_smooth(group_select_mode="ALL", factor=0.5, repeat=SMOOTH_REPEAT)
     bpy.ops.object.mode_set(mode="OBJECT")
-    # Blender reports heat-weighting failure only as a warning: failed bones end up with empty groups
-    counts = {}
-    for v in body.data.vertices:
-        for g in v.groups:
-            if g.weight > 0.2:
-                name = body.vertex_groups[g.group].name
-                counts[name] = counts.get(name, 0) + 1
-    empty = [b.name for b in rig.data.bones if not b.name.startswith(NON_BODY) and counts.get(b.name, 0) < 5]
-    if empty or counts.get("jaw", 0) < 500:
-        raise RuntimeError(f"heat weighting failed: empty={empty} jaw={counts.get('jaw', 0)}")
-    return counts
+    return coverage
 
 
 def _falloff(d, radius):
@@ -287,8 +332,11 @@ def join_all(body, rig):
 
 
 def run(rig, body):
-    counts = skin_body(body, rig)
-    print("SKIN jaw", counts.get("jaw"), "groups", len(counts))
+    coverage = skin_body(body, rig)
+    ratio = {b: got / max(exp, 1) for b, (got, exp) in coverage.items()}
+    low = sorted(ratio, key=ratio.get)[:3]
+    print("SKIN jaw", coverage["jaw"][0], "bones", len(coverage), "lowest coverage",
+          [(b, *coverage[b], round(ratio[b], 2)) for b in low])
     add_face_keys(body)
     add_masks([o for o in bpy.context.scene.objects if o.type == "MESH"])
     join_all(body, rig)

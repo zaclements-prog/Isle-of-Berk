@@ -1,6 +1,7 @@
 """Mesh utilities for the asset pipeline (Blender)."""
 import bpy
 import bmesh
+import numpy as np
 from mathutils import Vector, kdtree
 
 
@@ -105,6 +106,56 @@ def unfold(ob, iterations=50, mirror_x=False):
     return left
 
 
+def canonical_order(ob, quantum=1e-5):
+    """Renumber a bare mesh (positions + faces, no other data) into a canonical order: vertices sorted by quantised
+    position (x, then y, then z; exact coordinates break ties inside a quantum), each face's loop rotated to start
+    at its lowest vertex id (winding kept), faces sorted by their sorted vertex ids, edges rebuilt from the faces.
+
+    The multithreaded remesh/QuadriFlow emit the same surface in a different vertex/face order from run to run
+    (Ruling 16); everything downstream (fold repair, heat weights, AO rays, the glTF export) then runs on a stable
+    order, so a rebuild is byte-identical. Distinct vertices at one position (QuadriFlow's two mirrored sheets can
+    touch at a spike tip on the seam) are told apart by their sorted neighbour positions; raises if even those tie.
+    Returns the vertex count."""
+    me = ob.data
+    n = len(me.vertices)
+    co = np.empty(3 * n, np.float64)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(n, 3)
+    q = np.round(co / quantum).astype(np.int64)
+    order = np.lexsort((co[:, 2], co[:, 1], co[:, 0], q[:, 2], q[:, 1], q[:, 0]))
+    polys = [tuple(p.vertices) for p in me.polygons]
+    runs = []                         # [first, last] positions in `order` of each run of equal positions
+    for k in np.nonzero(np.all(co[order][1:] == co[order][:-1], axis=1))[0]:
+        if runs and runs[-1][1] == k:
+            runs[-1][1] = k + 1
+        else:
+            runs.append([k, k + 1])
+    if runs:
+        ring = {}
+        for vs in polys:
+            for a, b in zip(vs, vs[1:] + vs[:1]):
+                ring.setdefault(a, set()).add(b)
+                ring.setdefault(b, set()).add(a)
+        for first, last in runs:      # re-sort each run by its vertices' sorted 1-ring positions
+            run = [int(i) for i in order[first:last + 1]]
+            key = {i: tuple(sorted(tuple(co[k]) for k in ring.get(i, ()))) for i in run}
+            if len(set(key.values())) < len(run):
+                raise RuntimeError(f"{ob.name}: coincident vertices with identical neighbourhoods — no canonical order")
+            order[first:last + 1] = sorted(run, key=key.get)
+    rank = np.empty(n, np.int64)
+    rank[order] = np.arange(n)
+    faces = []
+    for vs in polys:
+        ids = [int(rank[i]) for i in vs]
+        k = ids.index(min(ids))
+        faces.append(ids[k:] + ids[:k])
+    faces.sort(key=sorted)
+    me.clear_geometry()
+    me.from_pydata(co[order].tolist(), [], faces)
+    me.update()
+    return n
+
+
 def quadriflow(ob, target_faces, symmetry=True, seed=0):
     select_only(ob)
     ob.data.use_mirror_x = symmetry
@@ -115,6 +166,7 @@ def quadriflow(ob, target_faces, symmetry=True, seed=0):
         # Blender's symmetric mode remeshes one half and mirrors it WITHOUT welding: two islands meeting along
         # X = 0 as open boundaries (seen in Blender 5.1). Weld them into one closed surface.
         weld_mirror_seam(ob)
+    canonical_order(ob)
     left = unfold(ob, mirror_x=symmetry)
     if left:
         raise RuntimeError(f"QuadriFlow left {left} folded faces after repair (see meshtools.unfold)")

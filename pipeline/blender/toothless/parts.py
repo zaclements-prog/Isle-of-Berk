@@ -67,6 +67,34 @@ def _link(name, bm):
     return ob
 
 
+def _uv_sphere(name, radius, segments, rings, location=(0.0, 0.0, 0.0)):
+    """UV sphere (poles on Z, outward normals) in world coordinates, its vertices and faces listed in a fixed order.
+    Both bpy.ops.mesh.primitive_uv_sphere_add and bmesh.ops.create_uvsphere build it by spinning an arc, and the
+    spin walks a pointer-keyed map: the faces come out in a run-dependent order, which reached the GLB's index
+    buffers (Ruling 16: rebuilds must be byte-identical)."""
+    c = Vector(location)
+    verts = [c + Vector((0.0, 0.0, radius))]
+    for i in range(1, rings):
+        th = math.pi * i / rings
+        for j in range(segments):
+            ph = 2.0 * math.pi * j / segments
+            verts.append(c + Vector((math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th))) * radius)
+    verts.append(c + Vector((0.0, 0.0, -radius)))
+    top, bottom = 0, len(verts) - 1
+
+    def ring(i, j):
+        return 1 + (i - 1) * segments + j % segments
+    faces = [(top, ring(1, j), ring(1, j + 1)) for j in range(segments)]
+    faces += [(ring(i, j), ring(i + 1, j), ring(i + 1, j + 1), ring(i, j + 1)) for i in range(1, rings - 1) for j in range(segments)]
+    faces += [(bottom, ring(rings - 1, j + 1), ring(rings - 1, j)) for j in range(segments)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([tuple(v) for v in verts], [], faces)
+    me.update()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
 # ---------------------------------------------------------------- eyes, ears, claws (rigid, one bone each)
 def make_eyes(rig, mat):
     """Eye spheres (32 x 16). No pupil meshes: the engine eye shader draws iris and pupil from the planar UVs
@@ -74,12 +102,9 @@ def make_eyes(rig, mat):
     eyes = []
     for s, sfx in ((1, "L"), (-1, "R")):
         c = _eye_center(s)
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=A.EYE_RADIUS, location=tuple(c), segments=32, ring_count=16)
-        e = _finish(bpy.context.active_object, f"Eye_{sfx}", mat)
-        _apply_transform(e)
+        e = _finish(_uv_sphere(f"Eye_{sfx}", A.EYE_RADIUS, 32, 16, c), f"Eye_{sfx}", mat)
         n, up, r = eye_frame(s)
-        uv = e.data.uv_layers.new(name="UVMap") if not e.data.uv_layers else e.data.uv_layers[0]
-        uv.name = "UVMap"
+        uv = e.data.uv_layers.new(name="UVMap")
         for loop in e.data.loops:
             p = e.data.vertices[loop.vertex_index].co - c
             front = p.normalized().dot(n) > 0
@@ -93,8 +118,7 @@ def make_ears(rig, mat):
     ears = []
     for s, sfx in ((1, "L"), (-1, "R")):
         for name, root, length, width, thick, pitch, yaw, roll in A.EARS_L:
-            bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, segments=24, ring_count=12)
-            b = _finish(bpy.context.active_object, f"{name}_{sfx}", mat)
+            b = _finish(_uv_sphere(f"{name}_{sfx}", 1.0, 24, 12), f"{name}_{sfx}", mat)
             for v in b.data.vertices:
                 t = (v.co.y + 1.0) / 2.0
                 v.co.y = t * length
@@ -263,8 +287,8 @@ def make_teeth(rig, mat, count=9):
 
 def make_tongue(rig, mat):
     """Flattened ellipsoid on the floor of the mouth slit, rigid on `jaw` (shows when the jaw opens)."""
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, segments=16, ring_count=8, location=(0.0, -1.93, SB.MOUTH_Z - 0.009))
-    t = _finish(bpy.context.active_object, "Tongue", mat)
+    t = _finish(_uv_sphere("Tongue", 1.0, 16, 8), "Tongue", mat)
+    t.location = (0.0, -1.93, SB.MOUTH_Z - 0.009)
     t.scale = (0.10, 0.17, 0.014)
     _apply_transform(t)
     return bind_rigid(t, rig, "jaw")

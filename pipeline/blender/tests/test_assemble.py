@@ -3,6 +3,7 @@ import bpy
 from mathutils import Vector
 import scene as SC
 import sculpt as SB
+import rig as R
 import assemble as AS
 
 
@@ -32,6 +33,46 @@ class AssembleHelperTests(unittest.TestCase):
         open_sky = [a for v, a in zip(verts, ao) if abs(v.co.x) > 1.6]
         self.assertLess(max(under), 0.4)
         self.assertGreater(min(open_sky), 0.95)
+
+    def test_heat_canary_flags_a_starved_bone(self):
+        """A perfect bind (points along every body bone, each fully weighted to its own bone) passes; a bone that lost
+        its whole region, or more than half of it, is named."""
+        SC.reset()
+        rig = R.build_armature()
+        bones = AS.body_bones(rig)
+        verts, owner = [], []
+        for name in bones:
+            b = rig.data.bones[name]
+            n = 520 if name == "jaw" else 30
+            for k in range(n):
+                verts.append(tuple(b.head_local.lerp(b.tail_local, (k + 0.5) / n)))
+                owner.append(name)
+        me = bpy.data.meshes.new("body")
+        me.from_pydata(verts, [], [])
+        body = bpy.data.objects.new("body", me)
+        bpy.context.scene.collection.objects.link(body)
+
+        def bind(keep):
+            for g in list(body.vertex_groups):
+                body.vertex_groups.remove(g)
+            groups = {name: body.vertex_groups.new(name=name) for name in bones}
+            seen = {}
+            for i, name in enumerate(owner):
+                seen[name] = seen.get(name, 0) + 1
+                if seen[name] <= keep.get(name, len(verts)):
+                    groups[name].add([i], 1.0, "REPLACE")
+
+        bind({})
+        coverage = AS.check_heat_weights(body, rig)
+        self.assertEqual(coverage["front_radius_L"], (30, 30))
+        bind({"front_radius_L": 0})
+        with self.assertRaisesRegex(RuntimeError, "front_radius_L 0/30"):
+            AS.check_heat_weights(body, rig)
+        bind({"tail_07": 14})                        # 14/30 < half its region
+        with self.assertRaisesRegex(RuntimeError, "tail_07 14/30"):
+            AS.check_heat_weights(body, rig)
+        bind({"tail_07": 16})
+        AS.check_heat_weights(body, rig)
 
     def test_dorsal_weight_marks_spike_bases_only(self):
         spikes = SB.dorsal_spikes()
