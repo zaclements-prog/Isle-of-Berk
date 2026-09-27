@@ -18,6 +18,8 @@ import wings as W  # noqa: E402
 import tack as T  # noqa: E402
 import assemble as AS  # noqa: E402
 import qa  # noqa: E402
+import poses as PO  # noqa: E402
+import export as EX  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(ROOT))
 BUILD = os.path.join(ROOT, "build")
@@ -103,8 +105,19 @@ def stage_assemble():
     SC.save(os.path.join(BUILD, "toothless_assembled.blend"))
 
 
+def stage_export():
+    rig, body = open_stage("assembled")
+    body.name = body.data.name = "Toothless"
+    PO.make_clips(rig)
+    EX.write_all(rig, body, ASSETS)
+    size = os.path.getsize(os.path.join(ASSETS, "toothless.glb"))
+    print("GLB bytes", size)
+    if size > 6 * 1024 * 1024:
+        raise RuntimeError(f"toothless.glb is {size} bytes (budget 6 MB)")
+
+
 STAGES = {"model": stage_model, "wings": stage_wings, "tack": stage_tack,
-          "assemble": stage_assemble}   # a later task adds "export" last
+          "assemble": stage_assemble, "export": stage_export}
 
 
 def main():
