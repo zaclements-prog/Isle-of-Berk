@@ -3,3 +3,5 @@ dist/
 *.blend1
 pipeline/cc0/cache/
 .vite/
+pipeline/blender/build/
+__pycache__/

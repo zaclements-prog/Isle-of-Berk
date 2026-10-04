@@ -1,0 +1,36 @@
+{
+ "clips": {
+  "bind": {
+   "mask": "all"
+  },
+  "wings_fold_25": {
+   "mask": [
+    "wing_",
+    "hipwing_"
+   ]
+  },
+  "wings_half": {
+   "mask": [
+    "wing_",
+    "hipwing_"
+   ]
+  },
+  "wings_fold_75": {
+   "mask": [
+    "wing_",
+    "hipwing_"
+   ]
+  },
+  "wings_folded": {
+   "mask": [
+    "wing_",
+    "hipwing_"
+   ]
+  },
+  "jaw_open": {
+   "mask": [
+    "jaw"
+   ]
+  }
+ }
+}
