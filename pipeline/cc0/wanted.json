@@ -1,5 +1,16 @@
 [
-  { "id": "forest_ground_04", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm"],
-    "install": { "dir": "textures/terrain/forest_ground_04", "size": 1024 } },
-  { "id": "rock_moss_set_01", "type": "models", "res": "1k" }
+  { "id": "forest_ground_04", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "install": { "dir": "textures/terrain/forest_ground_04", "size": 1024 },
+    "terrainLayer": { "dir": "textures/terrain/forest_ground_04", "size": 1024 } },
+  { "id": "rock_moss_set_01", "type": "models", "res": "1k" },
+  { "id": "sparse_grass", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "terrainLayer": { "dir": "textures/terrain/sparse_grass", "size": 1024 } },
+  { "id": "mossy_rock", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "terrainLayer": { "dir": "textures/terrain/mossy_rock", "size": 1024 } },
+  { "id": "mud_forest", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "terrainLayer": { "dir": "textures/terrain/mud_forest", "size": 1024 } },
+  { "id": "pebble_ground_01", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "terrainLayer": { "dir": "textures/terrain/pebble_ground_01", "size": 1024 } },
+  { "id": "rock_wall_02", "type": "textures", "res": "2k", "maps": ["diff", "nor", "arm", "disp"],
+    "terrainLayer": { "dir": "textures/terrain/rock_wall_02", "size": 1024 } }
 ]

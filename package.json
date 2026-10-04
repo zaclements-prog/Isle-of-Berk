@@ -12,7 +12,9 @@
     "cc0:fetch": "node pipeline/cc0/fetch.mjs",
     "cc0:textures": "node pipeline/cc0/process-textures.mjs",
     "blender:test": "powershell -NoProfile -ExecutionPolicy Bypass -File pipeline/blender/run.ps1 pipeline/blender/tests/run_tests.py",
-    "toothless:build": "powershell -NoProfile -ExecutionPolicy Bypass -File pipeline/blender/run.ps1 pipeline/blender/toothless/build.py --stage all"
+    "toothless:build": "powershell -NoProfile -ExecutionPolicy Bypass -File pipeline/blender/run.ps1 pipeline/blender/toothless/build.py --stage all",
+    "cc0:terrain": "node pipeline/cc0/pack-terrain.mjs",
+    "terrain:bake": "node pipeline/terrain/bake.mjs"
   },
   "dependencies": {
     "lil-gui": "0.21.0",
