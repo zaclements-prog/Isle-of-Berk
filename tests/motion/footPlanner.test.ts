@@ -152,6 +152,7 @@ describe('FootPlanner', () => {
     const paw = p.paws[1];
     p.forceStep(1, V(0.34, 0.12, 1.3), V(0, 1, 0), 0.3, 0.1); // a blend of a floor and a step foothold
     paw.forced = false; // an ordinary gait swing, past the retarget freeze
+    paw.scripted = false;
     paw.s = DEFAULT_TUNING.planner.freezeRetargetAt;
     let guard = 0;
     while (!paw.justPlanted && guard++ < 120) {
@@ -181,6 +182,34 @@ describe('FootPlanner', () => {
       // within 1 mm: each clamp pass re-measures the ground it moved the target onto (converging, not exact)
       expect(ground.distanceTo(hips[i])).toBeLessThanOrEqual(DEFAULT_TUNING.planner.reachFrac * reach[i] + 1e-3);
     }
+  });
+  it('retargets a corrective step when he turns mid-step, but never a scripted one', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const g = gaitOf();
+    p.reset(bodyAt());
+    const body = bodyAt({ pos: V(0, 0, 0.4) }); // stance now off-centre: a standing correction starts
+    g.update(0, DT);
+    p.update(body, g, SLACK, DT);
+    const i = p.paws.findIndex((paw) => !paw.planted);
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(p.paws[i].scripted).toBe(false);
+    const turned = bodyAt({ pos: V(0, 0, 0.4), heading: 0.8 }); // he swings round before the paw lands
+    let guard = 0;
+    while (!p.paws[i].justPlanted && guard++ < 120) {
+      g.update(0, DT);
+      p.update(turned, g, SLACK, DT);
+    }
+    const n = p.neutralWorld(i, turned.pos, turned.heading, V(0, 0, 0));
+    expect(Math.hypot(p.paws[i].pos.x - n.x, p.paws[i].pos.z - n.z)).toBeLessThan(0.05);
+    // a scripted step lands exactly where it was sent, whatever the body does
+    const target = V(0.5, 0, 1.2);
+    p.forceStep(1, target, V(0, 1, 0), 0.3, 0.1);
+    guard = 0;
+    while (!p.paws[1].justPlanted && guard++ < 120) {
+      g.update(0, DT);
+      p.update(turned, g, SLACK, DT);
+    }
+    expect(p.paws[1].pos.distanceTo(target)).toBeLessThan(1e-9);
   });
   it('walks: alternates stance and swing, keeps planted paws fixed, lifts swings and strides with the body', () => {
     const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);

@@ -23,6 +23,8 @@ export interface PawState {
   /** Peak height of the swing arc above the straight path (m). */
   lift: number;
   forced: boolean;
+  /** A scripted step (forceStep: climbing, M6 actions) lands exactly on its given target: never retargeted. */
+  scripted: boolean;
   justPlanted: boolean;
   justLifted: boolean;
   /** Whether the landing spot passed the foothold checks (slope, edge, step height). */
@@ -101,7 +103,7 @@ export class FootPlanner {
     this.paws = LEG_KEYS.map((key) => ({
       key, planted: true, pos: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0),
       from: new THREE.Vector3(), to: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), toNormal: new THREE.Vector3(0, 1, 0),
-      s: 1, duration: 0.3, lift: 0, forced: false, justPlanted: false, justLifted: false, targetOk: true, wasStance: true,
+      s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, wasStance: true,
       settled: false, settle: new THREE.Vector3(), settleNormal: new THREE.Vector3(0, 1, 0),
     }));
   }
@@ -231,6 +233,7 @@ export class FootPlanner {
       p.planted = true;
       p.s = 1;
       p.forced = false;
+      p.scripted = false;
       p.justPlanted = false;
       p.justLifted = false;
       p.targetOk = f.ok;
@@ -251,7 +254,8 @@ export class FootPlanner {
     for (let i = 0; i < 4; i++) {
       const p = this.paws[i];
       if (p.planted) continue;
-      if (!p.forced && p.s < t.freezeRetargetAt) {
+      // corrective steps retarget too: he may start moving or turning mid-step, which strands a fixed target
+      if (!p.scripted && p.s < t.freezeRetargetAt) {
         this.predictTarget(i, body, gait, (1 - p.s) * p.duration, _target);
         const ctx = this.stepContext(i);
         let f = this.project(_target, body, false, p.from.y, _foot, ctx);
@@ -260,7 +264,7 @@ export class FootPlanner {
         p.to.lerp(f.point, k);
         p.toNormal.lerp(f.normal, k).normalize();
         p.targetOk = f.ok;
-      } else if (!p.forced && !p.settled) {
+      } else if (!p.scripted && !p.settled) {
         // retargeting stops: the blended target can hang between footholds on two treads, so settle it onto the
         // surface under it; the rest of the swing blends there and lands exactly on it
         const f = this.project(p.to, body, false, p.from.y, _foot, this.stepContext(i));
@@ -331,6 +335,7 @@ export class FootPlanner {
     p.fromNormal.copy(_n);
     p.planted = false;
     p.forced = true;
+    p.scripted = true;
     p.s = 0;
     p.duration = Math.max(duration, this.t.minSwingTime);
     p.justLifted = true;
@@ -368,6 +373,7 @@ export class FootPlanner {
     const t = this.t;
     p.planted = false;
     p.forced = forced;
+    p.scripted = false;
     p.s = 0;
     p.duration = Math.max(duration, t.minSwingTime);
     p.justLifted = true;

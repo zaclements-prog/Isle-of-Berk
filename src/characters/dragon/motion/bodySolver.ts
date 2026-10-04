@@ -3,7 +3,7 @@ import type { GaitEngine } from './gait';
 import { LEG_KEYS, type MotionRig } from './rigTypes';
 import type { RigSkeleton } from './skeleton';
 import type { MotionTuning } from './tuning';
-import { clamp, deg, rotY, TAU } from './math';
+import { clamp, dampFactor, deg, rotY, TAU } from './math';
 import { stepSpring, type SpringState } from './springs';
 
 type BodyTuning = MotionTuning['body'];
@@ -59,6 +59,8 @@ export class BodySolver {
   private readonly pitch: SpringState = { x: 0, v: 0 };
   private readonly roll: SpringState = { x: 0, v: 0 };
   private readonly bend: SpringState = { x: 0, v: 0 };
+  /** The gait crouch (m) as applied: it follows deeper crouches at once and releases at body.crouchRelease. */
+  private crouch = 0;
   private readonly pelvis: number;
   private readonly spine: number[];
   private readonly pelvisOffset: THREE.Vector3;
@@ -104,6 +106,7 @@ export class BodySolver {
       this.roll.x = clamp(Math.atan2((sup.support(0) + sup.support(1) - sup.support(2) - sup.support(3)) / 2, this.feetWidth) * t.rollFollow, -maxTilt, maxTilt);
     }
     this.bend.x = this.bend.v = 0;
+    this.crouch = 0;
     this.pose.spinePitch.fill(0);
     this.pose.spineYaw.fill(0);
     this.compose(pos, heading);
@@ -126,7 +129,11 @@ export class BodySolver {
     const lowerFront = Math.max(shortfall[1], shortfall[3], 0) * t.shortfallLower;
     const w = gait.weights;
     const moving = clamp(kin.speed / t.crouchFullSpeed, 0, 1);
-    const crouch = (w[0] * t.crouchWalk + w[1] * t.crouchTrot + w[2] * t.crouchGallop) * moving;
+    // he sinks into a gait's crouch at once but rises out of it slowly: stopping, his paws are still spread from
+    // the stride, and rising straight to standing height would over-stretch the planted legs
+    const crouchT = (w[0] * t.crouchWalk + w[1] * t.crouchTrot + w[2] * t.crouchGallop) * moving;
+    this.crouch = crouchT >= this.crouch ? crouchT : this.crouch + (crouchT - this.crouch) * dampFactor(t.crouchRelease, dt);
+    const crouch = this.crouch;
     const ph = gait.phase;
     const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph));
     const maxTilt = deg(maxTiltDeg);

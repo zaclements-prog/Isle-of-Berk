@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CollisionWorld, SphereContact } from '../../../world/collision';
 import type { MotionRig } from './rigTypes';
 import type { RigSkeleton } from './skeleton';
+import { rotY } from './math';
 
 export interface BodyProxy {
   readonly name: string;
@@ -45,20 +46,26 @@ export class BodyProxies {
    * Ground-like contacts (normal.y ≥ maxNormalY) are left to the body solver, so slopes and steps never block.
    * `maxNormalY` is a hand-set motion constant (spec §6.16) and must come from live tuning — callers pass
    * `tuning.body.wallNormalY`, never a literal, so no call site can silently drift from the one typed config.
+   * `pivot`/`dYaw`: the step's heading change about the character origin (the centres are from the last pose).
+   * `skin`: extra radius kept clear, so the rest of the step's pose change (spine bend, head look) stays out too.
    */
-  resolveMove(world: CollisionWorld, delta: THREE.Vector3, maxNormalY: number): THREE.Vector3 {
+  resolveMove(world: CollisionWorld, delta: THREE.Vector3, maxNormalY: number, pivot?: THREE.Vector3, dYaw = 0, skin = 0): THREE.Vector3 {
     this.blocked = false;
     let deepest = 0;
     for (let pass = 0; pass < 2; pass++) {
       for (let k = 0; k < this.items.length; k++) {
-        _c.copy(this.centers[k]).add(delta);
-        const c = world.sphereContact(_c, this.items[k].radius, _contact);
+        // the step's turn swings the proxies about the pivot (the head sits far ahead of it): test them where the
+        // turn puts them, so turning into a wall pushes the body out as moving into it does
+        if (pivot && dYaw !== 0) rotY(_c.subVectors(this.centers[k], pivot), dYaw, _c).add(pivot).add(delta);
+        else _c.copy(this.centers[k]).add(delta);
+        const r = this.items[k].radius + skin;
+        const c = world.sphereContact(_c, r, _contact);
         if (!c || Math.abs(c.normal.y) >= maxNormalY) continue; // walls only: floors/ceilings belong to the body solver
         _n.set(c.normal.x, 0, c.normal.z);
         const h = _n.length();
         if (h < 1e-6) continue;
         _n.divideScalar(h);
-        delta.addScaledVector(_n, Math.min(c.depth / h, this.items[k].radius) + 1e-5);
+        delta.addScaledVector(_n, Math.min(c.depth / h, r) + 1e-5);
         if (c.depth > deepest) {
           deepest = c.depth;
           this.wallNormal.copy(_n);

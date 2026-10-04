@@ -64,6 +64,8 @@ export class ClimbController {
   private forepawAhead = 0;
   /** How far the rearmost paws stand behind it (m, positive). */
   private hindBehind = 0;
+  /** Neutral sole positions in the character frame (the planner's), set by attach(). */
+  private neutral: readonly THREE.Vector3[] = [];
 
   /** `frontExtent`: how far the body proxies reach ahead of the character origin at bind (m). */
   constructor(
@@ -71,6 +73,7 @@ export class ClimbController {
   ) {}
 
   attach(d: DragonCharacter): void {
+    this.neutral = d.planner.neutral;
     this.forepawAhead = Math.max(d.planner.neutral[1].z, d.planner.neutral[3].z);
     this.hindBehind = -Math.min(...d.planner.neutral.map((n) => n.z));
     d.hooks.beforeMove.push((dragon, dt) => this.step(dragon, dt));
@@ -114,7 +117,7 @@ export class ClimbController {
         p.ledgeTop.copy(_hit.point);
         p.ledgeHeight = _hit.point.y - forepawY;
         p.step = _hit.point.y - foot <= this.stepMax;
-        p.ledge = !p.step && p.ledgeHeight <= c.ledgeMax;
+        p.ledge = !p.step && p.ledgeHeight <= c.ledgeMax && this.roomOnTop(p);
       }
     }
     p.drop = 0;
@@ -127,6 +130,33 @@ export class ClimbController {
       p.drop = forepawY - _hit.point.y;
     }
     return p;
+  }
+
+  /**
+   * The ledge top has room for him: flat ground at the top's height under all four paws where the scramble lands them
+   * (a boulder's rounded top passes the flat spot behind its lip but has no room for a dragon).
+   */
+  private roomOnTop(p: ClimbProbe): boolean {
+    _d.set(-p.wallNormal.x, 0, -p.wallNormal.z);
+    const heading = Math.atan2(_d.x, _d.z);
+    for (const n of this.neutral) {
+      rotY(n, heading, _t).add(p.wallPoint).addScaledVector(_d, this.c.scrambleLand);
+      _o.set(_t.x, p.ledgeTop.y + 0.5, _t.z);
+      if (this.world.isInside(_o) || !this.world.raycast(_o, DOWN, 1, _hit)) return false;
+      if (_hit.normal.y < 0.8 || Math.abs(_hit.point.y - p.ledgeTop.y) > this.c.topFlatness) return false;
+    }
+    return true;
+  }
+
+  /** A wall (not a step) faces the direction (dx, dz) within the body's reach of `pos`, at the wall-probe heights. */
+  private wallAlong(pos: THREE.Vector3, forepawY: number, dx: number, dz: number): boolean {
+    _d.set(dx, 0, dz);
+    for (const h of [0.35, 0.9]) {
+      _o.set(pos.x, forepawY + h, pos.z);
+      const hit = this.world.raycast(_o, _d, this.frontExtent + 0.3, _hit);
+      if (hit && Math.abs(hit.normal.y) < Math.cos(deg(this.c.wallMinDeg)) && hit.normal.x * dx + hit.normal.z * dz < -0.5) return true;
+    }
+    return false;
   }
 
   /** Distance (m) ahead of `pos` along `heading` where the ground falls away below `forepawY` (bisected up to `far`). */
@@ -188,8 +218,16 @@ export class ClimbController {
         }
         len = 1;
       }
-      i.dirX = tx / len;
-      i.dirZ = tz / len;
+      tx /= len;
+      tz /= len;
+      if (this.wallAlong(d.kin.pos, forepawY, tx, tz)) {
+        // an inside corner: the slide runs into the other wall. He stops there rather than flipping between them.
+        i.hasDir = false;
+        i.speed = 0;
+        return;
+      }
+      i.dirX = tx;
+      i.dirZ = tz;
       i.speed = Math.min(i.speed, c.climbSpeed);
       return;
     }
@@ -236,7 +274,7 @@ export class ClimbController {
     this.p0.copy(d.kin.pos);
     this.p1.copy(this.p0).addScaledVector(UP, (top - this.p0.y) * 0.7);
     this.p2.copy(p.wallPoint).addScaledVector(this.fwd, -0.4).setY(top + 0.3);
-    this.p3.copy(p.wallPoint).addScaledVector(this.fwd, 0.9).setY(top);
+    this.p3.copy(p.wallPoint).addScaledVector(this.fwd, this.c.scrambleLand).setY(top);
   }
 
   /** ~0.9 s: body up the curve, nose up; forepaws hook the lip, hind paws follow onto the top, forepaws re-place. */

@@ -49,6 +49,17 @@ describe('BodySolver', () => {
     m.b.update(kin(), support([0, 0.5, -0.2, 0.3]), m.gait, [0, 0, 0, 0], 35, DT);
     expect(Math.abs(m.b.pose.pitch - pitch0)).toBeLessThan(1e-3);
   });
+  it('sinks into the gait crouch at once but rises out of it gradually when he stops', () => {
+    const m = make();
+    for (let k = 0; k < 120; k++) m.gait.update(3.2, DT);
+    const trot = settle(m, kin({ speed: 3.2 }), support([0, 0, 0, 0]), 240).height;
+    const stand = m.b.hipHeight;
+    expect(stand - trot).toBeGreaterThan(0.05); // trotting crouch
+    for (let k = 0; k < 120; k++) m.gait.update(0, DT);
+    const after = settle(m, kin({ speed: 0 }), support([0, 0, 0, 0]), 12).height; // 0.1 s after stopping
+    expect(stand - after).toBeGreaterThan(0.5 * (stand - trot)); // still more than half crouched
+    expect(settle(m, kin({ speed: 0 }), support([0, 0, 0, 0]), 480).height).toBeCloseTo(stand, 3);
+  });
   it('pitches with the front/hind support difference', () => {
     const p = settle(make(), kin(), support([0, 0.5, 0, 0.5]));
     expect(p.pitch).toBeCloseTo(Math.atan2(0.5, 1.44), 3);

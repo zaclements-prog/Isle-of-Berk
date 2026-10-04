@@ -5,6 +5,7 @@ import { DragonCharacter } from '../../src/characters/dragon/motion/dragon';
 import { CollisionWorld } from '../../src/world/collision';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
 import { box, dropWorld, floor, rampWorld, wallWorld } from '../fixtures/worlds';
+import { runLabScript } from '../../src/dev/lab/labRunner';
 
 const DT = 1 / 120;
 const CAM = new THREE.Vector3(0, 3, -8);
@@ -96,6 +97,34 @@ describe('climbing', () => {
       expect(p!.z).toBeGreaterThan(0); // past the edge
     }
     expect(d.nanResets).toBe(0);
+  });
+  it('stops in an inside corner instead of flipping between its walls (camera in the loop)', { timeout: 60_000 }, () => {
+    // the course's L corner, from the corners script's spawn: with the orbit camera recentring behind him, held W
+    // turns into "forward along whichever wall he faces", and the slide along one wall runs into the other
+    const corner = CollisionWorld.fromObjects([floor(), box(8, 3, 0.8, -3, 1.5, 8), box(0.8, 3, 8, -6.6, 1.5, 4.4)]);
+    const script = {
+      name: 'corner', description: 'into an inside corner', spawn: { x: 0, z: 0, heading: Math.atan2(-6, 7) }, duration: 6,
+      events: [{ t: 0.1, down: ['KeyW'] }],
+    };
+    let flips = 0;
+    let prev = '';
+    let last: DragonCharacter | null = null;
+    const r = runLabScript({ rig: toothlessFixtureRig(), world: corner, script, onStep: (d, t) => {
+      if (t > 3 && d.climb.mode !== prev) flips++;
+      prev = d.climb.mode;
+      last = d;
+    } });
+    expect(r.failures, JSON.stringify(r)).toEqual([]);
+    expect(last!.climb.mode).toBe('blocked');
+    expect(last!.kin.speed).toBe(0);
+    expect(flips).toBe(0); // settled: no blocked/ground flip-flop in the last 3 s
+  });
+  it('does not scramble onto a top too small to stand on (a pillar), but is blocked by it', { timeout: 60_000 }, () => {
+    const pillar = CollisionWorld.fromObjects([floor(), box(1.2, 1.5, 1.2, 0, 0.75, 0.6)]);
+    const modes = new Set<string>();
+    run(pillar, ['KeyW'], 3, (x) => modes.add(x.climb.mode));
+    expect(modes.has('scramble')).toBe(false);
+    expect(modes.has('blocked')).toBe(true);
   });
   it('hops down a 2 m drop and lands on the lower level', { timeout: 60_000 }, () => {
     const modes = new Set<string>();

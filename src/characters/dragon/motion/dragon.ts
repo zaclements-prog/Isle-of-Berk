@@ -175,7 +175,7 @@ export class DragonCharacter {
     if (!this.mods.scripted) {
       this.kin.plan(this.intent, dt, t.controller, this.mods.speedCap);
       this.proxies.update(s);
-      this.proxies.resolveMove(this.world, this.kin.delta, t.body.wallNormalY);
+      this.proxies.resolveMove(this.world, this.kin.delta, t.body.wallNormalY, this.kin.pos, this.kin.yawRate * dt, t.body.proxySkin);
       this.kin.commit(this.kin.delta, dt);
     }
     // 3) gait — turning on the spot drives the phase too, so the feet step around
