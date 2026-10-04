@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CollisionWorld, RayHit } from '../../../world/collision';
 import type { DragonCharacter } from './dragon';
 import type { GaitMods } from './gait';
+import { LEG_KEYS, isFrontLeg } from './rigTypes';
 import type { MotionTuning } from './tuning';
 import { dampFactor, deg, lerp, rotY, smoothstep } from './math';
 
@@ -60,10 +61,16 @@ export class ClimbController {
   private readonly hopVel = new THREE.Vector3();
   private hopY0 = 0;
   private hopVy = 0;
+  /** Hop: each paw's sole relative to the body origin (body frame) at take-off, in flight and at touchdown. */
+  private readonly hopLaunch = [0, 1, 2, 3].map(() => new THREE.Vector3());
+  private readonly hopFlight = [0, 1, 2, 3].map(() => new THREE.Vector3());
+  private readonly hopLand = [0, 1, 2, 3].map(() => new THREE.Vector3());
+  private readonly hopLandNormal = [0, 1, 2, 3].map(() => new THREE.Vector3(0, 1, 0));
+  /** Hop: when the gather into the flight pose ends and the reach for the landing starts (s into the hop). */
+  private hopGatherEnd = 0;
+  private hopReachStart = 0;
   /** How far the forepaws stand ahead of the character origin at bind (m); set by attach(). */
   private forepawAhead = 0;
-  /** How far the rearmost paws stand behind it (m, positive). */
-  private hindBehind = 0;
   /** Neutral sole positions in the character frame (the planner's), set by attach(). */
   private neutral: readonly THREE.Vector3[] = [];
   /**
@@ -92,7 +99,6 @@ export class ClimbController {
   attach(d: DragonCharacter): void {
     this.neutral = d.planner.neutral;
     this.forepawAhead = Math.max(d.planner.neutral[1].z, d.planner.neutral[3].z);
-    this.hindBehind = -Math.min(...d.planner.neutral.map((n) => n.z));
     d.hooks.beforeMove.push((dragon, dt) => this.step(dragon, dt));
   }
 
@@ -273,7 +279,7 @@ export class ClimbController {
     }
     if (moving && p.drop > c.dropMin) {
       if (p.drop <= c.dropMax) {
-        this.startHop(d);
+        this.startHop(d, dt);
         return;
       }
       // too far down to jump: he stops at the edge, still free to turn and walk along it
@@ -309,6 +315,7 @@ export class ClimbController {
     d.mods.scripted = false;
     d.planner.autoStep = true;
     d.body.override.active = false;
+    d.body.override.exact = false;
     if (d.layers.has('wingFold')) d.layers.set('wingFold', 1, 1);
   }
 
@@ -368,41 +375,93 @@ export class ClimbController {
     }
   }
 
-  private startHop(d: DragonCharacter): void {
+  /**
+   * Hop down (spec §6.6): a ballistic leap. The forward speed is at least climb.hopSpeed; the launch speed upward is the
+   * least (≥ hopUpSpeed) that gets the hind paws, drawn up by hopTuck, hopClear past the edge before they would sink
+   * below it. Every paw is carried with the body: from its take-off contact into the flight pose (hopGather), then
+   * down to its landing spot under the neutral stance at touchdown (hopReach).
+   */
+  private startHop(d: DragonCharacter, dt: number): void {
+    const c = this.c;
     this.mode = 'hop';
     this.t = 0;
-    this.hopY0 = d.kin.pos.y;
-    this.hopVy = this.c.hopUpSpeed;
-    const fall = Math.max(0, this.hopY0 - this.probe.dropPoint.y);
-    this.duration = (this.hopVy + Math.sqrt(this.hopVy * this.hopVy + 2 * GRAVITY * fall)) / GRAVITY;
-    // carry every paw past the edge: the rearmost lands hopClear beyond it, however slowly he walked off
     const h = d.kin.heading;
-    const edge = this.edgeAhead(d.kin.pos, h, this.forepawY(d), this.forepawAhead + this.c.dropAhead);
-    const along = Math.max(d.kin.velocity.x * Math.sin(h) + d.kin.velocity.z * Math.cos(h), (edge + this.hindBehind + this.c.hopClear) / this.duration);
-    this.hopVel.set(Math.sin(h) * along, 0, Math.cos(h) * along);
+    this.fwd.set(Math.sin(h), 0, Math.cos(h));
+    this.p0.copy(d.kin.pos);
+    this.hopY0 = d.kin.pos.y;
+    let behind = 0;
     for (let i = 0; i < 4; i++) {
-      rotY(d.planner.neutral[i], d.kin.heading, _t).add(d.kin.pos).addScaledVector(this.hopVel, this.duration);
-      const g = this.world.groundAt(_t.x, _t.z, this.hopY0 + 1, fall + 3, _hit);
-      if (g) _t.y = g.point.y;
-      d.planner.forceStep(i, _t, g ? _hit.normal : UP, this.duration, 0.15);
+      rotY(d.planner.swingPoint(i, _t).sub(this.p0), -h, this.hopLaunch[i]);
+      if (!isFrontLeg(LEG_KEYS[i])) behind = Math.max(behind, -this.hopLaunch[i].z);
+      this.hopFlight[i].copy(d.planner.neutral[i]);
+      if (!isFrontLeg(LEG_KEYS[i])) this.hopFlight[i].y += c.hopTuck;
     }
+    const edge = this.edgeAhead(this.p0, h, this.forepawY(d), this.forepawAhead + c.dropAhead);
+    const along = Math.max(d.kin.velocity.dot(this.fwd), c.hopSpeed);
+    const clearTime = (edge + behind + c.hopClear) / along; // the hind paws are hopClear past the edge
+    this.hopVy = this.launchSpeed(clearTime);
+    this.hopVel.copy(this.fwd).multiplyScalar(along);
+    // the landing spots depend on the flight time, and the flight time on their height: settle both in a few passes
+    let landY = this.probe.dropPoint.y;
+    for (let pass = 0; pass < 3; pass++) {
+      const fall = Math.max(0, this.hopY0 - landY);
+      this.duration = (this.hopVy + Math.sqrt(this.hopVy * this.hopVy + 2 * GRAVITY * fall)) / GRAVITY;
+      _p.copy(this.p0).addScaledVector(this.hopVel, this.duration);
+      let sum = 0;
+      for (let i = 0; i < 4; i++) {
+        rotY(d.planner.neutral[i], h, _t).add(_p);
+        const g = this.world.groundAt(_t.x, _t.z, this.hopY0 + 1, fall + 3, _hit);
+        this.hopLand[i].set(_t.x, g ? _hit.point.y : landY, _t.z);
+        this.hopLandNormal[i].copy(g ? _hit.normal : UP);
+        sum += this.hopLand[i].y;
+      }
+      landY = sum / 4;
+    }
+    _p.copy(this.p0).addScaledVector(this.hopVel, this.duration).setY(landY);
+    for (let i = 0; i < 4; i++) rotY(this.hopLand[i].sub(_p), -h, this.hopLand[i]);
+    // the gather and the reach never overlap, and the hind paws stay drawn up until they are past the edge
+    this.hopGatherEnd = Math.min(c.hopGather, this.duration / 2);
+    this.hopReachStart = Math.max(this.duration - c.hopReach, this.duration / 2, Math.min(clearTime, this.duration));
+    d.kin.speed = along;
+    d.kin.velocity.copy(this.hopVel);
+    for (let i = 0; i < 4; i++) d.planner.forceStep(i, d.planner.swingPoint(i, _t), UP, this.duration, 0);
+    this.stepHop(d, dt); // the take-off step: in step with the swings the planner advances next
+  }
+
+  /** The least upward launch speed (≥ hopUpSpeed) that keeps the drawn-up hind paws above the take-off level until `clearTime`. */
+  private launchSpeed(clearTime: number): number {
+    const c = this.c;
+    let vy = c.hopUpSpeed;
+    for (let k = 1; k <= 24; k++) {
+      const t = (clearTime * k) / 24;
+      vy = Math.max(vy, (0.5 * GRAVITY * t * t - c.hopTuck * smoothstep(0, c.hopGather, t)) / t);
+    }
+    return vy;
   }
 
   private stepHop(d: DragonCharacter, dt: number): void {
-    this.t += dt;
+    const c = this.c;
+    this.t = Math.min(this.t + dt, this.duration);
+    const t = this.t;
+    const T = this.duration;
     d.mods.scripted = true;
     d.planner.autoStep = false;
-    d.kin.pos.addScaledVector(this.hopVel, dt);
-    const y = this.hopY0 + this.hopVy * this.t - 0.5 * GRAVITY * this.t * this.t;
+    const y = this.hopY0 + this.hopVy * t - 0.5 * GRAVITY * t * t;
+    d.kin.pos.set(this.p0.x + this.hopVel.x * t, y, this.p0.z + this.hopVel.z * t);
     d.body.override.active = true;
-    d.body.override.height = Math.max(y, this.probe.dropPoint.y) + d.body.hipHeight;
-    d.body.override.pitch = -deg(10) * smoothstep(0, 1, this.t / this.duration);
-    if (this.t >= this.duration) {
-      this.mode = 'ground';
-      d.mods.scripted = false;
-      d.planner.autoStep = true;
-      d.body.override.active = false;
-      d.body.impulse(1.5); // landing absorb
+    d.body.override.exact = true;
+    d.body.override.height = y + d.body.hipHeight;
+    d.body.override.pitch = -deg(c.hopPitchDeg) * Math.sin((Math.PI * t) / T);
+    const gather = smoothstep(0, this.hopGatherEnd, t);
+    const reach = smoothstep(this.hopReachStart, T, t);
+    for (let i = 0; i < 4; i++) {
+      _t.lerpVectors(this.hopLaunch[i], this.hopFlight[i], gather).lerp(this.hopLand[i], reach);
+      rotY(_t, d.kin.heading, _t).add(d.kin.pos);
+      _o.copy(UP).lerp(this.hopLandNormal[i], reach).normalize();
+      d.planner.carry(i, _t, _o);
     }
+    // touchdown: the swings end this step and plant every paw on its spot. Ordinary locomotion resumes next step,
+    // and the fall speed carries into the body's height spring as the landing absorb.
+    if (t >= T) this.mode = 'ground';
   }
 }

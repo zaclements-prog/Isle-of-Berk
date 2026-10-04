@@ -291,7 +291,7 @@ export class FootPlanner {
         p.toNormal.lerp(p.settleNormal, k).normalize();
         if (k < 1) this.raiseLift(p, p.settle, p.settleNormal, dt);
       }
-      if (p.s >= 1) {
+      if (p.s >= 1 - 1e-9) { // a swing lasting a whole number of steps must not miss its end by rounding
         p.s = 1;
         p.planted = true;
         p.pos.copy(p.to);
@@ -356,6 +356,19 @@ export class FootPlanner {
     p.targetOk = true;
     p.settled = false;
     p.lift = this.swingLift(p, minLift);
+  }
+
+  /**
+   * Scripted flight (a hop; M6 jump): put swinging paw i's sole at `point` for this step, with no arc. The caller moves
+   * it every step, carried with the body; the paw still plants, wherever it was last put, when its swing ends.
+   */
+  carry(i: number, point: THREE.Vector3, normal: THREE.Vector3): void {
+    const p = this.paws[i];
+    p.from.copy(point);
+    p.to.copy(point);
+    p.fromNormal.copy(normal);
+    p.toNormal.copy(normal);
+    p.lift = 0;
   }
 
   /** Current sole position of paw i (its contact while planted, its swing arc otherwise). */

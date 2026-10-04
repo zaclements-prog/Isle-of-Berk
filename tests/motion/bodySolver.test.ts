@@ -102,6 +102,23 @@ describe('BodySolver', () => {
     expect(p.pitch).toBeCloseTo(0.6, 6);
     expect(m.b.hipHeight).toBeCloseTo(1.02, 9);
   });
+  it('holds the pelvis exactly on an exact scripted height, and hands its speed to the spring after (a landing absorb)', () => {
+    const m = make();
+    settle(m, kin(), support([0, 0, 0, 0]));
+    m.b.override.active = true;
+    m.b.override.exact = true;
+    let h = m.b.hipHeight + 3;
+    for (let i = 0; i < 60; i++) {
+      h -= 6 * DT; // falling at 6 m/s: a spring would trail it by ~0.85 m
+      m.b.override.height = h;
+      expect(m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 35, DT).height).toBeCloseTo(h, 9);
+    }
+    m.b.override.active = false; // touchdown at standing height, still falling at 6 m/s
+    let min = Infinity;
+    for (let i = 0; i < 60; i++) min = Math.min(min, m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 35, DT).height);
+    expect(min).toBeLessThan(m.b.hipHeight - 0.1); // the fall carries on into the spring...
+    expect(settle(m, kin(), support([0, 0, 0, 0])).height).toBeCloseTo(m.b.hipHeight, 6); // ...which recovers
+  });
   it('absorbs a landing impulse', () => {
     const m = make();
     const steady = settle(m, kin(), support([0, 0, 0, 0])).height;

@@ -98,7 +98,10 @@ export interface MotionTuning {
   climb: {
     climbMinDeg: number; wallMinDeg: number; climbSpeed: number; scrambleSpeed: number; maxTiltDeg: number;
     cadenceScale: number; strideScale: number; swingScale: number; wingsOpen: number;
-    /** dropMin: he hops down drops deeper than this (m); at most planner.maxStepDown, or deeper drops strand his paws. */
+    /**
+     * dropMin: he hops down drops deeper than this (m); at most planner.maxStepDown, or deeper drops strand his paws.
+     * hopUpSpeed: a hop's least upward launch speed (m/s); it leaps higher when the hind paws need it to clear the edge.
+     */
     ledgeMax: number; scrambleTime: number; dropMin: number; hopUpSpeed: number; probeAhead: number;
     /** How far ahead of the forepaws (m) the ground is probed for a drop: he hops down once they reach the edge. */
     dropAhead: number;
@@ -112,6 +115,16 @@ export interface MotionTuning {
     blendTime: number;
     /** The highest drop (m) he hops down; at a deeper one he stops at the edge. */
     dropMax: number;
+    /** A hop's least forward speed (m/s): he leaps clear of the edge, however slowly he walked up to it. */
+    hopSpeed: number;
+    /** How far (m) the hind paws draw up toward the body in a hop's flight, to pass over the edge. */
+    hopTuck: number;
+    /** Time (s) the paws take to gather from the take-off stance into the flight pose. */
+    hopGather: number;
+    /** Time (s) before touchdown the paws reach down for their landing spots. */
+    hopReach: number;
+    /** Nose-down pitch (deg) at the middle of a hop. */
+    hopPitchDeg: number;
   };
   camera: {
     distance: number; minDistance: number; maxDistance: number; pitchDeg: number; minPitchDeg: number; maxPitchDeg: number;
@@ -161,6 +174,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
     swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 1.0, hopUpSpeed: 1.2, probeAhead: 1.2,
     dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
+    hopSpeed: 3.5, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,

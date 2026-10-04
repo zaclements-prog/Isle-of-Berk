@@ -6,6 +6,7 @@ import { CollisionWorld } from '../../src/world/collision';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
 import { box, dropWorld, floor, rampWorld, wallWorld } from '../fixtures/worlds';
 import { runLabScript } from '../../src/dev/lab/labRunner';
+import { MotionMetrics } from '../../src/characters/dragon/motion/metrics';
 import { DEFAULT_TUNING } from '../../src/characters/dragon/motion/tuning';
 
 const DT = 1 / 120;
@@ -144,6 +145,24 @@ describe('climbing', () => {
     run(pillar, ['KeyW'], 3, (x) => modes.add(x.climb.mode));
     expect(modes.has('scramble')).toBe(false);
     expect(modes.has('blocked')).toBe(true);
+  });
+  it('hops down a 2 m drop with every metric in bounds: paws carried clear of the edge, legs in reach, landing absorbed', { timeout: 60_000 }, () => {
+    const world = dropWorld(2, 0);
+    const metrics = new MotionMetrics(world, 5);
+    let hopped = false;
+    let maxStretch = 0;
+    let minPelvis = Infinity;
+    run(world, ['KeyW'], 5, (d) => {
+      metrics.sample(d);
+      if (d.climb.mode === 'hop') {
+        hopped = true;
+        maxStretch = Math.max(maxStretch, ...d.legs.stretch);
+      } else if (hopped) minPelvis = Math.min(minPelvis, d.body.pose.pelvisPos.y);
+    });
+    expect(hopped).toBe(true);
+    expect(metrics.report('hop').failures).toEqual([]);
+    expect(maxStretch).toBeLessThan(1); // the legs stay within reach in flight
+    expect(minPelvis).toBeLessThan(-2 + toothlessFixtureRig().contacts.hind_L.sole[1] + 0.95); // he sinks into the landing
   });
   it('hops down a 2 m drop and lands on the lower level', { timeout: 60_000 }, () => {
     const modes = new Set<string>();

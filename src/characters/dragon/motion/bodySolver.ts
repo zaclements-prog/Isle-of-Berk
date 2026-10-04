@@ -53,8 +53,12 @@ export class BodySolver {
   readonly pose: BodyPose;
   /** Pelvis-head height above the hind soles at bind. */
   readonly hipHeight: number;
-  /** Scripted actions drive the height/pitch targets directly (roll levels out). */
-  readonly override = { active: false, height: 0, pitch: 0 };
+  /**
+   * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height is the
+   * target itself, not a spring chasing it (a fall outruns any spring); when the action ends, the spring takes over at
+   * that height and speed, so a landing's fall speed becomes its absorb.
+   */
+  readonly override = { active: false, height: 0, pitch: 0, exact: false };
   private readonly height: SpringState = { x: 0, v: 0 };
   private readonly pitch: SpringState = { x: 0, v: 0 };
   private readonly roll: SpringState = { x: 0, v: 0 };
@@ -160,7 +164,10 @@ export class BodySolver {
     for (const p of sup.paws) {
       if (p.justPlanted) this.height.v -= t.footfallImpulse * clamp(kin.speed / t.footfallFullSpeed, t.footfallMinScale, 1);
     }
-    stepSpring(this.height, heightT, t.heightOmega, 1, dt);
+    if (this.override.active && this.override.exact) {
+      this.height.v = (heightT - this.height.x) / dt;
+      this.height.x = heightT;
+    } else stepSpring(this.height, heightT, t.heightOmega, 1, dt);
     stepSpring(this.pitch, pitchT, t.tiltOmega, 1, dt);
     stepSpring(this.roll, rollT, t.tiltOmega, 1, dt);
 

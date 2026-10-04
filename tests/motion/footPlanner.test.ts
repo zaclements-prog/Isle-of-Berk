@@ -201,6 +201,26 @@ describe('FootPlanner', () => {
     expect(paw.pos.y).toBeCloseTo(0, 9); // down on the floor
     expect(paw.lift).toBeGreaterThan(lift0);
   });
+  it('carries a scripted swing wherever it is put each step, and plants it there when the swing ends', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const g = gaitOf();
+    p.reset(bodyAt());
+    p.forceStep(2, V(0, 0, 3), V(0, 1, 0), 0.25, 0.1);
+    const q = V(0, 0, 0);
+    let guard = 0;
+    let k = 0;
+    while (!p.paws[2].justPlanted && guard++ < 120) {
+      const put = V(-0.3, 0.5 * Math.sin(k * 0.2), 0.04 * k++); // a path of the caller's own, nothing like an arc
+      p.carry(2, put, V(0, 1, 0));
+      expect(p.swingPoint(2, q).distanceTo(put)).toBeLessThan(1e-12);
+      expect(p.support(2)).toBeCloseTo(put.y, 12);
+      g.update(0, DT);
+      p.update(bodyAt(), g, SLACK, DT);
+    }
+    expect(p.paws[2].justPlanted).toBe(true);
+    expect(k).toBe(Math.ceil(0.25 / DT)); // on the swing's own schedule
+    expect(p.paws[2].pos.distanceTo(V(-0.3, 0.5 * Math.sin((k - 1) * 0.2), 0.04 * (k - 1)))).toBeLessThan(1e-12);
+  });
   it('clamps the landing reach against the real ground under the target (a side slope)', () => {
     // 20° side slope rising toward +X (his left at heading 0): the right paws' ground is lower than the body's
     const slope = CollisionWorld.fromObjects([floor(), box(12, 0.4, 20, 0, 1.6, 0, 0, 0, (20 * Math.PI) / 180)]);
