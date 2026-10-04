@@ -88,10 +88,15 @@ export class CollisionWorld {
    * normal points up). Needs outward-wound closed meshes or terrain surfaces (no mirrored transforms).
    */
   isInside(p: THREE.Vector3, maxUp = 50): boolean {
+    return this.depthInside(p, maxUp) >= 0;
+  }
+
+  /** How far (m) `p` lies inside a solid, measured up to the surface above it (see isInside); −1 when outside. */
+  depthInside(p: THREE.Vector3, maxUp = 50): number {
     this.ray.origin.copy(p);
     this.ray.direction.set(0, 1, 0);
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide, 0, maxUp);
-    return !!hit?.face && hit.face.normal.y > 0;
+    return hit?.face && hit.face.normal.y > 0 ? hit.distance : -1;
   }
 
   /** Ground straight below (x, top, z), searching `depth` metres down. */

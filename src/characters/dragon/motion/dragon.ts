@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { InputState } from '../../../core/input';
 import { mulberry32 } from '../../../core/rng';
-import type { CollisionWorld, RayHit } from '../../../world/collision';
+import type { CollisionWorld, RayHit, SphereContact } from '../../../world/collision';
 import { BodyKinematics, DragonController, createIntent, type MoveIntent } from './controller';
 import { BodySolver } from './bodySolver';
 import { ClimbController } from './climbing';
@@ -36,6 +36,9 @@ export interface DragonFrameInput {
 
 export type DragonHook = (dragon: DragonCharacter, dt: number) => void;
 
+/** Body proxies whose contacts with ground-like surfaces raise the front of the body (see frontRaise). */
+const FRONT_PROXIES: readonly string[] = ['head', 'muzzle', 'neck'];
+
 /** Per-step motion modifiers — climbing (Task 14) and M6 actions set these before the kinematics run. */
 export interface MotionMods {
   speedCap: number;
@@ -45,6 +48,8 @@ export interface MotionMods {
   readonly up: THREE.Vector3;
   /** A scripted action owns kin.pos/heading this step: skip the kinematics and proxy slide. */
   scripted: boolean;
+  /** Proxy contacts with |normal.y| below this push the body sideways (walls); climb mode admits steeper ground. */
+  wallNormalY: number;
 }
 
 /**
@@ -87,6 +92,7 @@ export class DragonCharacter {
   private readonly hips = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly reach: number[];
   private readonly groundProbe = new THREE.Vector3();
+  private readonly groundOrigin = new THREE.Vector3();
   private readonly groundHit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
   private readonly targets = {
     sole: [0, 1, 2, 3].map(() => new THREE.Vector3()),
@@ -96,6 +102,11 @@ export class DragonCharacter {
   };
   private prevPelvisY = 0;
   private prevVy = 0;
+  /** Proxy indices of the head, muzzle and neck, and each proxy's forward lever arm about the pelvis at bind (m). */
+  private readonly front: number[];
+  private readonly frontLever: number[];
+  private readonly raiseProbe = new THREE.Vector3();
+  private readonly raiseContact: SphereContact = { point: new THREE.Vector3(), normal: new THREE.Vector3(), depth: 0 };
 
   constructor(opts: DragonOptions) {
     this.world = opts.world;
@@ -122,7 +133,11 @@ export class DragonCharacter {
     this.look = new LookController(opts.rig, this.skeleton, t.look, rng);
     this.secondary = new SecondaryMotion(opts.rig, this.skeleton, opts.world, t, rng);
     this.proxies = new BodyProxies(opts.rig, this.skeleton);
-    this.mods = { speedCap: Infinity, gait: NO_GAIT_MODS, maxTiltDeg: t.body.maxTiltDeg, up: new THREE.Vector3(0, 1, 0), scripted: false };
+    this.mods = {
+      speedCap: Infinity, gait: NO_GAIT_MODS, maxTiltDeg: t.body.maxTiltDeg, up: new THREE.Vector3(0, 1, 0), scripted: false,
+      wallNormalY: t.body.wallNormalY,
+    };
+    this.front = this.proxies.items.flatMap((p, k) => (FRONT_PROXIES.includes(p.name) ? [k] : []));
     const jaw = opts.rig.jaw;
     const jawBone = jaw?.restCloseRad ? this.skeleton.id(jaw.bone) : -1;
     this.jawRest = jawBone < 0 ? null : {
@@ -134,6 +149,8 @@ export class DragonCharacter {
     // how far the body reaches ahead of the origin at bind (the muzzle) — climbing measures walls from the origin
     this.proxies.update(this.skeleton);
     const frontExtent = Math.max(...this.proxies.items.map((p, k) => this.proxies.centers[k].z + p.radius));
+    const pelvisZ = this.skeleton.bindWorldPos[this.skeleton.id(opts.rig.chains.spine[0])].z;
+    this.frontLever = this.proxies.centers.map((c) => c.z - pelvisZ);
     this.climb = new ClimbController(opts.world, t.climb, frontExtent, t.planner.maxStepUp);
     this.climb.attach(this);
   }
@@ -141,6 +158,7 @@ export class DragonCharacter {
   spawn(x: number, z: number, heading: number): void {
     const g = this.world.groundAt(x, z, 1000, 2000); // probe window: any ground under the spawn point (Ruling 14)
     const y = g ? g.point.y : 0;
+    this.climb.reset(this); // a respawn mid-scramble or mid-hop must not resume it
     this.kin.spawn(x, y, z, heading);
     this.gait.reset();
     this.planner.reset(this.plannerBody());
@@ -175,7 +193,7 @@ export class DragonCharacter {
     if (!this.mods.scripted) {
       this.kin.plan(this.intent, dt, t.controller, this.mods.speedCap);
       this.proxies.update(s);
-      this.proxies.resolveMove(this.world, this.kin.delta, t.body.wallNormalY, this.kin.pos, this.kin.yawRate * dt, t.body.proxySkin);
+      this.proxies.resolveMove(this.world, this.kin.delta, this.mods.wallNormalY, this.kin.pos, this.kin.yawRate * dt, t.body.proxySkin);
       this.kin.commit(this.kin.delta, dt);
     }
     // 3) gait — turning on the spot drives the phase too, so the feet step around
@@ -198,7 +216,7 @@ export class DragonCharacter {
     this.kin.pos.y = (this.planner.support(0) + this.planner.support(1) + this.planner.support(2) + this.planner.support(3)) / 4;
     // 5) body
     const pose = this.body.update(this.kin, this.planner, this.gait, this.legs.shortfall, this.mods.maxTiltDeg, dt,
-      this.groundUnder(1, 3), this.groundUnder(0, 2));
+      this.groundUnder(1, 3), this.groundUnder(0, 2), this.frontRaise());
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
     this.resetPose();
@@ -247,13 +265,52 @@ export class DragonCharacter {
     return out.copy(this.skeleton.worldPos[this.chest]);
   }
 
-  /** Terrain height under the midpoint of two paws' neutral positions (shoulders: 1, 3; hips: 0, 2). */
+  /**
+   * How far the front supports must rise (m) for the head, muzzle and neck to clear the ground-like surfaces they meet:
+   * each front proxy is tested slightly ahead along his velocity (body.terrainLookahead, with body.proxySkin to spare),
+   * and its vertical overlap is scaled from its lever arm about the pelvis back to the front supports'. Walls are the
+   * proxy slide's; this is what lets him raise his head onto a steep slope instead of butting it.
+   */
+  private frontRaise(): number {
+    const t = this.tuning;
+    const s = this.skeleton;
+    let raise = 0;
+    this.proxies.update(s);
+    for (const k of this.front) {
+      const p = this.proxies.items[k];
+      this.raiseProbe.copy(this.proxies.centers[k]).addScaledVector(this.kin.velocity, t.body.terrainLookahead);
+      const c = this.world.sphereContact(this.raiseProbe, p.radius + t.body.proxySkin, this.raiseContact);
+      if (!c || c.normal.y < this.mods.wallNormalY) continue;
+      const lever = Math.max(this.frontLever[k], 1e-3);
+      raise = Math.max(raise, (c.depth / c.normal.y) * (this.body.feetLength / lever));
+    }
+    return raise;
+  }
+
+  /**
+   * Terrain height under the midpoint of two paws' neutral positions (shoulders: 1, 3; hips: 0, 2), a little ahead
+   * along his velocity: the mean of three probes body.terrainSpan apart along his heading, so a staircase reads as a
+   * ramp. Probes whose origin lies inside a solid, or that find nothing, are left out (−Infinity if all are).
+   */
   private groundUnder(a: number, b: number): number {
+    const t = this.tuning;
     const p = this.groundProbe;
     p.addVectors(this.planner.neutral[a], this.planner.neutral[b]).multiplyScalar(0.5);
-    rotY(p, this.kin.heading, p).add(this.kin.pos).addScaledVector(this.kin.velocity, this.tuning.body.terrainLookahead);
-    const hit = this.world.groundAt(p.x, p.z, this.kin.pos.y + 1.5, 4, this.groundHit); // probe window (Ruling 14)
-    return hit ? hit.point.y : -Infinity;
+    rotY(p, this.kin.heading, p).add(this.kin.pos).addScaledVector(this.kin.velocity, t.body.terrainLookahead);
+    const fx = Math.sin(this.kin.heading) * t.body.terrainSpan;
+    const fz = Math.cos(this.kin.heading) * t.body.terrainSpan;
+    const top = this.kin.pos.y + t.climb.ledgeMax; // probe window (Ruling 14): steep ground can rise this far ahead
+    let sum = 0;
+    let n = 0;
+    for (let k = -1; k <= 1; k++) {
+      const x = p.x + fx * k;
+      const z = p.z + fz * k;
+      if (this.world.isInside(this.groundOrigin.set(x, top, z))) continue;
+      if (!this.world.groundAt(x, z, top, 2 * t.climb.ledgeMax, this.groundHit)) continue;
+      sum += this.groundHit.point.y;
+      n++;
+    }
+    return n ? sum / n : -Infinity;
   }
 
   private plannerBody(): PlannerBody {

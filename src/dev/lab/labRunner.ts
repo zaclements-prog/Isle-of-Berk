@@ -41,13 +41,25 @@ export function runLabScript(o: LabRunOptions): MetricsReport {
   const metrics = new MotionMetrics(o.world, o.script.duration);
   const yawPx = o.script.cameraYawRate ? -(o.script.cameraYawRate * dt) / d.tuning.camera.sensitivity : 0;
   const n = Math.round(o.script.duration / dt);
+  let maxY = -Infinity;
   for (let k = 0; k < n; k++) {
     const t = k * dt;
     const inp = input.sample(t);
     cam.update({ mouseDX: inp.mouseDX + yawPx, mouseDY: inp.mouseDY, wheel: inp.wheel }, cameraFollow(d, hold), dt);
     d.update({ input: inp, cameraYaw: cam.yaw, cameraPos: cam.position }, dt);
     metrics.sample(d);
+    maxY = Math.max(maxY, d.kin.pos.y);
     o.onStep?.(d, t);
   }
-  return metrics.report(o.script.name);
+  const report = metrics.report(o.script.name);
+  const g = o.script.goal;
+  if (g) {
+    const travel = Math.hypot(d.kin.pos.x - o.script.spawn.x, d.kin.pos.z - o.script.spawn.z);
+    if (g.minEndY !== undefined && d.kin.pos.y < g.minEndY) report.failures.push(`goal: ended at y ${d.kin.pos.y.toFixed(2)} < ${g.minEndY.toFixed(2)}`);
+    if (g.maxEndY !== undefined && d.kin.pos.y > g.maxEndY) report.failures.push(`goal: ended at y ${d.kin.pos.y.toFixed(2)} > ${g.maxEndY.toFixed(2)}`);
+    if (g.maxY !== undefined && maxY > g.maxY) report.failures.push(`goal: rose to y ${maxY.toFixed(2)} > ${g.maxY.toFixed(2)}`);
+    if (g.minTravel !== undefined && travel < g.minTravel) report.failures.push(`goal: travelled ${travel.toFixed(2)} m < ${g.minTravel} m`);
+    report.pass = report.failures.length === 0;
+  }
+  return report;
 }

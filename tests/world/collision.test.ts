@@ -34,6 +34,12 @@ describe('CollisionWorld', () => {
       expect(w.sphereContact(c, 0.3)).toBeNull();
     }
   });
+  it('measures how deep a point lies inside a solid, however deep', () => {
+    const w = flatWorld(); // the floor slab: top y = 0, 1 m thick
+    expect(w.depthInside(V(0, -0.6, 0))).toBeCloseTo(0.6, 6);
+    expect(w.depthInside(V(0, -0.02, 0))).toBeCloseTo(0.02, 6);
+    expect(w.depthInside(V(0, 0.3, 0))).toBe(-1);
+  });
   it('knows when a point is inside a solid', () => {
     const w = wallWorld(2);
     expect(w.isInside(V(0, 1, 3))).toBe(true);

@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import type { CollisionWorld, RayHit } from '../../../world/collision';
 import type { DragonCharacter } from './dragon';
-import { NO_GAIT_MODS } from './gait';
+import type { GaitMods } from './gait';
 import type { MotionTuning } from './tuning';
-import { deg, rotY, smoothstep } from './math';
+import { dampFactor, deg, lerp, rotY, smoothstep } from './math';
 
 type ClimbTuning = MotionTuning['climb'];
 export type ClimbMode = 'ground' | 'climb' | 'scramble' | 'blocked' | 'hop';
@@ -66,11 +66,28 @@ export class ClimbController {
   private hindBehind = 0;
   /** Neutral sole positions in the character frame (the planner's), set by attach(). */
   private neutral: readonly THREE.Vector3[] = [];
+  /**
+   * How far climb mode's settings apply (0–1). It eases toward 1 on a climbable slope and back to 0 off it
+   * (climb.blendTime), so cresting a face never snaps the tilt limit, speed cap, gait or up axis.
+   */
+  climbWeight = 0;
+  private readonly climbUp = new THREE.Vector3(0, 1, 0);
+  private readonly gaitMods: GaitMods = { cadenceScale: 1, strideScale: 1, swingScale: 1 };
+  private readonly contacts = [new THREE.Vector3(), new THREE.Vector3()];
 
   /** `frontExtent`: how far the body proxies reach ahead of the character origin at bind (m). */
   constructor(
     private readonly world: CollisionWorld, private readonly c: ClimbTuning, readonly frontExtent: number, private readonly stepMax: number,
   ) {}
+
+  /** Back to ordinary locomotion at once (a respawn): no scripted action, no climb settings. */
+  reset(d: DragonCharacter): void {
+    this.mode = 'ground';
+    this.t = 0;
+    this.stage = 0;
+    this.climbWeight = 0;
+    this.resetMods(d);
+  }
 
   attach(d: DragonCharacter): void {
     this.neutral = d.planner.neutral;
@@ -79,18 +96,27 @@ export class ClimbController {
     d.hooks.beforeMove.push((dragon, dt) => this.step(dragon, dt));
   }
 
-  /** `wallHeading`: direction of the wall probes — the intent direction while moving, so a wall he slides along stays detected. */
-  sense(pos: THREE.Vector3, heading: number, forepawY: number, wallHeading = heading): ClimbProbe {
+  /**
+   * `wallHeading`: direction of the wall probes — the intent direction while moving, so a wall he slides along stays
+   * detected. `forepaws`: the forepaws' contacts (the drop probes sit just ahead of each); without them, no drop is read.
+   */
+  sense(pos: THREE.Vector3, heading: number, forepawY: number, wallHeading = heading, forepaws?: readonly THREE.Vector3[]): ClimbProbe {
     const p = this.probe;
     const c = this.c;
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
     _d.set(Math.sin(wallHeading), 0, Math.cos(wallHeading));
+    // the steeper of the slope 1.3 m ahead and under the muzzle: a steep face meets his head first, and it must
+    // already read as climbable then (climb mode admits it as ground) or the head butts it like a wall
     p.slopeDeg = 0;
     p.slopeNormal.set(0, 1, 0);
-    if (this.world.groundAt(pos.x + fx * 1.3, pos.z + fz * 1.3, forepawY + 1.5, 4, _hit)) {
-      p.slopeNormal.copy(_hit.normal);
-      p.slopeDeg = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, _hit.normal.y)));
+    for (const ahead of [1.3, this.frontExtent]) {
+      if (!this.world.groundAt(pos.x + fx * ahead, pos.z + fz * ahead, forepawY + 1.5 + ahead, 4 + ahead, _hit)) continue;
+      const slope = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, _hit.normal.y)));
+      if (slope > p.slopeDeg) {
+        p.slopeDeg = slope;
+        p.slopeNormal.copy(_hit.normal);
+      }
     }
     p.wall = false;
     p.wallDist = Infinity;
@@ -121,13 +147,18 @@ export class ClimbController {
       }
     }
     p.drop = 0;
-    // just ahead of the forepaws, so he hops when they reach the edge. A probe origin inside a solid means the ground
-    // ahead rises above it: a ray from there would find the floor under that solid and read it as a drop.
-    const ahead = this.forepawAhead + c.dropAhead;
-    _o.set(pos.x + fx * ahead, forepawY + 1, pos.z + fz * ahead);
-    if (!this.world.isInside(_o) && this.world.groundAt(_o.x, _o.z, _o.y, 99, _hit)) {
-      p.dropPoint.copy(_hit.point);
-      p.drop = forepawY - _hit.point.y;
+    // dropAhead in front of each forepaw's own contact, so he hops when a paw reaches the edge. Measured from the
+    // contact, a climbable slope falls at most dropAhead·tan(wallMinDeg) over the gap — never a "drop" — where a probe
+    // ahead of the neutral stance spans more slope whenever the paws trail it. The ray starts well above the paw: on
+    // a steep face a low origin lies under the face (inside it, or in the hollow under a slab) and finds the floor
+    // beneath. An origin inside a solid means the ground ahead rises above it.
+    for (const contact of forepaws ?? []) {
+      _o.set(contact.x + fx * c.dropAhead, contact.y + c.ledgeMax + 0.4, contact.z + fz * c.dropAhead);
+      if (this.world.isInside(_o) || !this.world.groundAt(_o.x, _o.z, _o.y, 99, _hit)) continue;
+      if (contact.y - _hit.point.y > p.drop) {
+        p.drop = contact.y - _hit.point.y;
+        p.dropPoint.copy(_hit.point);
+      }
     }
     return p;
   }
@@ -168,12 +199,21 @@ export class ClimbController {
     let hi = far;
     for (let it = 0; it < 10; it++) {
       const m = (lo + hi) / 2;
-      _o.set(pos.x + fx * m, forepawY + 1, pos.z + fz * m);
+      _o.set(pos.x + fx * m, forepawY + this.c.ledgeMax + 0.4, pos.z + fz * m);
       const dropped = !this.world.isInside(_o) && (!this.world.groundAt(_o.x, _o.z, _o.y, 99, _hit) || _hit.point.y < below);
       if (dropped) hi = m;
       else lo = m;
     }
     return hi;
+  }
+
+  /** The forepaws' real contacts (a swinging paw counts where it took off). */
+  private forepawContacts(d: DragonCharacter): THREE.Vector3[] {
+    for (const [k, i] of [1, 3].entries()) {
+      const paw = d.planner.paws[i];
+      this.contacts[k].copy(paw.planted ? paw.pos : paw.from);
+    }
+    return this.contacts;
   }
 
   /** The lower of the forepaws' real contacts (a swinging paw counts where it took off). */
@@ -198,7 +238,7 @@ export class ClimbController {
     const forepawY = this.forepawY(d);
     const i = d.intent;
     const moving = i.hasDir && i.speed > 0;
-    const p = this.sense(d.kin.pos, d.kin.heading, forepawY, moving ? Math.atan2(i.dirX, i.dirZ) : d.kin.heading);
+    const p = this.sense(d.kin.pos, d.kin.heading, forepawY, moving ? Math.atan2(i.dirX, i.dirZ) : d.kin.heading, this.forepawContacts(d));
     const into = moving ? i.dirX * p.wallNormal.x + i.dirZ * p.wallNormal.z : 0;
     if (moving && p.wall && !p.step && into < -0.5 && p.wallDist < this.frontExtent + 0.3) {
       if (p.ledge) {
@@ -232,27 +272,40 @@ export class ClimbController {
       return;
     }
     if (moving && p.drop > c.dropMin) {
-      this.startHop(d);
-      return;
+      if (p.drop <= c.dropMax) {
+        this.startHop(d);
+        return;
+      }
+      // too far down to jump: he stops at the edge, still free to turn and walk along it
+      if (i.dirX * Math.sin(d.kin.heading) + i.dirZ * Math.cos(d.kin.heading) > 0.3) i.speed = 0;
     }
-    if (p.slopeDeg > c.climbMinDeg && p.slopeDeg <= c.wallMinDeg) {
-      this.mode = 'climb';
-      d.mods.speedCap = i.gallop ? c.scrambleSpeed : c.climbSpeed;
-      d.mods.gait = { cadenceScale: c.cadenceScale, strideScale: c.strideScale, swingScale: c.swingScale };
-      d.mods.maxTiltDeg = c.maxTiltDeg;
-      d.mods.up.copy(UP).lerp(p.slopeNormal, 0.5).normalize();
-      // Ruling 3: the merged fold clip is sampled at the fold amount, so the wings open by easing it below 1
-      if (d.layers.has('wingFold')) d.layers.set('wingFold', 1, 1 - c.wingsOpen);
-      return;
-    }
-    this.mode = 'ground';
+    const climbing = p.slopeDeg > c.climbMinDeg && p.slopeDeg <= c.wallMinDeg;
+    this.mode = climbing ? 'climb' : 'ground';
+    if (climbing) this.climbUp.copy(UP).lerp(p.slopeNormal, 0.5).normalize();
+    this.climbWeight += ((climbing ? 1 : 0) - this.climbWeight) * dampFactor(c.blendTime, dt);
+    if (this.climbWeight < 1e-3) return;
+    const w = this.climbWeight;
+    // the cap holds at once on a climbable face (he brakes before it reaches him) and eases off as he crests it:
+    // climbSpeed at full weight, out of the way well before zero
+    d.mods.speedCap = (i.gallop ? c.scrambleSpeed : c.climbSpeed) / (climbing ? 1 : w);
+    this.gaitMods.cadenceScale = lerp(1, c.cadenceScale, w);
+    this.gaitMods.strideScale = lerp(1, c.strideScale, w);
+    this.gaitMods.swingScale = lerp(1, c.swingScale, w);
+    d.mods.gait = this.gaitMods;
+    d.mods.maxTiltDeg = lerp(d.tuning.body.maxTiltDeg, c.maxTiltDeg, w);
+    d.mods.up.copy(UP).lerp(this.climbUp, w).normalize();
+    d.mods.wallNormalY = lerp(d.tuning.body.wallNormalY, Math.cos(deg(c.wallMinDeg)), w);
+    // Ruling 3: the merged fold clip is sampled at the fold amount, so the wings open by easing it below 1
+    if (d.layers.has('wingFold')) d.layers.set('wingFold', 1, 1 - c.wingsOpen * w);
   }
 
   private resetMods(d: DragonCharacter): void {
     d.mods.speedCap = Infinity;
-    d.mods.gait = NO_GAIT_MODS;
+    this.gaitMods.cadenceScale = this.gaitMods.strideScale = this.gaitMods.swingScale = 1;
+    d.mods.gait = this.gaitMods;
     d.mods.maxTiltDeg = d.tuning.body.maxTiltDeg;
     d.mods.up.copy(UP);
+    d.mods.wallNormalY = d.tuning.body.wallNormalY;
     d.mods.scripted = false;
     d.planner.autoStep = true;
     d.body.override.active = false;

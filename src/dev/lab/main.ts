@@ -160,6 +160,7 @@ async function startToothless(): Promise<void> {
     runAll: () => Object.fromEntries(LAB_SCRIPTS.map((s) => [s.name, runLabScript({ rig: asset.rig, world, script: s, tuning, clips: asset.clips, posesMeta })])),
     play: (name: string) => {
       const s = scriptByName(name);
+      dragon.controller.prowl = false; // a script's C press toggles from trot, as in the headless runner
       dragon.spawn(s.spawn.x, s.spawn.z, s.spawn.heading);
       cam.reset(cameraFollow(dragon, hold));
       scripted = new ScriptedInput(s.events.map((e) => ({ ...e, t: e.t + app.loop.simTime })));

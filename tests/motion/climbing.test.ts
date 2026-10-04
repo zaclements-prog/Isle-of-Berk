@@ -6,6 +6,7 @@ import { CollisionWorld } from '../../src/world/collision';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
 import { box, dropWorld, floor, rampWorld, wallWorld } from '../fixtures/worlds';
 import { runLabScript } from '../../src/dev/lab/labRunner';
+import { DEFAULT_TUNING } from '../../src/characters/dragon/motion/tuning';
 
 const DT = 1 / 120;
 const CAM = new THREE.Vector3(0, 3, -8);
@@ -46,6 +47,7 @@ describe('climbing', () => {
     });
     expect(climbing).toBeGreaterThan(60);
     expect(maxClimbSpeed).toBeLessThanOrEqual(1.8 + 1e-6);
+    expect(d.kin.pos.y).toBeGreaterThan(3); // and he actually climbs the face (it rises 6.55 m)
     expect(d.nanResets).toBe(0);
   });
   it('scrambles up a 2.3 m ledge', { timeout: 60_000 }, () => {
@@ -66,6 +68,23 @@ describe('climbing', () => {
     expect(d.climb.mode).toBe('blocked');
     expect(maxChestZ).toBeLessThan(-0.5);
     expect(d.nanResets).toBe(0);
+  });
+  it('hops every drop deeper than the planner can step down (the two thresholds meet)', () => {
+    expect(DEFAULT_TUNING.climb.dropMin).toBeLessThanOrEqual(DEFAULT_TUNING.planner.maxStepDown);
+  });
+  it('a respawn ends a scramble or hop in progress', { timeout: 60_000 }, () => {
+    const d = new DragonCharacter({ rig: toothlessFixtureRig(), world: wallWorld(2.3, 0) });
+    d.spawn(0, -6, 0);
+    let k = 0;
+    while (d.climb.mode !== 'scramble' && k++ < 600) d.update({ input: input(['KeyW']), cameraYaw: 0, cameraPos: CAM }, DT);
+    expect(d.climb.mode).toBe('scramble');
+    d.spawn(-3, -8, 0);
+    d.update({ input: input([]), cameraYaw: 0, cameraPos: CAM }, DT);
+    expect(d.climb.mode).toBe('ground');
+    expect(d.mods.scripted).toBe(false);
+    expect(d.body.override.active).toBe(false);
+    expect(d.planner.autoStep).toBe(true);
+    expect(Math.hypot(d.kin.pos.x + 3, d.kin.pos.z + 8)).toBeLessThan(0.05);
   });
   it('walks up 0.5 m stairs as steps, never as scramble ledges', { timeout: 60_000 }, () => {
     const risers = [0, 1, 2, 3].map((k) => box(6, 0.5 * (k + 1), 1.2, 0, 0.25 * (k + 1), -3 + 1.2 * k));

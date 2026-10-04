@@ -30,7 +30,7 @@ const _contact: SphereContact = { point: new THREE.Vector3(), normal: new THREE.
 /**
  * Per-step motion metrics (spec §8.2):
  * - planted-foot slip: the FK sole's drift from where it was when the paw planted
- * - paw penetration: any paw below the ground under it
+ * - paw penetration: any paw inside the ground, by its depth below the surface over it
  * - planted float: a planted sole above its ground
  * - body-proxy penetration, joint-limit violations, NaN resets
  * - boundedness: every non-root bone's max rotation in the last 10 s vs the first 10 s (the spin-bug check)
@@ -63,12 +63,14 @@ export class MotionMetrics {
     for (let i = 0; i < 4; i++) {
       const paw = d.planner.paws[i];
       d.legs.soleWorld(i, s, _sole);
-      const g = this.world.groundAt(_sole.x, _sole.z, _sole.y + 0.5, 3, _hit);
-      if (g) this.maxPen = Math.max(this.maxPen, g.point.y - _sole.y);
+      // penetration is the depth up to the surface above a sole inside a solid, however deep (a ray from a fixed
+      // height above it would start inside too, and miss)
+      const depth = this.world.depthInside(_sole, 50);
+      if (depth > 0) this.maxPen = Math.max(this.maxPen, depth);
       if (paw.planted) {
         if (!this.wasPlanted[i] || paw.justPlanted) this.locked[i].copy(_sole);
         this.maxSlip = Math.max(this.maxSlip, _sole.distanceTo(this.locked[i]));
-        if (g) this.maxFloat = Math.max(this.maxFloat, _sole.y - g.point.y);
+        if (depth < 0 && this.world.groundAt(_sole.x, _sole.z, _sole.y, 3, _hit)) this.maxFloat = Math.max(this.maxFloat, _sole.y - _hit.point.y);
       }
       this.wasPlanted[i] = paw.planted;
     }

@@ -22,6 +22,8 @@ export interface MotionTuning {
     swingProbes: number;
     /** Cap (m) on a swing's peak lift. */
     maxLift: number;
+    /** How fast (m/s) a swing's lift may grow mid-swing when its foothold moves (a late change must not pop the paw). */
+    liftRate: number;
   };
   body: {
     heightOmega: number; tiltOmega: number; maxTiltDeg: number;
@@ -48,6 +50,10 @@ export interface MotionTuning {
     crouchRelease: number;
     /** Extra radius (m) the body proxies keep clear of walls, for the pose changes a step's slide cannot predict. */
     proxySkin: number;
+    /** 0–1: ride on the paws' supports (0) or the terrain under the hips and shoulders (1); never below the terrain. */
+    terrainFollow: number;
+    /** Spacing (m) of the three terrain probes along his heading under the hips and shoulders (stairs read as ramps). */
+    terrainSpan: number;
   };
   legs: { scapulaFollow: number; swingCurlDeg: number; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
   look: {
@@ -92,6 +98,7 @@ export interface MotionTuning {
   climb: {
     climbMinDeg: number; wallMinDeg: number; climbSpeed: number; scrambleSpeed: number; maxTiltDeg: number;
     cadenceScale: number; strideScale: number; swingScale: number; wingsOpen: number;
+    /** dropMin: he hops down drops deeper than this (m); at most planner.maxStepDown, or deeper drops strand his paws. */
     ledgeMax: number; scrambleTime: number; dropMin: number; hopUpSpeed: number; probeAhead: number;
     /** How far ahead of the forepaws (m) the ground is probed for a drop: he hops down once they reach the edge. */
     dropAhead: number;
@@ -101,6 +108,10 @@ export interface MotionTuning {
     scrambleLand: number;
     /** A ledge top must be flat to within this (m) under all four landing paws to be scrambled onto. */
     topFlatness: number;
+    /** Half-life (s) of climb mode's settings easing in on a climbable slope and out off it. */
+    blendTime: number;
+    /** The highest drop (m) he hops down; at a deeper one he stops at the edge. */
+    dropMax: number;
   };
   camera: {
     distance: number; minDistance: number; maxDistance: number; pitchDeg: number; minPitchDeg: number; maxPitchDeg: number;
@@ -124,14 +135,14 @@ export const DEFAULT_TUNING: MotionTuning = {
     retargetHalfLife: 0.04, freezeRetargetAt: 0.8, forcedStepDist: 0.2, forcedSwingTime: 0.28,
     forcedLift: 0.09, overstretch: 0.97, clearance: 0.05, minSwingTime: 0.12, maxAirborne: 2, maxStepUp: 0.6, maxStepDown: 1.0,
     reachFrac: 0.9, sideLead: 0.2, strainLookahead: 3, leadEnvelopeFrac: 0.9, overstretchSwingMax: 0.4,
-    swingProbes: 12, maxLift: 0.6,
+    swingProbes: 12, maxLift: 0.6, liftRate: 4,
   },
   body: {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
     leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
-    crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04,
+    crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4,
   },
   legs: { scapulaFollow: 0.35, swingCurlDeg: 35, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
   look: {
@@ -148,8 +159,8 @@ export const DEFAULT_TUNING: MotionTuning = {
   breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8, exertionFullSpeed: 10 },
   climb: {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
-    swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 1.5, hopUpSpeed: 1.2, probeAhead: 1.2,
-    dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15,
+    swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 1.0, hopUpSpeed: 1.2, probeAhead: 1.2,
+    dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,

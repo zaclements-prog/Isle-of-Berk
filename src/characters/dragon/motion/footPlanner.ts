@@ -60,6 +60,9 @@ export interface StepContext {
   readonly fromNormal: THREE.Vector3;
   /** The leg's hip/shoulder joint (world), or null when unknown. */
   readonly hip: THREE.Vector3 | null;
+  /** That joint predicted at touchdown, and the landing reach from it: candidates beyond it are skipped. */
+  readonly reachFrom?: THREE.Vector3 | null;
+  readonly reach?: number;
 }
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -95,8 +98,10 @@ export class FootPlanner {
   private readonly envBackward = [Infinity, Infinity, Infinity, Infinity];
   private readonly hips = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly reach = [Infinity, Infinity, Infinity, Infinity];
-  private readonly ctx: Array<{ from: THREE.Vector3; fromNormal: THREE.Vector3; hip: THREE.Vector3 | null }> =
-    [0, 1, 2, 3].map(() => ({ from: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), hip: null }));
+  private readonly ctx: Array<{ from: THREE.Vector3; fromNormal: THREE.Vector3; hip: THREE.Vector3 | null; reachFrom: THREE.Vector3 | null; reach: number }> =
+    [0, 1, 2, 3].map(() => ({ from: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), hip: null, reachFrom: null, reach: Infinity }));
+  /** Each leg's joint predicted at touchdown by the last predictTarget (the candidates' reach check). */
+  private readonly predHip = [0, 1, 2, 3].map(() => new THREE.Vector3());
 
   constructor(rig: MotionRig, private readonly world: CollisionWorld, private readonly t: PlannerTuning) {
     this.neutral = LEG_KEYS.map((k) => new THREE.Vector3(...rig.contacts[k].sole));
@@ -158,6 +163,7 @@ export class FootPlanner {
       // predicted hip: carried with the body and turned about it
       _n.subVectors(this.hips[i], body.pos);
       rotY(_n, body.yawRate * remaining, _n).add(body.pos).addScaledVector(body.velocity, remaining);
+      this.predHip[i].copy(_n);
       const R = t.reachFrac * this.reach[i];
       // twice: pulling the target in moves it over ground of another height on a slope
       for (let pass = 0; pass < 2; pass++) {
@@ -203,13 +209,17 @@ export class FootPlanner {
       const slope = Math.acos(clamp(_hit.normal.dot(WORLD_UP), -1, 1));
       if (slope > deg(t.maxSlopeDeg)) continue;
       if (!this.stepOk(_hit.point.y - refY) && !(step && this.slopeExplains(step, _hit))) continue;
+      // the candidates around the clamped target sit at other heights (a tread lower, a step higher), so each is
+      // checked against the reach from the joint at touchdown. Out of reach loses to any reachable foothold, edges
+      // included, but still beats the raw target, which may hang in the air or sit inside a step.
+      const far = !!step?.reachFrom && step.reach !== undefined && _hit.point.distanceTo(step.reachFrom) > step.reach;
       const edge = this.isEdge(_hit.point, body.up);
-      const score = Math.hypot(f, l) * t.candidateOffset + slope * 0.3 + (edge ? 1 : 0);
+      const score = Math.hypot(f, l) * t.candidateOffset + slope * 0.3 + (edge ? 1 : 0) + (far ? 2 : 0);
       if (score < best) {
         best = score;
         out.point.copy(_hit.point);
         out.normal.copy(_hit.normal);
-        out.ok = !edge;
+        out.ok = !edge && !far;
       }
     }
     if (best === Infinity) {
@@ -264,12 +274,13 @@ export class FootPlanner {
         p.to.lerp(f.point, k);
         p.toNormal.lerp(f.normal, k).normalize();
         p.targetOk = f.ok;
+        // a foothold that moved to the next tread down (or up) bends the path across the edge the lift was sized for.
+        // Sized against the foothold itself: the blended target on its way there can pass through a step.
+        this.raiseLift(p, f.point, f.normal, dt);
       } else if (!p.scripted && !p.settled) {
         // retargeting stops: the blended target can hang between footholds on two treads, so settle it onto the
-        // surface under it; the rest of the swing blends there and lands exactly on it
-        const f = this.project(p.to, body, false, p.from.y, _foot, this.stepContext(i));
-        p.settle.copy(f.point);
-        p.settleNormal.copy(f.normal);
+        // surface under it (when there is one); the rest of the swing blends there and lands exactly on it
+        this.settleOnto(i, body);
         p.settled = true;
       }
       const prevS = p.s;
@@ -278,6 +289,7 @@ export class FootPlanner {
         const k = Math.min(1, (p.s - prevS) / Math.max(1 - prevS, 1e-9));
         p.to.lerp(p.settle, k);
         p.toNormal.lerp(p.settleNormal, k).normalize();
+        if (k < 1) this.raiseLift(p, p.settle, p.settleNormal, dt);
       }
       if (p.s >= 1) {
         p.s = 1;
@@ -390,22 +402,23 @@ export class FootPlanner {
   }
 
   /**
-   * Peak lift (m) of paw p's swing, at least `minLift` and at most planner.maxLift, so that the arc — lift·sin(πs) over
-   * the smoothstep-eased path — clears the ground by `clearance`. The path is sampled in swing time (a riser just ahead
-   * of the paw meets the arc early, when it is still low), and a riser between two samples is bisected so its lip is
-   * cleared too.
+   * Peak lift (m) of paw p's swing toward `to`, at least `minLift` and at most planner.maxLift, so that the arc —
+   * lift·sin(πs) over the smoothstep-eased path — clears the ground by `clearance` from progress `fromS` on. The path is
+   * sampled in swing time (a riser just ahead of the paw meets the arc early, when it is still low), and a riser between
+   * two samples is bisected so its lip is cleared too.
    */
-  private swingLift(p: PawState, minLift: number): number {
+  private swingLift(p: PawState, minLift: number, fromS = 0, to = p.to, toNormal = p.toNormal): number {
     const t = this.t;
-    const top = Math.max(p.from.y, p.to.y) + t.castUp + t.maxStepUp;
-    const depth = top - Math.min(p.from.y, p.to.y) + t.castDown;
+    const top = Math.max(p.from.y, to.y) + t.castUp + t.maxStepUp;
+    const depth = top - Math.min(p.from.y, to.y) + t.castDown;
     let lift = minLift;
-    let prevS = 0;
-    let prevG = p.from.y;
-    for (let k = 1; k < t.swingProbes; k++) {
+    let prevS = fromS;
+    let prevG = fromS > 0 ? this.pathGround(p, to, fromS, top, depth) : p.from.y;
+    if (fromS > 0) lift = Math.max(lift, this.liftNeeded(p, to, toNormal, fromS, prevG));
+    for (let k = Math.floor(fromS * t.swingProbes) + 1; k <= t.swingProbes; k++) { // up to s = 1: a riser in the last stretch is bisected too
       const s = k / t.swingProbes;
-      const g = this.pathGround(p, s, top, depth);
-      lift = Math.max(lift, this.liftNeeded(p, s, g));
+      const g = this.pathGround(p, to, s, top, depth);
+      lift = Math.max(lift, this.liftNeeded(p, to, toNormal, s, g));
       if (Number.isFinite(g) && Number.isFinite(prevG) && Math.abs(g - prevG) > t.edgeDrop) {
         const upper = Math.max(g, prevG);
         const rising = g > prevG; // the upper side is the later one
@@ -413,10 +426,10 @@ export class FootPlanner {
         let hi = s;
         for (let it = 0; it < 6; it++) {
           const m = (lo + hi) / 2;
-          if ((Math.abs(this.pathGround(p, m, top, depth) - upper) < t.edgeDrop) === rising) hi = m;
+          if ((Math.abs(this.pathGround(p, to, m, top, depth) - upper) < t.edgeDrop) === rising) hi = m;
           else lo = m;
         }
-        lift = Math.max(lift, this.liftNeeded(p, rising ? hi : lo, upper));
+        lift = Math.max(lift, this.liftNeeded(p, to, toNormal, rising ? hi : lo, upper));
       }
       prevS = s;
       prevG = g;
@@ -424,21 +437,44 @@ export class FootPlanner {
     return Math.min(lift, t.maxLift);
   }
 
-  /** Ground height under paw p's straight (unlifted) swing path at progress s, or −Infinity. */
-  private pathGround(p: PawState, s: number, top: number, depth: number): number {
-    _c.lerpVectors(p.from, p.to, smoothstep(0, 1, s));
+  /**
+   * Mid-swing, the lift paw p's path toward `to` needs over the rest of the swing. It only grows, by at most
+   * planner.liftRate (m/s): a late foothold change raises the arc smoothly instead of popping the paw up.
+   */
+  private raiseLift(p: PawState, to: THREE.Vector3, toNormal: THREE.Vector3, dt: number): void {
+    p.lift = Math.min(this.swingLift(p, p.lift, p.s, to, toNormal), p.lift + this.t.liftRate * dt);
+  }
+
+  /** Ground height under the straight (unlifted) path from paw p's swing start to `to` at progress s, or −Infinity. */
+  private pathGround(p: PawState, to: THREE.Vector3, s: number, top: number, depth: number): number {
+    _c.lerpVectors(p.from, to, smoothstep(0, 1, s));
     return this.world.groundAt(_c.x, _c.z, top, depth, _probe) ? _probe.point.y : -Infinity;
   }
 
-  /** Peak lift that puts the arc at progress s above ground height g (clearance tapering with the arc). */
-  private liftNeeded(p: PawState, s: number, g: number): number {
+  /** Peak lift that puts the arc toward `to` at progress s above ground height g (clearance tapering with the arc). */
+  private liftNeeded(p: PawState, to: THREE.Vector3, toNormal: THREE.Vector3, s: number, g: number): number {
     if (!Number.isFinite(g)) return 0;
     const e = smoothstep(0, 1, s);
-    const baseY = p.from.y + (p.to.y - p.from.y) * e;
-    const ny = Math.max(_n.lerpVectors(p.fromNormal, p.toNormal, e).normalize().y, 0.3);
+    const baseY = p.from.y + (to.y - p.from.y) * e;
+    const ny = Math.max(_n.lerpVectors(p.fromNormal, toNormal, e).normalize().y, Math.cos(deg(this.t.maxSlopeDeg)));
     const arc = Math.sin(Math.PI * s) * ny;
     // at the very ends the paw is on its own ground: nothing to clear (and no division by a vanishing arc)
     return arc < 1e-3 ? 0 : Math.max(0, g - baseY) / arc + this.t.clearance;
+  }
+
+  /** Paw i's settle point: the surface straight under its target along −up (cast from above the hip), else the target. */
+  private settleOnto(i: number, body: PlannerBody): void {
+    const p = this.paws[i];
+    const ctx = this.stepContext(i);
+    const above = ctx.hip ? Math.max(0, _a.subVectors(ctx.hip, p.to).dot(body.up)) : 0;
+    const hit = !this.world.isInside(_a.copy(p.to).addScaledVector(body.up, this.t.castUp + above)) && this.cast(p.to, body.up, _probe, above);
+    if (hit && Math.abs(_probe.point.y - p.to.y) <= this.t.maxStepUp) {
+      p.settle.copy(_probe.point);
+      p.settleNormal.copy(_probe.normal);
+    } else {
+      p.settle.copy(p.to);
+      p.settleNormal.copy(p.toNormal);
+    }
   }
 
   /** Paw i's swing start and its leg's hip (once setLegs has given one), for project's slope-aware checks. */
@@ -447,7 +483,10 @@ export class FootPlanner {
     const c = this.ctx[i];
     c.from.copy(p.from);
     c.fromNormal.copy(p.fromNormal);
-    c.hip = Number.isFinite(this.reach[i]) ? this.hips[i] : null;
+    const known = Number.isFinite(this.reach[i]);
+    c.hip = known ? this.hips[i] : null;
+    c.reachFrom = known ? this.predHip[i] : null;
+    c.reach = this.t.reachFrac * this.reach[i];
     return c;
   }
 
@@ -462,16 +501,20 @@ export class FootPlanner {
     return rise <= this.t.maxStepUp && -rise <= this.t.maxStepDown;
   }
 
-  /** The rise from the paw to `hit` is within the step limits once measured from either surface's plane. */
+  /**
+   * The foothold lies near the plane of either surface — the one the paw leaves, extended to it, or its own, extended
+   * back to the paw — to within maxStepUp either way, so the slope accounts for the rise. (Measured against the full
+   * step-down limit, a flat ledge top up to a metre below a steep patch's extended plane would pass.)
+   */
   private slopeExplains(step: StepContext, hit: RayHit): boolean {
     const f = step.from;
     const nf = step.fromNormal;
     const nh = hit.normal;
     const p = hit.point;
-    // from's surface plane, extended to the foothold
-    if (nf.y > 0.2 && this.stepOk(p.y - (f.y - (nf.x * (p.x - f.x) + nf.z * (p.z - f.z)) / nf.y))) return true;
-    // the foothold's surface plane, extended back to the paw
-    return nh.y > 0.2 && this.stepOk(p.y - (nh.x * (f.x - p.x) + nh.z * (f.z - p.z)) / nh.y - f.y);
+    const minY = Math.cos(deg(this.t.maxSlopeDeg)); // steeper planes are never footholds
+    const near = (r: number) => Math.abs(r) <= this.t.maxStepUp;
+    if (nf.y >= minY && near(p.y - (f.y - (nf.x * (p.x - f.x) + nf.z * (p.z - f.z)) / nf.y))) return true;
+    return nh.y >= minY && near(p.y - (nh.x * (f.x - p.x) + nh.z * (f.z - p.z)) / nh.y - f.y);
   }
 
   /** A spot is an edge when any probe around it misses or sits more than edgeDrop above/below it. */

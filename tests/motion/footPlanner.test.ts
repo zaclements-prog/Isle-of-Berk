@@ -118,6 +118,19 @@ describe('FootPlanner', () => {
     const flatCtx = { from: V(0, 0, 0.6), fromNormal: V(0, 1, 0), hip: null };
     expect(wall.project(V(0, 0, 2), bodyAt(), true, 0, foothold(), flatCtx).ok).toBe(false);
   });
+  it('prefers footholds within reach of the joint at touchdown, and still lands on a surface when none is', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const ctx = { from: V(0, 0, 0), fromNormal: V(0, 1, 0), hip: null, reachFrom: V(0, 0.9, 0), reach: 1.3 };
+    // the target 1 m ahead is 1.345 m from the joint; the candidate 12 cm short of it is within 1.3 m
+    const near = p.project(V(0, 0, 1), bodyAt(), true, 0, foothold(), ctx);
+    expect(near.ok).toBe(true);
+    expect(near.point.z).toBeCloseTo(1 - DEFAULT_TUNING.planner.candidateOffset, 9);
+    // nothing within reach: the nearest surface point, flagged, never the raw target (here 0.3 m in the air)
+    const far = p.project(V(0, 0.3, 1), bodyAt(), true, 0, foothold(), { ...ctx, reach: 0.5 });
+    expect(far.ok).toBe(false);
+    expect(far.point.y).toBeCloseTo(0, 9);
+    expect(far.point.z).toBeCloseTo(1, 9);
+  });
   it('starts foothold rays above the hip, so a steep slope never hides the surface it is looking for', () => {
     const ramp = rampWorld(45, 2);
     const p = new FootPlanner(rig, ramp, DEFAULT_TUNING.planner);
@@ -161,6 +174,32 @@ describe('FootPlanner', () => {
     }
     expect(paw.justPlanted).toBe(true);
     expect(paw.pos.y).toBeCloseTo(0.25, 9);
+  });
+  it('raises a swing\'s arc, smoothly, when its foothold moves down a tread mid-swing', () => {
+    const world = stepWorld(0.25, 1); // a tread at y = 0.25 from z = 1
+    const t = DEFAULT_TUNING.planner;
+    const p = new FootPlanner(rig, world, t);
+    p.reset(bodyAt()); // standing: paw 1's neutral spot (z ≈ 0.7) is on the floor below the tread
+    const g = gaitOf();
+    const paw = p.paws[1];
+    paw.pos.set(paw.pos.x, 0.25, 1.4);
+    p.forceStep(1, V(paw.pos.x, 0.25, 1.6), V(0, 1, 0), 0.3, 0.05); // a flat step along the tread...
+    paw.scripted = false; // ...as an ordinary corrective step, so it retargets toward the floor spot
+    const lift0 = paw.lift;
+    const q = V(0, 0, 0);
+    let guard = 0;
+    let prev = paw.lift;
+    while (!paw.justPlanted && guard++ < 120) {
+      g.update(0, DT);
+      p.update(bodyAt(), g, SLACK, DT);
+      expect(paw.lift - prev).toBeLessThanOrEqual(t.liftRate * DT + 1e-12); // grows no faster than liftRate
+      prev = paw.lift;
+      p.swingPoint(1, q);
+      expect(q.y).toBeGreaterThanOrEqual(world.groundAt(q.x, q.z, 5, 10)!.point.y); // clears the tread's edge
+    }
+    expect(paw.justPlanted).toBe(true);
+    expect(paw.pos.y).toBeCloseTo(0, 9); // down on the floor
+    expect(paw.lift).toBeGreaterThan(lift0);
   });
   it('clamps the landing reach against the real ground under the target (a side slope)', () => {
     // 20° side slope rising toward +X (his left at heading 0): the right paws' ground is lower than the body's

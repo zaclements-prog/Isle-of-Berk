@@ -64,7 +64,8 @@ export class BodySolver {
   private readonly pelvis: number;
   private readonly spine: number[];
   private readonly pelvisOffset: THREE.Vector3;
-  private readonly feetLength: number;
+  /** Fore-aft distance between the front and hind sole pairs at bind (m). */
+  readonly feetLength: number;
   private readonly feetWidth: number;
   private readonly spinePitchLimit: number;
   private readonly spineYawLimit: number;
@@ -115,14 +116,18 @@ export class BodySolver {
   /**
    * `groundFront` / `groundHind`: terrain height under the shoulders / hips (−Infinity when unknown). The body rides on
    * the higher of those and the paw supports, so it never sinks into rising ground before the paws step up.
+   * `frontRaise`: extra height for the front supports (m) so the head clears the ground ahead (DragonCharacter).
    */
   update(
     kin: BodyKinState, sup: SupportSource, gait: GaitEngine, shortfall: readonly number[], maxTiltDeg: number, dt: number,
-    groundFront = -Infinity, groundHind = -Infinity,
+    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0,
   ): BodyPose {
     const t = this.t;
-    const hH = Math.max((sup.support(0) + sup.support(2)) / 2, groundHind);
-    const hF = Math.max((sup.support(1) + sup.support(3)) / 2, groundFront);
+    // ride on the terrain under the hips/shoulders: on a slope the supports' average is biased by the stance (a
+    // trailing paw sits uphill of its joint at lift-off), which held him 0.2 m high going down a 30° ramp. The supports
+    // stay the floor where the terrain probe found nothing, and the probe the floor under rising ground.
+    const hH = this.ride((sup.support(0) + sup.support(2)) / 2, groundHind);
+    const hF = this.ride((sup.support(1) + sup.support(3)) / 2, groundFront) + frontRaise;
     const hL = (sup.support(0) + sup.support(1)) / 2;
     const hR = (sup.support(2) + sup.support(3)) / 2;
     const lowerHind = Math.max(shortfall[0], shortfall[2], 0) * t.shortfallLower;
@@ -168,6 +173,12 @@ export class BodySolver {
     }
     this.compose(kin.pos, kin.heading);
     return this.pose;
+  }
+
+  /** Height to ride on over one support pair: the supports blended toward the terrain under the joints (body.terrainFollow). */
+  private ride(supports: number, ground: number): number {
+    if (!Number.isFinite(ground)) return supports;
+    return Math.max(supports + (ground - supports) * this.t.terrainFollow, ground);
   }
 
   /** Landing absorb: push the height spring down by dv (m/s). */
