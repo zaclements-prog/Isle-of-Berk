@@ -3,7 +3,7 @@ import type { InputState } from '../../../core/input';
 import { mulberry32 } from '../../../core/rng';
 import type { CollisionWorld, RayHit, SphereContact } from '../../../world/collision';
 import { BodyKinematics, DragonController, createIntent, type MoveIntent } from './controller';
-import { BodySolver } from './bodySolver';
+import { BodySolver, type ClimbRide } from './bodySolver';
 import { ClimbController } from './climbing';
 import { FootPlanner, type PlannerBody } from './footPlanner';
 import { GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
@@ -91,6 +91,11 @@ export class DragonCharacter {
   private readonly prevMargin = [0, 0, 0, 0];
   private readonly hips = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly reach: number[];
+  /** What climbing rides on (climbRide), and its two probe points. */
+  private readonly ride = { weight: 0, up: new THREE.Vector3(0, 1, 0), hind: -Infinity, front: -Infinity, span: 0, tiltOmega: 0 };
+  private readonly rideHind = new THREE.Vector3();
+  private readonly rideFront = new THREE.Vector3();
+  private readonly rideDir = new THREE.Vector3();
   /** Per leg, how far the body lowers for it this step (BodySolver): the leg's shortfall or its landing's. */
   private readonly short = [0, 0, 0, 0];
   private readonly groundProbe = new THREE.Vector3();
@@ -220,7 +225,7 @@ export class DragonCharacter {
     // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
     for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
     const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
-      this.groundUnder(1, 3), this.groundUnder(0, 2), this.frontRaise());
+      this.groundUnder(1, 3), this.groundUnder(0, 2), this.frontRaise(), this.climbRide());
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
     this.resetPose();
@@ -232,7 +237,7 @@ export class DragonCharacter {
     // 7) procedural finals: look, leg IK, tail/ears/fins
     this.look.update({
       moving: this.kin.speed > t.look.travelSpeed, heading: this.kin.heading, yawRate: this.kin.yawRate,
-      bodyQuat: pose.bodyQuat, headPos: s.worldPos[this.head], cameraPos: frame.cameraPos,
+      bodyQuat: pose.bodyQuat, headPos: s.worldPos[this.head], cameraPos: frame.cameraPos, rise: this.climbRise(),
     }, dt);
     this.look.apply(s);
     s.fk();
@@ -267,6 +272,53 @@ export class DragonCharacter {
 
   chestPos(out: THREE.Vector3): THREE.Vector3 {
     return out.copy(this.skeleton.worldPos[this.chest]);
+  }
+
+  /**
+   * Climbing, the body rides on the face under its joints (BodySolver ClimbRide): the face along −up from the hips'
+   * and the shoulders' midpoints, a little ahead along his velocity, with each pair raised to stand hipHeight along
+   * the climb's up axis from the plane of the face there.
+   */
+  private climbRide(): ClimbRide | undefined {
+    const w = this.climb.climbWeight;
+    if (w <= 0) return undefined;
+    const r = this.ride;
+    r.weight = w;
+    r.up.copy(this.mods.up);
+    r.hind = this.faceUnder(0, 2, this.rideHind);
+    r.front = this.faceUnder(1, 3, this.rideFront);
+    r.span = Math.max(0, (this.rideFront.x - this.rideHind.x) * Math.sin(this.kin.heading) + (this.rideFront.z - this.rideHind.z) * Math.cos(this.kin.heading));
+    r.tiltOmega = this.tuning.climb.tiltOmega;
+    return r;
+  }
+
+  /** Climbing, the face's rise per metre along his heading (from the climb probe's slope), by the climb weight; else 0. */
+  private climbRise(): number {
+    const w = this.climb.climbWeight;
+    const n = this.climb.probe.slopeNormal;
+    if (w <= 0 || n.y < 1e-3) return 0;
+    return (w * -(n.x * Math.sin(this.kin.heading) + n.z * Math.cos(this.kin.heading))) / n.y;
+  }
+
+  /** See climbRide: the height to ride on under joints a and b; their probe point → out. */
+  private faceUnder(a: number, b: number, out: THREE.Vector3): number {
+    const t = this.tuning;
+    const h = this.body.hipHeight;
+    const up = this.mods.up;
+    out.addVectors(this.hips[a], this.hips[b]).multiplyScalar(0.5).addScaledVector(this.kin.velocity, t.body.terrainLookahead);
+    // the face along −up from the joints (a vertical probe would jump from the face to the top as it crosses a crest,
+    // where the joints' height above the surface under them jumps; along −up both meet at the corner)
+    const lift = 0.3;
+    this.groundOrigin.copy(out).addScaledVector(up, lift);
+    if (this.world.isInside(this.groundOrigin)) this.groundOrigin.copy(out);
+    this.rideDir.copy(up).negate();
+    if (!this.world.raycast(this.groundOrigin, this.rideDir, lift + 3 * h, this.groundHit)) return -Infinity;
+    // the height that puts the joints h along up from the plane of that face (at their own x, z), less what the body
+    // solver adds back (h·up.y)
+    const q = this.groundHit.point;
+    const n = this.groundHit.normal;
+    const y = q.y + (h * n.dot(up) - n.x * (out.x - q.x) - n.z * (out.z - q.z)) / Math.max(n.y, 0.2);
+    return y - h * up.y;
   }
 
   /**
@@ -321,7 +373,10 @@ export class DragonCharacter {
   }
 
   private plannerBody(): PlannerBody {
-    return { pos: this.kin.pos, heading: this.kin.heading, velocity: this.kin.velocity, yawRate: this.kin.yawRate, up: this.mods.up };
+    return {
+      pos: this.kin.pos, heading: this.kin.heading, velocity: this.kin.velocity, yawRate: this.kin.yawRate, up: this.mods.up,
+      climb: this.climb.climbWeight,
+    };
   }
 
   private fillTargets(): void {

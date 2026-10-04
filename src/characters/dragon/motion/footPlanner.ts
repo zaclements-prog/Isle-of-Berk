@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CollisionWorld, RayHit } from '../../../world/collision';
 import type { GaitEngine } from './gait';
-import { LEG_KEYS, type LimbKey, type MotionRig } from './rigTypes';
+import { LEG_KEYS, isFrontLeg, type LimbKey, type MotionRig } from './rigTypes';
 import type { MotionTuning } from './tuning';
 import { clamp, dampFactor, deg, rotY, smoothstep } from './math';
 
@@ -27,8 +27,10 @@ export interface PawState {
   scripted: boolean;
   justPlanted: boolean;
   justLifted: boolean;
-  /** Whether the landing spot passed the foothold checks (slope, edge, step height). */
+  /** Whether the landing spot passed the foothold checks (slope, edge, step height, reach). */
   targetOk: boolean;
+  /** Whether any surface qualified for the landing at all (else the target is the raw prediction, maybe in mid-air). */
+  targetFound: boolean;
   wasStance: boolean;
   /** Retargeting has stopped and `to` is blending onto `settle`, the surface under it, by touchdown. */
   settled: boolean;
@@ -45,12 +47,20 @@ export interface PlannerBody {
   readonly yawRate: number;
   /** Body up axis (world up on ordinary ground; tilted while climbing). Footholds are searched along −up. */
   readonly up: THREE.Vector3;
+  /**
+   * 0–1: how far climb mode applies. Climbing, the landing targets follow each leg's joint at touchdown, projected
+   * along −up on to the face, instead of the body's fixed stance (which, laid out level, puts the forepaws far ahead
+   * of and above the shoulders on a steep face).
+   */
+  readonly climb?: number;
 }
 
 export interface Foothold {
   readonly point: THREE.Vector3;
   readonly normal: THREE.Vector3;
   ok: boolean;
+  /** Some candidate qualified (else point/normal are the raw target and body up). */
+  found?: boolean;
 }
 
 /** Where a stepping paw comes from, for slope-aware foothold checks (FootPlanner.project). */
@@ -101,6 +111,8 @@ export class FootPlanner {
   readonly paws: PawState[];
   /** Neutral sole positions in the character frame (bind pose), LEG_KEYS order. */
   readonly neutral: THREE.Vector3[];
+  /** Each neutral sole's horizontal offset from its leg's root joint at bind (the climbing stance). */
+  private readonly soleFromHip: THREE.Vector3[];
   /** When false only scripted steps (forceStep) happen: no gait lift-offs, no standing corrections. */
   autoStep = true;
   private readonly envForward = [Infinity, Infinity, Infinity, Infinity];
@@ -114,10 +126,17 @@ export class FootPlanner {
 
   constructor(rig: MotionRig, private readonly world: CollisionWorld, private readonly t: PlannerTuning) {
     this.neutral = LEG_KEYS.map((k) => new THREE.Vector3(...rig.contacts[k].sole));
+    // each sole's neutral offset from its leg's root joint (front: humerus head; hind: femur head) at bind
+    const heads = new Map(rig.bones.map((b) => [b.name, b.head]));
+    this.soleFromHip = LEG_KEYS.map((k, i) => {
+      const bones = rig.limbs[k].bones;
+      const root = heads.get(bones[isFrontLeg(k) ? 1 : 0])!;
+      return this.neutral[i].clone().sub(new THREE.Vector3(...root)).setY(0);
+    });
     this.paws = LEG_KEYS.map((key) => ({
       key, planted: true, pos: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0),
       from: new THREE.Vector3(), to: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), toNormal: new THREE.Vector3(0, 1, 0),
-      s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, wasStance: true,
+      s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, targetFound: true, wasStance: true,
       settled: false, settle: new THREE.Vector3(), settleNormal: new THREE.Vector3(0, 1, 0),
     }));
   }
@@ -173,6 +192,14 @@ export class FootPlanner {
       _n.subVectors(this.hips[i], body.pos);
       rotY(_n, body.yawRate * remaining, _n).add(body.pos).addScaledVector(body.velocity, remaining);
       this.predHip[i].copy(_n);
+      const climb = body.climb ?? 0;
+      if (climb > 0) {
+        // climbing: the stance under the joint itself, at its height (project casts along −up from there)
+        rotY(this.soleFromHip[i], heading, _a).add(_n);
+        out.x += (_a.x + along * fx + side * fz - out.x) * climb;
+        out.z += (_a.z + along * fz - side * fx - out.z) * climb;
+        out.y += (_n.y - out.y) * climb;
+      }
       const R = t.reachFrac * this.reach[i];
       // twice: pulling the target in moves it over ground of another height on a slope
       for (let pass = 0; pass < 2; pass++) {
@@ -231,7 +258,8 @@ export class FootPlanner {
         out.ok = !edge && !far;
       }
     }
-    if (best === Infinity) {
+    out.found = best !== Infinity;
+    if (!out.found) {
       out.point.copy(target);
       out.normal.copy(body.up);
     }
@@ -256,6 +284,7 @@ export class FootPlanner {
       p.justPlanted = false;
       p.justLifted = false;
       p.targetOk = f.ok;
+      p.targetFound = f.found !== false;
       p.wasStance = true;
       p.settled = false;
     }
@@ -283,6 +312,7 @@ export class FootPlanner {
         p.to.lerp(f.point, k);
         p.toNormal.lerp(f.normal, k).normalize();
         p.targetOk = f.ok;
+        p.targetFound = f.found !== false;
         // a foothold that moved to the next tread down (or up) bends the path across the edge the lift was sized for.
         // Sized against the foothold, and against the blended target the paw follows on its way there (it lags the
         // foothold, and the path to it is the real one now); the blended target alone can pass through a step.
@@ -365,6 +395,7 @@ export class FootPlanner {
     p.to.copy(target);
     p.toNormal.copy(normal).normalize();
     p.targetOk = true;
+    p.targetFound = true;
     p.settled = false;
     p.lift = this.swingLift(p, minLift);
   }
@@ -431,6 +462,7 @@ export class FootPlanner {
     p.to.copy(f.point);
     p.toNormal.copy(f.normal);
     p.targetOk = f.ok;
+    p.targetFound = f.found !== false;
     p.settled = false;
     p.lift = this.swingLift(p, forced ? t.forcedLift : gait.swingHeight);
   }

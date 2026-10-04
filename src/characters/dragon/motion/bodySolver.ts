@@ -3,7 +3,7 @@ import type { GaitEngine } from './gait';
 import { LEG_KEYS, type MotionRig } from './rigTypes';
 import type { RigSkeleton } from './skeleton';
 import type { MotionTuning } from './tuning';
-import { clamp, dampFactor, deg, rotY, TAU } from './math';
+import { clamp, dampFactor, deg, lerp, rotY, TAU } from './math';
 import { stepSpring, type SpringState } from './springs';
 
 type BodyTuning = MotionTuning['body'];
@@ -12,6 +12,25 @@ type BodyTuning = MotionTuning['body'];
 export interface SupportSource {
   support(i: number): number;
   readonly paws: ReadonlyArray<{ justPlanted: boolean }>;
+}
+
+/**
+ * What climbing rides on (DragonCharacter): planted paws trail a body moving up a steep face by half a stride, which
+ * on 60° leaves the body half a metre too low, so a climbing body rides on the face under its joints instead.
+ */
+export interface ClimbRide {
+  /** 0–1: how far climb mode applies. */
+  readonly weight: number;
+  /** The body's up axis while climbing. */
+  readonly up: THREE.Vector3;
+  /** Heights to ride on under the hips and the shoulders (−Infinity: no face found), such that each joint pair stands
+   *  hipHeight along `up` from the face. */
+  readonly hind: number;
+  readonly front: number;
+  /** Horizontal distance (m) along his heading between those two probe points. */
+  readonly span: number;
+  /** The tilt springs' stiffness while climbing (rad/s): cresting a face the body pitches through 60° in a stride. */
+  readonly tiltOmega: number;
 }
 
 export interface BodyKinState {
@@ -123,17 +142,30 @@ export class BodySolver {
    * `groundFront` / `groundHind`: terrain height under the shoulders / hips (−Infinity when unknown). The body rides on
    * the higher of those and the paw supports, so it never sinks into rising ground before the paws step up.
    * `frontRaise`: extra height for the front supports (m) so the head clears the ground ahead (DragonCharacter).
+   * `climb`: climbing, the body rides on the face under its joints (see ClimbRide), pitches over the joints' real
+   * spread, and its pelvis stands hipHeight along the climb's up axis from the face rather than straight above it (on
+   * a 60° face, straight above leaves the body half its height from the surface).
    */
   update(
     kin: BodyKinState, sup: SupportSource, gait: GaitEngine, shortfall: readonly number[], maxTiltDeg: number, dt: number,
-    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0,
+    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide,
   ): BodyPose {
     const t = this.t;
     // ride on the terrain under the hips/shoulders: on a slope the supports' average is biased by the stance (a
     // trailing paw sits uphill of its joint at lift-off), which held him 0.2 m high going down a 30° ramp. The supports
     // stay the floor where the terrain probe found nothing, and the probe the floor under rising ground.
-    const hH = this.ride((sup.support(0) + sup.support(2)) / 2, groundHind);
-    const hF = this.ride((sup.support(1) + sup.support(3)) / 2, groundFront) + frontRaise;
+    let hH = this.ride((sup.support(0) + sup.support(2)) / 2, groundHind);
+    let hF = this.ride((sup.support(1) + sup.support(3)) / 2, groundFront);
+    let span = this.feetLength;
+    const up = climb?.up ?? AY;
+    const cw = climb?.weight ?? 0;
+    if (climb && cw > 0) {
+      if (Number.isFinite(climb.hind)) hH = lerp(hH, climb.hind, cw);
+      if (Number.isFinite(climb.front)) hF = lerp(hF, climb.front, cw);
+      span = lerp(span, Math.max(climb.span, 0.3 * this.feetLength), cw);
+    }
+    hF += frontRaise;
+    const tiltOmega = climb ? lerp(t.tiltOmega, climb.tiltOmega, cw) : t.tiltOmega;
     const hL = (sup.support(0) + sup.support(1)) / 2;
     const hR = (sup.support(2) + sup.support(3)) / 2;
     const lowerHind = Math.max(shortfall[0], shortfall[2], 0) * t.shortfallLower;
@@ -149,14 +181,14 @@ export class BodySolver {
     const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph));
     const maxTilt = deg(maxTiltDeg);
 
-    let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), this.feetLength);
+    let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), span);
     pitchT += clamp(deg(t.accelPitchDeg) * kin.accel, -deg(t.maxAccelPitchDeg), deg(t.maxAccelPitchDeg));
     pitchT += deg(t.rockGallopDeg) * w[2] * Math.sin(TAU * ph);
     let rollT = Math.atan2(hL - hR, this.feetWidth) * t.rollFollow;
     rollT -= clamp(Math.atan((kin.speed * kin.yawRate) / 9.81) * t.leanGain, -deg(t.maxLeanDeg), deg(t.maxLeanDeg));
     pitchT = clamp(pitchT, -maxTilt, maxTilt);
     rollT = clamp(rollT, -maxTilt, maxTilt);
-    let heightT = hH + this.hipHeight - crouch - lowerHind + bob;
+    let heightT = hH + this.hipHeight * up.y - crouch - lowerHind + bob;
     if (this.override.active) {
       heightT = this.override.height;
       pitchT = this.override.pitch;
@@ -173,9 +205,9 @@ export class BodySolver {
       this.pitch.x = pitchT;
     } else {
       stepSpring(this.height, heightT, t.heightOmega, 1, dt);
-      stepSpring(this.pitch, pitchT, t.tiltOmega, 1, dt);
+      stepSpring(this.pitch, pitchT, tiltOmega, 1, dt);
     }
-    stepSpring(this.roll, rollT, t.tiltOmega, 1, dt);
+    stepSpring(this.roll, rollT, tiltOmega, 1, dt);
 
     stepSpring(this.bend, clamp(t.bendGain * kin.yawRate, -deg(t.maxBendDeg), deg(t.maxBendDeg)), t.tiltOmega, 1, dt);
     const bend = this.bend.x;
@@ -184,7 +216,7 @@ export class BodySolver {
       this.pose.spineYaw[k] = clamp(bend * (t.bendShare[k] ?? 1 / this.spine.length), -this.spineYawLimit, this.spineYawLimit);
       this.pose.spinePitch[k] = clamp(flex / this.spine.length, -this.spinePitchLimit, this.spinePitchLimit);
     }
-    this.compose(kin.pos, kin.heading);
+    this.compose(kin.pos, kin.heading, this.override.active ? AY : up);
     return this.pose;
   }
 
@@ -211,7 +243,8 @@ export class BodySolver {
     }
   }
 
-  private compose(pos: THREE.Vector3, heading: number): void {
+  /** The pose from the springs; the pelvis stands hipHeight along `up` from its paws (straight above on level ground). */
+  private compose(pos: THREE.Vector3, heading: number, up: THREE.Vector3 = AY): void {
     const p = this.pose;
     p.height = this.height.x;
     p.pitch = this.pitch.x;
@@ -221,6 +254,8 @@ export class BodySolver {
     _qr.setFromAxisAngle(AZ, p.roll); // rotating +roll about +Z lifts +X (the left side)
     p.bodyQuat.copy(_qy).multiply(_qp).multiply(_qr);
     rotY(this.pelvisOffset, heading, p.pelvisPos).add(pos);
+    p.pelvisPos.x += up.x * this.hipHeight;
+    p.pelvisPos.z += up.z * this.hipHeight;
     p.pelvisPos.y = p.height;
   }
 }

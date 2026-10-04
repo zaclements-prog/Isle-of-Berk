@@ -125,6 +125,8 @@ export interface MotionTuning {
     dropMax: number;
     /** How far past the lip (m) the forepaws grip the top in a scramble. */
     scrambleGrip: number;
+    /** The body's tilt springs while climbing (rad/s; body.tiltOmega otherwise): cresting a face it pitches 60° in a stride. */
+    tiltOmega: number;
     /** A hop's least forward speed (m/s): he leaps clear of the edge, however slowly he walked up to it. */
     hopSpeed: number;
     /** A hop's greatest forward speed (m/s): he leaps further, up to this, to land all four paws beyond a gap. */
@@ -186,7 +188,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
     swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 0.6, hopUpSpeed: 1.2, probeAhead: 1.2,
     dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
-    scrambleGrip: 0.12, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
+    scrambleGrip: 0.12, tiltOmega: 14, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,

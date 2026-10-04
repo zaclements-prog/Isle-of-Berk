@@ -255,6 +255,30 @@ describe('FootPlanner', () => {
     p.paws[1].scripted = true; // a scripted action keeps its paws in reach itself
     expect(p.landingShortfall(1, 0.9)).toBe(0);
   });
+  it('climbing, aims each paw under its leg\'s joint and finds it along the tilted up axis', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const tilt = Math.PI / 6;
+    const up = V(0, Math.cos(tilt), -Math.sin(tilt));
+    const body = bodyAt({ up, climb: 1 });
+    p.reset(bodyAt());
+    const hips = [V(0.29, 0.9, -0.62), V(0.31, 0.9, 0.74), V(-0.29, 0.9, -0.62), V(-0.31, 0.9, 0.74)];
+    p.setLegs(hips, [1.28, 1.04, 1.28, 1.04]);
+    const g = gaitOf();
+    const heads = new Map(rig.bones.map((b) => [b.name, b.head]));
+    const humerus = heads.get('front_humerus_L')!;
+    const t = p.predictTarget(1, body, g, 0.2, V(0, 0, 0)); // standing: no lead
+    // under the joint by the sole's bind offset from it, at the joint's own height
+    expect(t.x).toBeCloseTo(0.31 + p.neutral[1].x - humerus[0], 9);
+    expect(t.z).toBeCloseTo(0.74 + p.neutral[1].z - humerus[2], 9);
+    expect(t.y).toBeCloseTo(0.9, 9);
+    // found along −up: where the line from the target down the tilted axis meets the floor
+    const f = p.project(t, body, false, 0, foothold());
+    expect(f.point.y).toBeCloseTo(0, 9);
+    expect(f.point.z).toBeCloseTo(t.z + (up.z / up.y) * -t.y, 6);
+    // out of climb mode the stance is the body's own
+    const level = p.predictTarget(1, bodyAt(), g, 0.2, V(0, 0, 0));
+    expect(level.z).toBeCloseTo(p.neutral[1].z, 9);
+  });
   it('clamps the landing reach against the real ground under the target (a side slope)', () => {
     // 20° side slope rising toward +X (his left at heading 0): the right paws' ground is lower than the body's
     const slope = CollisionWorld.fromObjects([floor(), box(12, 0.4, 20, 0, 1.6, 0, 0, 0, (20 * Math.PI) / 180)]);

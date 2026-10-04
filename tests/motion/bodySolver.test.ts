@@ -119,6 +119,23 @@ describe('BodySolver', () => {
     expect(min).toBeLessThan(m.b.hipHeight - 0.1); // the fall carries on into the spring...
     expect(settle(m, kin(), support([0, 0, 0, 0])).height).toBeCloseTo(m.b.hipHeight, 6); // ...which recovers
   });
+  it('climbing, rides the face under its joints: pelvis hipHeight along the up axis, pitched over their spread', () => {
+    const m = make();
+    const tilt = Math.PI / 6; // half of a 60° face rising toward +Z
+    const up = new THREE.Vector3(0, Math.cos(tilt), -Math.sin(tilt));
+    const pitch = (55 * Math.PI) / 180;
+    const ride = { weight: 1, up, hind: 2, front: 2 + 0.74 * Math.tan(pitch), span: 0.74, tiltOmega: 14 };
+    let p = m.b.pose;
+    // the paws' supports (all 0 here) give way to the ride
+    for (let i = 0; i < 480; i++) p = m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 60, DT, -Infinity, -Infinity, 0, ride);
+    expect(p.pitch).toBeCloseTo(pitch, 6);
+    expect(p.pelvisPos.y).toBeCloseTo(2 + m.b.hipHeight * up.y, 6);
+    expect(p.pelvisPos.z).toBeCloseTo(m.b.pelvisOffset.z + m.b.hipHeight * up.z, 6); // back from straight above
+    // half way into climb mode, half of each
+    const half = { ...ride, weight: 0.5 };
+    for (let i = 0; i < 480; i++) p = m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 60, DT, -Infinity, -Infinity, 0, half);
+    expect(p.pelvisPos.y).toBeCloseTo(1 + m.b.hipHeight * up.y, 6);
+  });
   it('absorbs a landing impulse', () => {
     const m = make();
     const steady = settle(m, kin(), support([0, 0, 0, 0])).height;

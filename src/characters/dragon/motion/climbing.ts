@@ -9,6 +9,13 @@ import { angleDiff, clamp, dampFactor, deg, lerp, rotY, smoothstep } from './mat
 type ClimbTuning = MotionTuning['climb'];
 export type ClimbMode = 'ground' | 'climb' | 'scramble' | 'blocked' | 'hop';
 
+/** A swinging forepaw's take-off contact and landing target, and whether the planner found a foothold for it. */
+export interface ClimbLanding {
+  readonly from: THREE.Vector3;
+  readonly to: THREE.Vector3;
+  readonly found: boolean;
+}
+
 export interface ClimbProbe {
   slopeDeg: number;
   readonly slopeNormal: THREE.Vector3;
@@ -151,7 +158,7 @@ export class ClimbController {
   private readonly climbUp = new THREE.Vector3(0, 1, 0);
   private readonly gaitMods: GaitMods = { cadenceScale: 1, strideScale: 1, swingScale: 1 };
   private readonly contacts = [new THREE.Vector3(), new THREE.Vector3()];
-  private readonly landings: Array<readonly [THREE.Vector3, THREE.Vector3]> = [];
+  private readonly landings: ClimbLanding[] = [];
 
   /** `frontExtent`: how far the body proxies reach ahead of the character origin at bind (m). */
   constructor(
@@ -197,13 +204,14 @@ export class ClimbController {
   /**
    * `wallHeading`: direction of the wall probes — the intent direction while moving, so a wall he slides along stays
    * detected. `forepaws`: the forepaws' contacts (the drop probes sit just ahead of each); without them, no drop is read.
-   * `landings`: pairs of [take-off contact, landing target] of swinging forepaws: at speed a paw can lift short of an
-   * edge and swing out over it, so a drop is also read under a target left hanging in the air (no foothold found).
-   * A target on a slope or a tread is on its ground, however far below the take-off.
+   * `landings`: swinging forepaws' take-off contacts and landing targets: at speed a paw can lift short of an edge and
+   * swing out over it, so a drop is also read under a target that found no foothold at all (`found` false) and hangs
+   * in the air. A found target is on its ground (a slope, a tread), however far below the take-off, even while the
+   * blended target on its way there hangs above it.
    */
   sense(
     pos: THREE.Vector3, heading: number, forepawY: number, wallHeading = heading, forepaws?: readonly THREE.Vector3[],
-    landings?: ReadonlyArray<readonly [THREE.Vector3, THREE.Vector3]>,
+    landings?: readonly ClimbLanding[],
   ): ClimbProbe {
     const p = this.probe;
     const c = this.c;
@@ -257,7 +265,7 @@ export class ClimbController {
     // a steep face a low origin lies under the face (inside it, or in the hollow under a slab) and finds the floor
     // beneath. An origin inside a solid means the ground ahead rises above it.
     for (const contact of forepaws ?? []) this.readDrop(contact, contact.x + fx * c.dropAhead, contact.z + fz * c.dropAhead);
-    for (const [from, to] of landings ?? []) this.readDrop(from, to.x, to.z, to.y - c.dropMin);
+    for (const l of landings ?? []) if (!l.found) this.readDrop(l.from, l.to.x, l.to.z, l.to.y - c.dropMin);
     return p;
   }
 
@@ -319,12 +327,24 @@ export class ClimbController {
     }
   }
 
-  /** Swinging forepaws: [take-off contact, landing target] (see sense). */
-  private forepawLandings(d: DragonCharacter): Array<readonly [THREE.Vector3, THREE.Vector3]> {
+  /** Raise the probe's slope to the steepest climbable surface under a paw (a swinging paw counts where it took off). */
+  private steepestContact(d: DragonCharacter, p: ClimbProbe): void {
+    for (const paw of d.planner.paws) {
+      const n = paw.planted ? paw.normal : paw.fromNormal;
+      const slope = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, n.y)));
+      if (slope > p.slopeDeg && slope <= this.c.wallMinDeg) {
+        p.slopeDeg = slope;
+        p.slopeNormal.copy(n);
+      }
+    }
+  }
+
+  /** The swinging forepaws' landings (see sense). */
+  private forepawLandings(d: DragonCharacter): ClimbLanding[] {
     this.landings.length = 0;
     for (const i of [1, 3]) {
       const paw = d.planner.paws[i];
-      if (!paw.planted) this.landings.push([paw.from, paw.to]);
+      if (!paw.planted) this.landings.push({ from: paw.from, to: paw.to, found: paw.targetFound });
     }
     return this.landings;
   }
@@ -398,9 +418,15 @@ export class ClimbController {
       // too far down to jump, or nowhere to land: he stops at the edge, still free to turn and walk along it
       if (i.dirX * Math.sin(d.kin.heading) + i.dirZ * Math.cos(d.kin.heading) > 0.3) i.speed = 0;
     }
+    // cresting a face, the probes ahead already see the top while his paws are still on the face: once climbing, he
+    // climbs on until every paw is off it
+    if (this.climbWeight > 0.5) this.steepestContact(d, p);
     const climbing = p.slopeDeg > c.climbMinDeg && p.slopeDeg <= c.wallMinDeg;
     this.mode = climbing ? 'climb' : 'ground';
-    if (climbing) this.climbUp.copy(UP).lerp(p.slopeNormal, 0.5).normalize();
+    // footholds are searched along an up axis half-way between world up and the body's own (spec §6.6): it tilts as
+    // the body pitches on to the face, not when the face first comes in sight (on the floor before a face, an axis
+    // tilted to it would put each paw half a metre ahead of its shoulder)
+    if (climbing) this.climbUp.set(0, 1, 0).applyQuaternion(d.body.pose.bodyQuat).add(UP).normalize();
     this.climbWeight += ((climbing ? 1 : 0) - this.climbWeight) * dampFactor(c.blendTime, dt);
     if (this.climbWeight < 1e-3) return;
     const w = this.climbWeight;

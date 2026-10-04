@@ -131,6 +131,16 @@ describe('climbing', () => {
     expect(d.body.pose.pelvisPos.y).toBeCloseTo(d.body.hipHeight, 2);
     expect(metrics.report('edge').failures).toEqual([]);
   });
+  it('reads a drop under a forepaw\'s landing only when no foothold was found for it', () => {
+    const d = new DragonCharacter({ rig: toothlessFixtureRig(), world: dropWorld(2, 0) });
+    d.spawn(0, -3, 0); // 2 m short of the edge: the contact probes see none of it
+    const from = new THREE.Vector3(0.34, 0, -2.2);
+    const to = new THREE.Vector3(0.34, 0, 0.4); // past the edge, at the take-off height: hanging in the air
+    expect(d.climb.sense(d.kin.pos, 0, 0, 0, [from], [{ from, to, found: false }]).drop).toBeCloseTo(2, 6);
+    expect(d.climb.sense(d.kin.pos, 0, 0, 0, [from], [{ from, to, found: true }]).drop).toBe(0);
+    to.y = -2; // a found foothold below the drop's edge, on the lower ground: not a target hanging in the air either
+    expect(d.climb.sense(d.kin.pos, 0, 0, 0, [from], [{ from, to, found: false }]).drop).toBe(0);
+  });
   it('is blocked by a 3 m wall and never passes through it', { timeout: 60_000 }, () => {
     let maxChestZ = -Infinity;
     const chest = new THREE.Vector3();
