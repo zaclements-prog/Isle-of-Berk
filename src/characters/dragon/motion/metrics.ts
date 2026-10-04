@@ -33,7 +33,9 @@ const _contact: SphereContact = { point: new THREE.Vector3(), normal: new THREE.
  * - paw penetration: any paw inside the ground, by its depth below the surface over it
  * - planted float: a planted sole above its ground
  * - body-proxy penetration, joint-limit violations, NaN resets
- * - boundedness: every non-root bone's max rotation in the last 10 s vs the first 10 s (the spin-bug check)
+ * - boundedness: every non-root bone's max rotation in the last 10 s vs the first 10 s (the spin-bug check). It is
+ *   measured from the bone's pose at the first sample, not from the bind: the folded wing ribs rest ~170° from their
+ *   spread bind (Ruling 3), while a spinning bone still sweeps toward π from wherever it started.
  */
 export class MotionMetrics {
   private steps = 0;
@@ -50,6 +52,7 @@ export class MotionMetrics {
   private readonly wasPlanted = [false, false, false, false];
   private first: number[] = [];
   private last: number[] = [];
+  private rest: THREE.Quaternion[] = [];
 
   constructor(private readonly world: CollisionWorld, private readonly duration: number) {}
 
@@ -59,6 +62,7 @@ export class MotionMetrics {
     if (!this.first.length) {
       this.first = new Array(s.count).fill(0);
       this.last = new Array(s.count).fill(0);
+      this.rest = s.localQuat.map((q) => q.clone());
     }
     for (let i = 0; i < 4; i++) {
       const paw = d.planner.paws[i];
@@ -93,7 +97,7 @@ export class MotionMetrics {
     this.nan = d.nanResets;
     for (let b = 0; b < s.count; b++) {
       if (s.parent[b] < 0) continue; // the root carries the world heading
-      const a = s.angleFromBind(b);
+      const a = 2 * Math.acos(Math.min(1, Math.abs(s.localQuat[b].dot(this.rest[b]))));
       if (this.time < 10) this.first[b] = Math.max(this.first[b], a);
       if (this.time >= this.duration - 10) this.last[b] = Math.max(this.last[b], a);
     }

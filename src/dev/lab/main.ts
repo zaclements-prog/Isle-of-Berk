@@ -36,7 +36,7 @@ app.loop.addRender(() => {
   if (controls.enabled) controls.update();
 }, 0);
 
-const renderOnce = () => app.post.render(0);
+const renderOnce = () => app.loop.step(0); // every render callback (his bones, the view), then the frame
 const gui = new GUI({ title: 'Motion Lab' });
 const loopUi = {
   pause: () => app.loop.pause(),
@@ -110,8 +110,21 @@ async function startToothless(): Promise<void> {
   });
   const prevCam = new THREE.Vector3();
   const curCam = new THREE.Vector3();
-  /** berk.cam.orbit: hold the follow camera at an angle to his heading (side views for film strips). */
+  /**
+   * berk.cam.orbit: view him from a fixed angle to his heading (side views for film strips). View only: the controls
+   * are camera-relative, so they keep reading the follow camera, as in the headless runner.
+   */
   const hold3 = { on: false, az: 0, el: 0, dist: 0 };
+  const viewPos = (out: THREE.Vector3): THREE.Vector3 => {
+    if (!hold3.on) return out.copy(cam.position);
+    const yaw = dragon.kin.heading + THREE.MathUtils.degToRad(hold3.az);
+    const el = THREE.MathUtils.degToRad(hold3.el);
+    // the follow camera's own convention: it sits behind its forward yaw
+    out.set(-Math.sin(yaw) * Math.cos(el), Math.sin(el), -Math.cos(yaw) * Math.cos(el));
+    return out.multiplyScalar(hold3.dist).add(cam.target);
+  };
+  /** Jump the view to where it should be now (after a respawn or a view change), with no interpolation from before. */
+  const snapView = () => curCam.copy(viewPos(prevCam));
 
   app.loop.addSim((dt) => {
     const inp = source.sample(app.loop.simTime);
@@ -120,19 +133,14 @@ async function startToothless(): Promise<void> {
       scripted = null;
       yawPx = 0;
     }
-    if (hold3.on) {
-      cam.yaw = dragon.kin.heading + THREE.MathUtils.degToRad(hold3.az);
-      cam.pitch = THREE.MathUtils.degToRad(hold3.el);
-      cam.distance = hold3.dist;
-    }
-    prevCam.copy(cam.position);
+    viewPos(prevCam);
     cam.update({ mouseDX: inp.mouseDX + yawPx, mouseDY: inp.mouseDY, wheel: inp.wheel }, cameraFollow(dragon, hold), dt);
-    curCam.copy(cam.position);
+    viewPos(curCam);
     dragon.update({ input: inp, cameraYaw: cam.yaw, cameraPos: cam.position }, dt);
   });
   app.loop.addRender((alpha) => {
     dragon.writeTo(asset.bones, alpha);
-    dragonFade.value = cam.fade;
+    dragonFade.value = hold3.on ? 0 : cam.fade;
     if (view.follow) {
       app.camera.position.lerpVectors(prevCam, curCam, alpha);
       app.camera.lookAt(cam.target);
@@ -163,30 +171,39 @@ async function startToothless(): Promise<void> {
       dragon.controller.prowl = false; // a script's C press toggles from trot, as in the headless runner
       dragon.spawn(s.spawn.x, s.spawn.z, s.spawn.heading);
       cam.reset(cameraFollow(dragon, hold));
+      snapView();
       scripted = new ScriptedInput(s.events.map((e) => ({ ...e, t: e.t + app.loop.simTime })));
       source = scripted;
       yawPx = s.cameraYawRate ? -(s.cameraYawRate / 120) / tuning.camera.sensitivity : 0;
       return s.description;
     },
     scripts: () => LAB_SCRIPTS.map((s) => `${s.name}: ${s.description}`),
+    /** Where he is and what he is doing, for checking a play against the headless run. */
+    state: () => ({
+      pos: dragon.kin.pos.toArray().map((v) => +v.toFixed(3)), heading: +dragon.kin.heading.toFixed(3),
+      speed: +dragon.kin.speed.toFixed(2), climb: dragon.climb.mode,
+    }),
     tuning: () => JSON.stringify(tuning, null, 1),
   });
   debug.register(null, {
     tp: (x: number, z: number, heading = dragon.kin.heading) => {
       dragon.spawn(x, z, heading);
       cam.reset(cameraFollow(dragon, hold));
+      snapView();
     },
     toggle: (name: OverlayName) => (OVERLAY_NAMES.includes(name) ? overlays.toggle(name) : OVERLAY_NAMES),
   });
   debug.register('cam', {
-    /** Hold the follow camera at azimuth `az` (deg, relative to his heading; 90 = his right side), elevation `el` (deg) and `dist` (m). */
+    /** View him from azimuth `az` (deg, relative to his heading; 90 = his right side), elevation `el` (deg) and `dist` (m). */
     orbit: (az: number, el: number, dist: number) => {
       Object.assign(hold3, { on: true, az, el, dist });
+      snapView();
       return hold3;
     },
     /** Back to the free follow camera (mouse orbit, auto-recentre). */
     free: () => {
       hold3.on = false;
+      snapView();
     },
   });
   hud.textContent = `Motion Lab · click to drive · WASD move · Shift gallop · C prowl · mouse look · wheel zoom · berk.lab.scripts() · quality: ${app.preset.name}`;
