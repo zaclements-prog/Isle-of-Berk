@@ -7,6 +7,7 @@ import type { MotionTuning } from './tuning';
 import { angleDiff, clamp, dampFactor, deg, lerp, rotY, smoothstep } from './math';
 
 type ClimbTuning = MotionTuning['climb'];
+type ScrambleTuning = MotionTuning['scramble'];
 export type ClimbMode = 'ground' | 'climb' | 'scramble' | 'blocked' | 'hop';
 
 /** A swinging forepaw's take-off contact and landing target, and whether the planner found a foothold for it. */
@@ -62,13 +63,11 @@ function bezier1(a: number, b: number, c: number, d: number, t: number): number 
 /** When (swing progress) a climbing paw path is at its peak and crossing over the lip, and when it starts down. */
 interface PathTiming {
   /** Up to the peak and in to the face by here; then over the lip until `cross`. */
-  readonly rise: number;
-  readonly cross: number;
+  rise: number;
+  cross: number;
   /** Down on to the spot from here. */
-  readonly drop: number;
+  drop: number;
 }
-const FORE_PATH: PathTiming = { rise: 0.6, cross: 0.85, drop: 0.8 };
-const HIND_PATH: PathTiming = { rise: 0.75, cross: 0.92, drop: 0.88 };
 
 /**
  * Wall-frame point (x lateral, y above the base, z from the face) at progress s of a paw path from `from` to `to` on the
@@ -80,25 +79,6 @@ function climbPath(from: THREE.Vector3, to: THREE.Vector3, peak: number, gap: nu
   const y = lerp(lerp(from.y, peak, smoothstep(0, k.rise, s)), to.y, smoothstep(k.drop, 1, s));
   return out.set(lerp(from.x, to.x, smoothstep(0, 1, s)), y, z);
 }
-
-/** The scramble's choreography (fractions of climb.scrambleTime; distances in m, relative to the lip; angles in degrees). */
-const SCRAMBLE = {
-  /** Hook pose: shoulders this far in front of the face and above the lip; pitch capped. */
-  hookBack: 0.45, hookUp: 0.5, maxPitchDeg: 40,
-  /** The forepaws hook the lip here; the body rises this much mid-leap; the pitch is reached by this share of it. */
-  leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6,
-  /** The pull-up ends here; the hind paws land on the top here. */
-  pullEnd: 0.65, hindLand: 0.85,
-  /** Pull-up path: rises this share of the way up first, edging this far in; reaches the over pose from this far back. */
-  pullRise: 0.62, pullAhead: 0.05, overReach: 0.5, pullPitchDeg: 10, overPitchLeadDeg: 15,
-  /** Over the lip: the pelvis this far behind the face and above the top, at this pitch. */
-  overBack: -0.45, overUp: 0.4, overPitchDeg: 20,
-  /** The forepaws step on to the top under the shoulders over [foreStep1, foreStep1End], then on to their stance over
-   *  [foreStep2, stepEnd], with this lift. */
-  foreStep1: 0.47, foreStep1End: 0.62, foreStep2: 0.76, stepEnd: 0.9, stepLift: 0.12,
-  /** Paths keep this far in front of the face and above the lip. */
-  clear: 0.15,
-};
 
 /** Spec §6.6 climbing rules, run before each step's kinematics (DragonCharacter.hooks.beforeMove). */
 export class ClimbController {
@@ -140,7 +120,9 @@ export class ClimbController {
   private readonly pathFrom = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly pathTo = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly pathOn = [false, false, false, false];
-  private readonly pathTiming: PathTiming[] = [FORE_PATH, FORE_PATH, FORE_PATH, FORE_PATH];
+  private readonly foreTiming: PathTiming = { rise: 0, cross: 0, drop: 0 };
+  private readonly hindTiming: PathTiming = { rise: 0, cross: 0, drop: 0 };
+  private readonly pathTiming: PathTiming[] = [this.foreTiming, this.foreTiming, this.foreTiming, this.foreTiming];
   private readonly spotNormal = [0, 1, 2, 3].map(() => new THREE.Vector3(0, 1, 0));
   /** The rig's body frame (attach): the shoulder joint and the hip joint relative to the pelvis head, standing shoulder height. */
   private readonly shoulderRel = new THREE.Vector2();
@@ -162,7 +144,8 @@ export class ClimbController {
 
   /** `frontExtent`: how far the body proxies reach ahead of the character origin at bind (m). */
   constructor(
-    private readonly world: CollisionWorld, private readonly c: ClimbTuning, readonly frontExtent: number, private readonly stepMax: number,
+    private readonly world: CollisionWorld, private readonly c: ClimbTuning, private readonly sc: ScrambleTuning,
+    readonly frontExtent: number, private readonly stepMax: number,
   ) {}
 
   /** Back to ordinary locomotion at once (a respawn): no scripted action, no climb settings. */
@@ -470,6 +453,7 @@ export class ClimbController {
   private startScramble(d: DragonCharacter): void {
     const p = this.probe;
     const c = this.c;
+    const S = this.sc;
     this.mode = 'scramble';
     this.t = 0;
     this.stage = 0;
@@ -491,23 +475,29 @@ export class ClimbController {
     // pelvis is in the air (a high wall: the hind paws scrabble at the face)
     const R = this.shoulderRel.length();
     const delta = Math.atan2(this.shoulderRel.y, this.shoulderRel.x);
-    const shoulderY = H + SCRAMBLE.hookUp;
-    this.pitchHook = clamp(Math.asin(clamp((shoulderY - d.body.hipHeight) / R, -1, 1)) - delta, 0, deg(SCRAMBLE.maxPitchDeg));
-    this.kHook.set(0, shoulderY - this.bodyY(this.shoulderRel, this.pitchHook), -SCRAMBLE.hookBack - this.bodyZ(this.shoulderRel, this.pitchHook));
-    this.kOver.set(0, H + SCRAMBLE.overUp, SCRAMBLE.overBack);
-    this.pitchOver = deg(SCRAMBLE.overPitchDeg);
+    const shoulderY = H + S.hookUp;
+    this.pitchHook = clamp(Math.asin(clamp((shoulderY - d.body.hipHeight) / R, -1, 1)) - delta, 0, deg(S.maxPitchDeg));
+    this.kHook.set(0, shoulderY - this.bodyY(this.shoulderRel, this.pitchHook), -S.hookBack - this.bodyZ(this.shoulderRel, this.pitchHook));
+    this.kOver.set(0, H + S.overUp, S.overBack);
+    this.pitchOver = deg(S.overPitchDeg);
     this.kEnd.set(0, H + d.body.hipHeight, c.scrambleLand + d.body.pelvisOffset.z);
     // the paws leave the ground together: the forepaws climb to the lip, the hind paws scrabble up the face and come
     // down on their stance on the top once the hips are over it
     const T = this.duration;
+    this.foreTiming.rise = S.foreRise;
+    this.foreTiming.cross = S.foreCross;
+    this.foreTiming.drop = S.foreDrop;
+    this.hindTiming.rise = S.hindRise;
+    this.hindTiming.cross = S.hindCross;
+    this.hindTiming.drop = S.hindDrop;
     for (let i = 0; i < 4; i++) {
       const front = isFrontLeg(LEG_KEYS[i]);
       this.spot(i, d.planner.neutral[i].x, front ? c.scrambleGrip : c.scrambleLand + d.planner.neutral[i].z, H, _t);
       this.toWall(d.planner.swingPoint(i, _o), this.pathFrom[i]);
       this.pathTo[i].copy(_t);
-      this.pathTiming[i] = front ? FORE_PATH : HIND_PATH;
+      this.pathTiming[i] = front ? this.foreTiming : this.hindTiming;
       this.pathOn[i] = true;
-      d.planner.forceStep(i, this.fromWall(_t, _o), this.spotNormal[i], (front ? SCRAMBLE.leapEnd : SCRAMBLE.hindLand) * T, 0);
+      d.planner.forceStep(i, this.fromWall(_t, _o), this.spotNormal[i], (front ? S.leapEnd : S.hindLand) * T, 0);
     }
   }
 
@@ -516,7 +506,7 @@ export class ClimbController {
     this.t = Math.min(this.t + dt, this.duration);
     const T = this.duration;
     const tau = this.t / T;
-    const S = SCRAMBLE;
+    const S = this.sc;
     d.mods.scripted = true;
     d.planner.autoStep = false;
     // the body; the heading turns square to the wall during the leap
@@ -565,7 +555,7 @@ export class ClimbController {
    * pull-up (up the face first, then over the lip), then on to the stance on the top.
    */
   private scramblePose(tau: number, out: THREE.Vector3): number {
-    const S = SCRAMBLE;
+    const S = this.sc;
     if (tau <= S.leapEnd) {
       const s = tau / S.leapEnd;
       out.lerpVectors(this.kStart, this.kHook, smoothstep(0, 1, s));

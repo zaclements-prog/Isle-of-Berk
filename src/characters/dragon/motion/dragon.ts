@@ -158,7 +158,7 @@ export class DragonCharacter {
     const frontExtent = Math.max(...this.proxies.items.map((p, k) => this.proxies.centers[k].z + p.radius));
     const pelvisZ = this.skeleton.bindWorldPos[this.skeleton.id(opts.rig.chains.spine[0])].z;
     this.frontLever = this.proxies.centers.map((c) => c.z - pelvisZ);
-    this.climb = new ClimbController(opts.world, t.climb, frontExtent, t.planner.maxStepUp);
+    this.climb = new ClimbController(opts.world, t.climb, t.scramble, frontExtent, t.planner.maxStepUp);
     this.climb.attach(this);
   }
 

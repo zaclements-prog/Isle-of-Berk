@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
 import { DEFAULT_TUNING, mergeTuning } from '../../src/characters/dragon/motion/tuning';
+
+const PRESET = 'public/assets/characters/toothless/motion-tuning.json';
 
 describe('tuning', () => {
   it('carries the spec defaults', () => {
@@ -15,5 +18,14 @@ describe('tuning', () => {
     expect(DEFAULT_TUNING.body.maxTiltDeg).toBe(35);
     const u = mergeTuning(DEFAULT_TUNING, { body: { nonsense: 1 }, bogus: { x: 1 } } as never);
     expect((u.body as unknown as Record<string, unknown>).nonsense).toBeUndefined();
+  });
+  it.skipIf(!existsSync(PRESET))('ships a Toothless preset that names only known fields (a misspelt one would be ignored)', () => {
+    const preset = JSON.parse(readFileSync(PRESET, 'utf8')) as Record<string, Record<string, unknown>>;
+    const known = DEFAULT_TUNING as unknown as Record<string, Record<string, unknown>>;
+    const unknown: string[] = [];
+    for (const [section, values] of Object.entries(preset)) {
+      for (const k of Object.keys(values)) if (!known[section] || !(k in known[section])) unknown.push(`${section}.${k}`);
+    }
+    expect(unknown).toEqual([]);
   });
 });

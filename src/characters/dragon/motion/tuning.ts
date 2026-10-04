@@ -140,6 +140,31 @@ export interface MotionTuning {
     /** Nose-down pitch (deg) at the middle of a hop. */
     hopPitchDeg: number;
   };
+  /** The scramble-up's choreography: times are fractions of climb.scrambleTime, distances (m) relative to the lip. */
+  scramble: {
+    /** Hook pose: shoulders this far in front of the face and above the lip; pitch capped. */
+    hookBack: number; hookUp: number; maxPitchDeg: number;
+    /** The forepaws hook the lip here; the body rises this much mid-leap; the pitch is reached by this share of it. */
+    leapEnd: number; leapUp: number; pitchLead: number;
+    /** The pull-up ends here; the hind paws land on the top here. */
+    pullEnd: number; hindLand: number;
+    /** Pull-up path: rises this share of the way up first, edging this far in; reaches the over pose from this far back. */
+    pullRise: number; pullAhead: number; overReach: number; pullPitchDeg: number; overPitchLeadDeg: number;
+    /** Over the lip: the pelvis this far behind the face and above the top, at this pitch. */
+    overBack: number; overUp: number; overPitchDeg: number;
+    /**
+     * The forepaws step on to the top under the shoulders over [foreStep1, foreStep1End], then on to their stance over
+     * [foreStep2, stepEnd], with this lift.
+     */
+    foreStep1: number; foreStep1End: number; foreStep2: number; stepEnd: number; stepLift: number;
+    /** Paths keep this far in front of the face and above the lip. */
+    clear: number;
+    /**
+     * Paw paths, in swing progress: up to the peak and in to the face by rise, over the lip until cross, down on to the
+     * spot from drop. Forepaws (fore*) and hind paws (hind*).
+     */
+    foreRise: number; foreCross: number; foreDrop: number; hindRise: number; hindCross: number; hindDrop: number;
+  };
   camera: {
     distance: number; minDistance: number; maxDistance: number; pitchDeg: number; minPitchDeg: number; maxPitchDeg: number;
     sensitivity: number; wheelScale: number; followOmega: number; lookAhead: number;
@@ -189,6 +214,12 @@ export const DEFAULT_TUNING: MotionTuning = {
     swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 0.6, hopUpSpeed: 1.2, probeAhead: 1.2,
     dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
     scrambleGrip: 0.12, tiltOmega: 14, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
+  },
+  scramble: {
+    hookBack: 0.45, hookUp: 0.5, maxPitchDeg: 40, leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6, pullEnd: 0.65, hindLand: 0.85,
+    pullRise: 0.62, pullAhead: 0.05, overReach: 0.5, pullPitchDeg: 10, overPitchLeadDeg: 15, overBack: -0.45, overUp: 0.4,
+    overPitchDeg: 20, foreStep1: 0.47, foreStep1End: 0.62, foreStep2: 0.76, stepEnd: 0.9, stepLift: 0.12, clear: 0.15,
+    foreRise: 0.6, foreCross: 0.85, foreDrop: 0.8, hindRise: 0.75, hindCross: 0.92, hindDrop: 0.88,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,
