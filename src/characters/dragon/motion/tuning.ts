@@ -86,6 +86,8 @@ export interface MotionTuning {
     sensitivity: number; wheelScale: number; followOmega: number; lookAhead: number;
     recentreDelay: number; recentreOmega: number; climbPitchDeg: number; radius: number; easeOutOmega: number;
     fadeNear: number; fadeFar: number; chestHeight: number;
+    /** Natural frequency (rad/s) of the critically damped spring that raises the pitch while he climbs. */
+    climbPitchOmega: number;
   };
 }
 
@@ -129,7 +131,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,
     wheelScale: 0.0012, followOmega: 8, lookAhead: 0.25, recentreDelay: 2, recentreOmega: 1.5, climbPitchDeg: 15,
-    radius: 0.3, easeOutOmega: 2, fadeNear: 0.5, fadeFar: 1.2, chestHeight: 1.25,
+    radius: 0.3, easeOutOmega: 2, fadeNear: 0.5, fadeFar: 1.2, chestHeight: 1.25, climbPitchOmega: 3,
   },
 };
 

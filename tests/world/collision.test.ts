@@ -62,6 +62,14 @@ describe('CollisionWorld', () => {
     expect(w.sphereCast(V(0, 1, 4), V(0, 1, 10), 0.3)).toBe(1);
   });
 
+  it('honours closestPoint maxDist even when a farther triangle\'s bounds are within it', () => {
+    // the sloped triangle's bounding box holds the query point; the triangle itself is 2.1 m away
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-5, 0, 0, 5, 0, 0, 0, 5, 5], 3));
+    const w = CollisionWorld.fromObjects([new THREE.Mesh(g)]);
+    expect(w.closestPoint(V(0, 1, 4), 0.3)).toBeNull();
+    expect(w.closestPoint(V(0, 1, 4), 3)!.distance).toBeCloseTo(Math.SQRT2 * 1.5, 1);
+  });
+
   it('returns 0 when starting inside collision', () => {
     const w = wallWorld(2);
     const stats = { queries: 0 };
