@@ -33,6 +33,22 @@ describe('BodySolver', () => {
     expect(Math.abs(p.pitch)).toBeLessThan(1e-6);
     expect(Math.abs(p.roll)).toBeLessThan(1e-6);
   });
+  it('starts already pitched and rolled to the supports it is reset over (no level-body spawn transient)', () => {
+    const m = make();
+    m.b.reset(new THREE.Vector3(), 0, 0, support([0, 0.5, -0.2, 0.3]));
+    const c = rig.contacts;
+    const length = (c.front_L.sole[2] + c.front_R.sole[2]) / 2 - (c.hind_L.sole[2] + c.hind_R.sole[2]) / 2;
+    const width = (c.hind_L.sole[0] + c.front_L.sole[0]) / 2 - (c.hind_R.sole[0] + c.front_R.sole[0]) / 2;
+    const hL = (0 + 0.5) / 2;
+    const hR = (-0.2 + 0.3) / 2;
+    expect(m.b.pose.pitch).toBeCloseTo(Math.atan2((0.5 + 0.3) / 2 - (0 - 0.2) / 2, length), 9);
+    expect(m.b.pose.roll).toBeCloseTo(Math.atan2(hL - hR, width), 9);
+    expect(m.b.pose.height).toBeCloseTo((0 - 0.2) / 2 + m.b.hipHeight, 9);
+    // and that is where update() settles: one step barely moves it
+    const pitch0 = m.b.pose.pitch;
+    m.b.update(kin(), support([0, 0.5, -0.2, 0.3]), m.gait, [0, 0, 0, 0], 35, DT);
+    expect(Math.abs(m.b.pose.pitch - pitch0)).toBeLessThan(1e-3);
+  });
   it('pitches with the front/hind support difference', () => {
     const p = settle(make(), kin(), support([0, 0.5, 0, 0.5]));
     expect(p.pitch).toBeCloseTo(Math.atan2(0.5, 1.44), 3);

@@ -275,3 +275,21 @@ describe('DragonCharacter body dynamics on flat ground', () => {
     expect(d.nanResets).toBe(0);
   });
 });
+
+describe('DragonCharacter jaw rest', () => {
+  it('holds the jaw at its closed rest (rig.jaw.restCloseRad) every step, from bind', () => {
+    const rig = { ...toothlessFixtureRig(), jaw: { bone: 'jaw', openSign: -1, maxOpenRad: 0.62, restCloseRad: 0.09 } };
+    const d = new DragonCharacter({ rig, world: bigFloor() });
+    d.spawn(0, 0, 0);
+    const s = d.skeleton;
+    const j = s.id('jaw');
+    const closed = s.bindLocalQuat[j].clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.09));
+    for (let k = 0; k < 240; k++) {
+      d.update({ input: input([]), cameraYaw: 0, cameraPos: CAM }, DT);
+      expect(1 - Math.abs(s.localQuat[j].dot(closed))).toBeLessThan(1e-12);
+    }
+    const plain = dragon();
+    plain.update({ input: input([]), cameraYaw: 0, cameraPos: CAM }, DT);
+    expect(plain.skeleton.angleFromBind(plain.skeleton.id('jaw'))).toBeLessThan(1e-9);
+  });
+});

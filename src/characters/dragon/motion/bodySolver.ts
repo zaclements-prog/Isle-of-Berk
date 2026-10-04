@@ -84,11 +84,25 @@ export class BodySolver {
     };
   }
 
-  reset(pos: THREE.Vector3, heading: number, groundY: number): void {
+  /**
+   * Snap to rest over `groundY`. Given the supports (the paws just planted at spawn), the body starts already pitched
+   * and rolled to them, as update() would settle it, rather than level over a slope with its downhill legs
+   * over-stretched until the springs catch up.
+   */
+  reset(pos: THREE.Vector3, heading: number, groundY: number, sup?: SupportSource): void {
     this.height.x = groundY + this.hipHeight;
     this.height.v = 0;
     this.pitch.x = this.pitch.v = 0;
     this.roll.x = this.roll.v = 0;
+    if (sup) {
+      const t = this.t;
+      const maxTilt = deg(t.maxTiltDeg);
+      const hH = (sup.support(0) + sup.support(2)) / 2;
+      const hF = (sup.support(1) + sup.support(3)) / 2;
+      this.height.x = hH + this.hipHeight;
+      this.pitch.x = clamp(Math.atan2(hF - hH, this.feetLength), -maxTilt, maxTilt);
+      this.roll.x = clamp(Math.atan2((sup.support(0) + sup.support(1) - sup.support(2) - sup.support(3)) / 2, this.feetWidth) * t.rollFollow, -maxTilt, maxTilt);
+    }
     this.bend.x = this.bend.v = 0;
     this.pose.spinePitch.fill(0);
     this.pose.spineYaw.fill(0);
@@ -120,7 +134,7 @@ export class BodySolver {
     let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), this.feetLength);
     pitchT += clamp(deg(t.accelPitchDeg) * kin.accel, -deg(t.maxAccelPitchDeg), deg(t.maxAccelPitchDeg));
     pitchT += deg(t.rockGallopDeg) * w[2] * Math.sin(TAU * ph);
-    let rollT = Math.atan2(hL - hR, this.feetWidth);
+    let rollT = Math.atan2(hL - hR, this.feetWidth) * t.rollFollow;
     rollT -= clamp(Math.atan((kin.speed * kin.yawRate) / 9.81) * t.leanGain, -deg(t.maxLeanDeg), deg(t.maxLeanDeg));
     pitchT = clamp(pitchT, -maxTilt, maxTilt);
     rollT = clamp(rollT, -maxTilt, maxTilt);

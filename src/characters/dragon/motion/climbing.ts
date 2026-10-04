@@ -17,12 +17,12 @@ export interface ClimbProbe {
   readonly wallPoint: THREE.Vector3;
   /** Horizontal wall normal, pointing away from the wall. */
   readonly wallNormal: THREE.Vector3;
-  /** The wall is only a step (top ≤ the foot planner's max step-up): walk up it, don't block or scramble. */
+  /** The wall is only a step (its riser, top minus the ground at its foot, ≤ the planner's max step-up): walk up it. */
   step: boolean;
   ledge: boolean;
   ledgeHeight: number;
   readonly ledgeTop: THREE.Vector3;
-  /** How far the ground ahead lies below the forepaw support (m; 99 when there is none). */
+  /** How far the ground ahead lies below the forepaw support (m; 0 when it rises — the probe starts inside it — or there is none). */
   drop: number;
   readonly dropPoint: THREE.Vector3;
 }
@@ -60,6 +60,10 @@ export class ClimbController {
   private readonly hopVel = new THREE.Vector3();
   private hopY0 = 0;
   private hopVy = 0;
+  /** How far the forepaws stand ahead of the character origin at bind (m); set by attach(). */
+  private forepawAhead = 0;
+  /** How far the rearmost paws stand behind it (m, positive). */
+  private hindBehind = 0;
 
   /** `frontExtent`: how far the body proxies reach ahead of the character origin at bind (m). */
   constructor(
@@ -67,6 +71,8 @@ export class ClimbController {
   ) {}
 
   attach(d: DragonCharacter): void {
+    this.forepawAhead = Math.max(d.planner.neutral[1].z, d.planner.neutral[3].z);
+    this.hindBehind = -Math.min(...d.planner.neutral.map((n) => n.z));
     d.hooks.beforeMove.push((dragon, dt) => this.step(dragon, dt));
   }
 
@@ -98,21 +104,53 @@ export class ClimbController {
     p.ledge = false;
     p.step = false;
     if (p.wall) {
+      // the riser is measured from the ground at its own foot: on stairs the probes can pass over the first step and
+      // meet the next riser, whose foot is that step's tread, not the forepaws' level
+      _o.copy(p.wallPoint).addScaledVector(p.wallNormal, 0.15);
+      const foot = this.world.raycast(_o, DOWN, p.wallPoint.y - forepawY + 0.5, _hit) ? _hit.point.y : forepawY;
       _o.copy(p.wallPoint).addScaledVector(p.wallNormal, -0.35);
       _o.y = forepawY + c.ledgeMax + 0.4;
       if (!this.world.isInside(_o) && this.world.raycast(_o, DOWN, c.ledgeMax + 1, _hit) && _hit.normal.y > 0.8) {
         p.ledgeTop.copy(_hit.point);
         p.ledgeHeight = _hit.point.y - forepawY;
-        p.step = p.ledgeHeight <= this.stepMax;
+        p.step = _hit.point.y - foot <= this.stepMax;
         p.ledge = !p.step && p.ledgeHeight <= c.ledgeMax;
       }
     }
-    p.drop = 99;
-    if (this.world.groundAt(pos.x + fx * 1.8, pos.z + fz * 1.8, forepawY + 1, 99, _hit)) {
+    p.drop = 0;
+    // just ahead of the forepaws, so he hops when they reach the edge. A probe origin inside a solid means the ground
+    // ahead rises above it: a ray from there would find the floor under that solid and read it as a drop.
+    const ahead = this.forepawAhead + c.dropAhead;
+    _o.set(pos.x + fx * ahead, forepawY + 1, pos.z + fz * ahead);
+    if (!this.world.isInside(_o) && this.world.groundAt(_o.x, _o.z, _o.y, 99, _hit)) {
       p.dropPoint.copy(_hit.point);
       p.drop = forepawY - _hit.point.y;
     }
     return p;
+  }
+
+  /** Distance (m) ahead of `pos` along `heading` where the ground falls away below `forepawY` (bisected up to `far`). */
+  private edgeAhead(pos: THREE.Vector3, heading: number, forepawY: number, far: number): number {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    const below = forepawY - this.c.dropMin / 2;
+    let lo = 0;
+    let hi = far;
+    for (let it = 0; it < 10; it++) {
+      const m = (lo + hi) / 2;
+      _o.set(pos.x + fx * m, forepawY + 1, pos.z + fz * m);
+      const dropped = !this.world.isInside(_o) && (!this.world.groundAt(_o.x, _o.z, _o.y, 99, _hit) || _hit.point.y < below);
+      if (dropped) hi = m;
+      else lo = m;
+    }
+    return hi;
+  }
+
+  /** The lower of the forepaws' real contacts (a swinging paw counts where it took off). */
+  private forepawY(d: DragonCharacter): number {
+    const a = d.planner.paws[1];
+    const b = d.planner.paws[3];
+    return Math.min(a.planted ? a.pos.y : a.from.y, b.planted ? b.pos.y : b.from.y);
   }
 
   step(d: DragonCharacter, dt: number): void {
@@ -127,7 +165,7 @@ export class ClimbController {
     const c = this.c;
     this.resetMods(d);
     // the lower forepaw: on stairs the two forepaws can stand on different steps
-    const forepawY = Math.min(d.planner.support(1), d.planner.support(3));
+    const forepawY = this.forepawY(d);
     const i = d.intent;
     const moving = i.hasDir && i.speed > 0;
     const p = this.sense(d.kin.pos, d.kin.heading, forepawY, moving ? Math.atan2(i.dirX, i.dirZ) : d.kin.heading);
@@ -242,11 +280,15 @@ export class ClimbController {
   private startHop(d: DragonCharacter): void {
     this.mode = 'hop';
     this.t = 0;
-    this.hopVel.copy(d.kin.velocity);
     this.hopY0 = d.kin.pos.y;
     this.hopVy = this.c.hopUpSpeed;
     const fall = Math.max(0, this.hopY0 - this.probe.dropPoint.y);
     this.duration = (this.hopVy + Math.sqrt(this.hopVy * this.hopVy + 2 * GRAVITY * fall)) / GRAVITY;
+    // carry every paw past the edge: the rearmost lands hopClear beyond it, however slowly he walked off
+    const h = d.kin.heading;
+    const edge = this.edgeAhead(d.kin.pos, h, this.forepawY(d), this.forepawAhead + this.c.dropAhead);
+    const along = Math.max(d.kin.velocity.x * Math.sin(h) + d.kin.velocity.z * Math.cos(h), (edge + this.hindBehind + this.c.hopClear) / this.duration);
+    this.hopVel.set(Math.sin(h) * along, 0, Math.cos(h) * along);
     for (let i = 0; i < 4; i++) {
       rotY(d.planner.neutral[i], d.kin.heading, _t).add(d.kin.pos).addScaledVector(this.hopVel, this.duration);
       const g = this.world.groundAt(_t.x, _t.z, this.hopY0 + 1, fall + 3, _hit);

@@ -75,6 +75,12 @@ export class DragonCharacter {
   verticalAccel = 0;
   private readonly head: number;
   private readonly chest: number;
+  /**
+   * The jaw's closed rest (rig.jaw.restCloseRad): bind leaves the mouth ajar, and every step rebuilds the pose from
+   * bind, which would undo the loader's closing turn. Applied right after resetToBind, so pose layers and the face
+   * (M6) can still open it.
+   */
+  private readonly jawRest: { bone: number; quat: THREE.Quaternion } | null;
   private readonly strain = [0, 0, 0, 0];
   private readonly prevStretch = [0, 0, 0, 0];
   private readonly prevMargin = [0, 0, 0, 0];
@@ -117,6 +123,12 @@ export class DragonCharacter {
     this.secondary = new SecondaryMotion(opts.rig, this.skeleton, opts.world, t, rng);
     this.proxies = new BodyProxies(opts.rig, this.skeleton);
     this.mods = { speedCap: Infinity, gait: NO_GAIT_MODS, maxTiltDeg: t.body.maxTiltDeg, up: new THREE.Vector3(0, 1, 0), scripted: false };
+    const jaw = opts.rig.jaw;
+    const jawBone = jaw?.restCloseRad ? this.skeleton.id(jaw.bone) : -1;
+    this.jawRest = jawBone < 0 ? null : {
+      bone: jawBone,
+      quat: this.skeleton.bindLocalQuat[jawBone].clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), jaw!.restCloseRad!)),
+    };
     this.head = this.skeleton.id(opts.rig.chains.neck[opts.rig.chains.neck.length - 1]);
     this.chest = this.skeleton.id(opts.rig.chains.spine[opts.rig.chains.spine.length - 1]);
     // how far the body reaches ahead of the origin at bind (the muzzle) — climbing measures walls from the origin
@@ -132,9 +144,9 @@ export class DragonCharacter {
     this.kin.spawn(x, y, z, heading);
     this.gait.reset();
     this.planner.reset(this.plannerBody());
-    this.body.reset(this.kin.pos, heading, y);
+    this.body.reset(this.kin.pos, heading, y, this.planner);
     const s = this.skeleton;
-    s.resetToBind();
+    this.resetPose();
     this.body.apply(s);
     this.layers.apply(s);
     s.fk();
@@ -188,8 +200,8 @@ export class DragonCharacter {
     const pose = this.body.update(this.kin, this.planner, this.gait, this.legs.shortfall, this.mods.maxTiltDeg, dt,
       this.groundUnder(1, 3), this.groundUnder(0, 2));
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
-    // 6) the absolute pose: bind → body → library layers → breathing
-    s.resetToBind();
+    // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
+    this.resetPose();
     this.body.apply(s);
     this.layers.apply(s);
     this.secondary.applyBreathing(s);
@@ -223,6 +235,12 @@ export class DragonCharacter {
   /** Copy the pose onto the loaded three.js bones, interpolated by the loop's alpha (spec §3.4). */
   writeTo(bones: ReadonlyMap<string, THREE.Object3D>, alpha: number): void {
     this.skeleton.writeTo(bones, alpha);
+  }
+
+  /** Bind pose with the jaw at its closed rest. */
+  private resetPose(): void {
+    this.skeleton.resetToBind();
+    if (this.jawRest) this.skeleton.localQuat[this.jawRest.bone].copy(this.jawRest.quat);
   }
 
   chestPos(out: THREE.Vector3): THREE.Vector3 {

@@ -30,6 +30,7 @@ describe('climbing', () => {
       maxPitch = Math.max(maxPitch, x.body.pose.pitch);
     });
     expect(modes.has('climb')).toBe(false);
+    expect(modes.has('hop')).toBe(false); // the plateau at the crest is higher ground, not a drop
     expect(THREE.MathUtils.radToDeg(maxPitch)).toBeGreaterThan(20);
     expect(d.kin.pos.y).toBeGreaterThan(3);
     expect(d.nanResets).toBe(0);
@@ -63,6 +64,37 @@ describe('climbing', () => {
     });
     expect(d.climb.mode).toBe('blocked');
     expect(maxChestZ).toBeLessThan(-0.5);
+    expect(d.nanResets).toBe(0);
+  });
+  it('walks up 0.5 m stairs as steps, never as scramble ledges', { timeout: 60_000 }, () => {
+    const risers = [0, 1, 2, 3].map((k) => box(6, 0.5 * (k + 1), 1.2, 0, 0.25 * (k + 1), -3 + 1.2 * k));
+    const landing = box(6, 2, 30, 0, 1, 0.6 + 15); // the top tread runs on into a landing (no drop at the top)
+    const stairs = CollisionWorld.fromObjects([floor(), ...risers, landing]);
+    const modes = new Set<string>();
+    const d = run(stairs, ['KeyW'], 6, (x) => modes.add(x.climb.mode));
+    expect([...modes]).toEqual(['ground']);
+    expect(d.kin.pos.y).toBeGreaterThan(1);
+    expect(d.nanResets).toBe(0);
+  });
+  it('carries every paw past the edge when he walks off a drop slowly', { timeout: 60_000 }, () => {
+    const d = new DragonCharacter({ rig: toothlessFixtureRig(), world: dropWorld(2, 0) });
+    d.spawn(0, -3, 0);
+    d.controller.prowl = true; // 1.4 m/s: too slow to carry the hind paws over the edge on its own
+    let hopped = false;
+    const landing: Array<THREE.Vector3 | null> = [null, null, null, null];
+    for (let k = 0; k < Math.round(5 / DT); k++) {
+      d.update({ input: input(['KeyW']), cameraYaw: 0, cameraPos: CAM }, DT);
+      if (d.climb.mode === 'hop') hopped = true;
+      d.planner.paws.forEach((paw, i) => {
+        if (hopped && paw.justPlanted && !landing[i]) landing[i] = paw.pos.clone();
+      });
+    }
+    expect(hopped).toBe(true);
+    for (const p of landing) {
+      expect(p).not.toBeNull();
+      expect(p!.y).toBeCloseTo(-2, 3); // on the lower level
+      expect(p!.z).toBeGreaterThan(0); // past the edge
+    }
     expect(d.nanResets).toBe(0);
   });
   it('hops down a 2 m drop and lands on the lower level', { timeout: 60_000 }, () => {

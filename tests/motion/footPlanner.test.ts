@@ -5,7 +5,8 @@ import { GaitEngine } from '../../src/characters/dragon/motion/gait';
 import { DEFAULT_TUNING } from '../../src/characters/dragon/motion/tuning';
 import { rotY } from '../../src/characters/dragon/motion/math';
 import { toothlessFixtureRig } from '../fixtures/toothlessRig';
-import { flatWorld, rampWorld, stepWorld } from '../fixtures/worlds';
+import { box, flatWorld, floor, rampWorld, stepWorld } from '../fixtures/worlds';
+import { CollisionWorld } from '../../src/world/collision';
 
 const DT = 1 / 120;
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -101,6 +102,85 @@ describe('FootPlanner', () => {
   it('rejects footholds beyond the step-height limits', () => {
     const p = new FootPlanner(rig, stepWorld(1.0, 1), DEFAULT_TUNING.planner);
     expect(p.project(V(0, 0, 2), bodyAt(), true, 0, foothold()).ok).toBe(false);
+  });
+  it('accepts a ramp foothold whose rise the slope explains, and still rejects a wall top', () => {
+    const ramp = rampWorld(30, 2);
+    const p = new FootPlanner(rig, ramp, DEFAULT_TUNING.planner);
+    const from = ramp.groundAt(0, 3, 10, 20)!;
+    const target = V(0, from.point.y, 4.2); // 1.2 m on up the ramp: a 0.69 m rise, past maxStepUp
+    expect(p.project(target, bodyAt(), true, from.point.y, foothold()).ok).toBe(false);
+    const ctx = { from: from.point.clone(), fromNormal: from.normal.clone(), hip: null };
+    const f = p.project(target, bodyAt(), true, from.point.y, foothold(), ctx);
+    expect(f.ok).toBe(true);
+    expect(f.point.y - from.point.y).toBeGreaterThan(DEFAULT_TUNING.planner.maxStepUp);
+    expect(f.normal.y).toBeCloseTo(Math.cos(Math.PI / 6), 3);
+    const wall = new FootPlanner(rig, stepWorld(1.0, 1), DEFAULT_TUNING.planner);
+    const flatCtx = { from: V(0, 0, 0.6), fromNormal: V(0, 1, 0), hip: null };
+    expect(wall.project(V(0, 0, 2), bodyAt(), true, 0, foothold(), flatCtx).ok).toBe(false);
+  });
+  it('starts foothold rays above the hip, so a steep slope never hides the surface it is looking for', () => {
+    const ramp = rampWorld(45, 2);
+    const p = new FootPlanner(rig, ramp, DEFAULT_TUNING.planner);
+    const surface = ramp.groundAt(0, 3.5, 20, 40)!.point.y; // 1.5 m up the 45° ramp
+    const target = V(0, 0, 3.5); // body ground height: the ray from castUp above it starts under the slab
+    const blind = p.project(target, bodyAt(), false, 0, foothold());
+    expect(Math.abs(blind.point.y - surface)).toBeGreaterThan(0.5);
+    const ctx = { from: V(0, 0, 1.5), fromNormal: V(0, 1, 0), hip: V(0, 1.0 + surface, 3.2) };
+    const f = p.project(target, bodyAt(), false, 0, foothold(), ctx);
+    expect(f.point.y).toBeCloseTo(surface, 6);
+  });
+  it('sizes a swing arc to clear a riser just ahead of the paw', () => {
+    const world = stepWorld(0.25, 1);
+    const p = new FootPlanner(rig, world, DEFAULT_TUNING.planner);
+    p.reset(bodyAt());
+    const paw = p.paws[1];
+    paw.pos.set(0, 0, 0.9); // 10 cm short of the riser
+    p.forceStep(1, V(0, 0.25, 2), V(0, 1, 0), 0.3, 0.05);
+    const q = V(0, 0, 0);
+    for (let k = 1; k < 200; k++) {
+      paw.s = k / 200;
+      p.swingPoint(1, q);
+      const g = world.groundAt(q.x, q.z, 5, 10)!;
+      expect(q.y).toBeGreaterThanOrEqual(g.point.y - 1e-9);
+    }
+  });
+  it('lands exactly on the surface when retargeting stops with the target hanging between two treads', () => {
+    const world = stepWorld(0.25, 1);
+    const p = new FootPlanner(rig, world, DEFAULT_TUNING.planner);
+    p.reset(bodyAt());
+    const g = gaitOf();
+    const paw = p.paws[1];
+    p.forceStep(1, V(0.34, 0.12, 1.3), V(0, 1, 0), 0.3, 0.1); // a blend of a floor and a step foothold
+    paw.forced = false; // an ordinary gait swing, past the retarget freeze
+    paw.s = DEFAULT_TUNING.planner.freezeRetargetAt;
+    let guard = 0;
+    while (!paw.justPlanted && guard++ < 120) {
+      g.update(0, DT);
+      p.update(bodyAt(), g, SLACK, DT);
+    }
+    expect(paw.justPlanted).toBe(true);
+    expect(paw.pos.y).toBeCloseTo(0.25, 9);
+  });
+  it('clamps the landing reach against the real ground under the target (a side slope)', () => {
+    // 20° side slope rising toward +X (his left at heading 0): the right paws' ground is lower than the body's
+    const slope = CollisionWorld.fromObjects([floor(), box(12, 0.4, 20, 0, 1.6, 0, 0, 0, (20 * Math.PI) / 180)]);
+    const p = new FootPlanner(rig, slope, DEFAULT_TUNING.planner);
+    const centre = slope.groundAt(0, 0, 10, 20)!.point.y;
+    const rise = Math.tan((20 * Math.PI) / 180);
+    // each hip 0.85 m above the ground under its own paw: reachable, with a little room for a lead
+    const hips = [V(0.29, centre + 0.33 * rise + 0.85, -0.62), V(0.31, centre + 0.34 * rise + 0.85, 0.74),
+      V(-0.29, centre - 0.33 * rise + 0.85, -0.62), V(-0.31, centre - 0.34 * rise + 0.85, 0.74)];
+    const reach = [1.28, 1.04, 1.28, 1.04];
+    p.setLegs(hips, reach);
+    const g = gaitOf();
+    for (let k = 0; k < 120; k++) g.update(3.2, DT);
+    const body = bodyAt({ pos: V(0, centre, 0), velocity: V(0, 0, 3.2) });
+    for (const i of [1, 3]) {
+      const t = p.predictTarget(i, body, g, 0, V(0, 0, 0));
+      const ground = slope.groundAt(t.x, t.z, 10, 20)!.point;
+      // within 1 mm: each clamp pass re-measures the ground it moved the target onto (converging, not exact)
+      expect(ground.distanceTo(hips[i])).toBeLessThanOrEqual(DEFAULT_TUNING.planner.reachFrac * reach[i] + 1e-3);
+    }
   });
   it('walks: alternates stance and swing, keeps planted paws fixed, lifts swings and strides with the body', () => {
     const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
