@@ -81,6 +81,15 @@ const OFFSETS_FULL: ReadonlyArray<[number, number]> = [[0, 0], [1, 0], [-1, 0], 
 const OFFSETS_ONE: ReadonlyArray<[number, number]> = [[0, 0]];
 const EDGE_DIRS: ReadonlyArray<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
+/** A swing path for lift sizing: from paw p's take-off toward `to` from progress s0 (blending on to p.settle when settling). */
+interface SwingPath {
+  readonly p: PawState;
+  readonly to: THREE.Vector3;
+  readonly toNormal: THREE.Vector3;
+  readonly settling: boolean;
+  readonly s0: number;
+}
+
 /**
  * Plant/swing state machine for the four paws (spec §6.4). Lift-off comes from the gait phase (stance → swing),
  * or is forced on over-stretch and when standing (one corrective step at a time). Landing target: Raibert placement
@@ -275,8 +284,9 @@ export class FootPlanner {
         p.toNormal.lerp(f.normal, k).normalize();
         p.targetOk = f.ok;
         // a foothold that moved to the next tread down (or up) bends the path across the edge the lift was sized for.
-        // Sized against the foothold itself: the blended target on its way there can pass through a step.
-        this.raiseLift(p, f.point, f.normal, dt);
+        // Sized against the foothold, and against the blended target the paw follows on its way there (it lags the
+        // foothold, and the path to it is the real one now); the blended target alone can pass through a step.
+        this.raiseLift(p, f.point, f.normal, dt, false, true);
       } else if (!p.scripted && !p.settled) {
         // retargeting stops: the blended target can hang between footholds on two treads, so settle it onto the
         // surface under it (when there is one); the rest of the swing blends there and lands exactly on it
@@ -289,7 +299,7 @@ export class FootPlanner {
         const k = Math.min(1, (p.s - prevS) / Math.max(1 - prevS, 1e-9));
         p.to.lerp(p.settle, k);
         p.toNormal.lerp(p.settleNormal, k).normalize();
-        if (k < 1) this.raiseLift(p, p.settle, p.settleNormal, dt);
+        if (k < 1) this.raiseLift(p, p.to, p.toNormal, dt, true);
       }
       if (p.s >= 1 - 1e-9) { // a swing lasting a whole number of steps must not miss its end by rounding
         p.s = 1;
@@ -313,9 +323,10 @@ export class FootPlanner {
     }
     // 3) over-stretch: a planted paw about to leave the leg's reach steps early. While moving this overrides the
     //    airborne limit (a gallop has all-four-off moments anyway, and a slipping paw is worse); standing, it does not.
+    //    A scripted action (autoStep off) owns its paws: it keeps them in reach itself.
     for (let i = 0; i < 4; i++) {
       const p = this.paws[i];
-      if (!p.planted || p.justPlanted || (stopped && airborne >= t.maxAirborne)) continue;
+      if (!this.autoStep || !p.planted || p.justPlanted || (stopped && airborne >= t.maxAirborne)) continue;
       if (stretch[i] > t.overstretch) {
         this.lift(i, body, gait, stopped ? t.forcedSwingTime : Math.min(gait.swingDuration, t.overstretchSwingMax), stopped);
         airborne++;
@@ -387,6 +398,16 @@ export class FootPlanner {
     return out.lerpVectors(p.fromNormal, p.toNormal, smoothstep(0, 1, p.s)).normalize();
   }
 
+  /**
+   * How far (m) swinging paw i's landing lies beyond its leg's reach (scaled by `scale`) from the leg's joint as
+   * predicted at touchdown, or 0: the body lowers for it during the swing instead of after a short landing.
+   */
+  landingShortfall(i: number, scale: number): number {
+    const p = this.paws[i];
+    if (p.planted || p.scripted || !Number.isFinite(this.reach[i])) return 0;
+    return Math.max(0, p.to.distanceTo(this.predHip[i]) - scale * this.reach[i]);
+  }
+
   /** Ground height under paw i for the body solver: its contact while planted, its path base while swinging. */
   support(i: number): number {
     const p = this.paws[i];
@@ -418,20 +439,23 @@ export class FootPlanner {
    * Peak lift (m) of paw p's swing toward `to`, at least `minLift` and at most planner.maxLift, so that the arc —
    * lift·sin(πs) over the smoothstep-eased path — clears the ground by `clearance` from progress `fromS` on. The path is
    * sampled in swing time (a riser just ahead of the paw meets the arc early, when it is still low), and a riser between
-   * two samples is bisected so its lip is cleared too.
+   * two samples is bisected so its lip is cleared too. With `settling`, the target is the one blending from `to` (at
+   * fromS) onto p.settle (at touchdown), as update() moves it.
    */
-  private swingLift(p: PawState, minLift: number, fromS = 0, to = p.to, toNormal = p.toNormal): number {
+  private swingLift(p: PawState, minLift: number, fromS = 0, to = p.to, toNormal = p.toNormal, settling = false): number {
     const t = this.t;
-    const top = Math.max(p.from.y, to.y) + t.castUp + t.maxStepUp;
-    const depth = top - Math.min(p.from.y, to.y) + t.castDown;
+    const end = settling ? p.settle : to;
+    const top = Math.max(p.from.y, to.y, end.y) + t.castUp + t.maxStepUp;
+    const depth = top - Math.min(p.from.y, to.y, end.y) + t.castDown;
+    const path: SwingPath = { p, to, toNormal, settling, s0: fromS };
     let lift = minLift;
     let prevS = fromS;
-    let prevG = fromS > 0 ? this.pathGround(p, to, fromS, top, depth) : p.from.y;
-    if (fromS > 0) lift = Math.max(lift, this.liftNeeded(p, to, toNormal, fromS, prevG));
+    let prevG = fromS > 0 ? this.pathGround(path, fromS, top, depth) : p.from.y;
+    if (fromS > 0) lift = Math.max(lift, this.liftNeeded(path, fromS, prevG));
     for (let k = Math.floor(fromS * t.swingProbes) + 1; k <= t.swingProbes; k++) { // up to s = 1: a riser in the last stretch is bisected too
       const s = k / t.swingProbes;
-      const g = this.pathGround(p, to, s, top, depth);
-      lift = Math.max(lift, this.liftNeeded(p, to, toNormal, s, g));
+      const g = this.pathGround(path, s, top, depth);
+      lift = Math.max(lift, this.liftNeeded(path, s, g));
       if (Number.isFinite(g) && Number.isFinite(prevG) && Math.abs(g - prevG) > t.edgeDrop) {
         const upper = Math.max(g, prevG);
         const rising = g > prevG; // the upper side is the later one
@@ -439,10 +463,10 @@ export class FootPlanner {
         let hi = s;
         for (let it = 0; it < 6; it++) {
           const m = (lo + hi) / 2;
-          if ((Math.abs(this.pathGround(p, to, m, top, depth) - upper) < t.edgeDrop) === rising) hi = m;
+          if ((Math.abs(this.pathGround(path, m, top, depth) - upper) < t.edgeDrop) === rising) hi = m;
           else lo = m;
         }
-        lift = Math.max(lift, this.liftNeeded(p, to, toNormal, rising ? hi : lo, upper));
+        lift = Math.max(lift, this.liftNeeded(path, rising ? hi : lo, upper));
       }
       prevS = s;
       prevG = g;
@@ -451,25 +475,43 @@ export class FootPlanner {
   }
 
   /**
-   * Mid-swing, the lift paw p's path toward `to` needs over the rest of the swing. It only grows, by at most
-   * planner.liftRate (m/s): a late foothold change raises the arc smoothly instead of popping the paw up.
+   * Mid-swing, the lift paw p's path toward `to` (or, `settling`, from p.to onto p.settle; with `current`, also its
+   * path toward p.to as it stands) needs over the rest of the swing. It only grows, by at most planner.liftRate (m/s): a
+   * late foothold change raises the arc smoothly instead of popping the paw up.
    */
-  private raiseLift(p: PawState, to: THREE.Vector3, toNormal: THREE.Vector3, dt: number): void {
-    p.lift = Math.min(this.swingLift(p, p.lift, p.s, to, toNormal), p.lift + this.t.liftRate * dt);
+  private raiseLift(p: PawState, to: THREE.Vector3, toNormal: THREE.Vector3, dt: number, settling = false, current = false): void {
+    let need = this.swingLift(p, p.lift, p.s, to, toNormal, settling);
+    if (current) need = Math.max(need, this.swingLift(p, p.lift, p.s));
+    p.lift = Math.min(need, p.lift + this.t.liftRate * dt);
   }
 
-  /** Ground height under the straight (unlifted) path from paw p's swing start to `to` at progress s, or −Infinity. */
-  private pathGround(p: PawState, to: THREE.Vector3, s: number, top: number, depth: number): number {
-    _c.lerpVectors(p.from, to, smoothstep(0, 1, s));
+  /** A swing path's target at progress s (blending on to the settle point when settling), and its normal. */
+  private pathTarget(w: SwingPath, s: number, out: THREE.Vector3, outNormal: THREE.Vector3): void {
+    if (!w.settling) {
+      out.copy(w.to);
+      outNormal.copy(w.toNormal);
+      return;
+    }
+    const k = clamp((s - w.s0) / Math.max(1 - w.s0, 1e-9), 0, 1);
+    out.lerpVectors(w.to, w.p.settle, k);
+    outNormal.lerpVectors(w.toNormal, w.p.settleNormal, k).normalize();
+  }
+
+  /** Ground height under a swing's straight (unlifted) path at progress s, or −Infinity. */
+  private pathGround(w: SwingPath, s: number, top: number, depth: number): number {
+    this.pathTarget(w, s, _target, _n);
+    _c.lerpVectors(w.p.from, _target, smoothstep(0, 1, s));
     return this.world.groundAt(_c.x, _c.z, top, depth, _probe) ? _probe.point.y : -Infinity;
   }
 
-  /** Peak lift that puts the arc toward `to` at progress s above ground height g (clearance tapering with the arc). */
-  private liftNeeded(p: PawState, to: THREE.Vector3, toNormal: THREE.Vector3, s: number, g: number): number {
+  /** Peak lift that puts a swing's arc at progress s above ground height g (clearance tapering with the arc). */
+  private liftNeeded(w: SwingPath, s: number, g: number): number {
     if (!Number.isFinite(g)) return 0;
+    const p = w.p;
     const e = smoothstep(0, 1, s);
-    const baseY = p.from.y + (to.y - p.from.y) * e;
-    const ny = Math.max(_n.lerpVectors(p.fromNormal, toNormal, e).normalize().y, Math.cos(deg(this.t.maxSlopeDeg)));
+    this.pathTarget(w, s, _target, _n);
+    const baseY = p.from.y + (_target.y - p.from.y) * e;
+    const ny = Math.max(_n.lerpVectors(p.fromNormal, _n, e).normalize().y, Math.cos(deg(this.t.maxSlopeDeg)));
     const arc = Math.sin(Math.PI * s) * ny;
     // at the very ends the paw is on its own ground: nothing to clear (and no division by a vanishing arc)
     return arc < 1e-3 ? 0 : Math.max(0, g - baseY) / arc + this.t.clearance;

@@ -52,6 +52,22 @@ describe('FootPlanner', () => {
     expect(p.paws[0].planted).toBe(false);
     expect(p.paws[0].justLifted).toBe(true);
   });
+  it('leaves an over-stretched paw planted while a scripted action owns the paws (autoStep off)', () => {
+    const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
+    const g = gaitOf();
+    p.reset(bodyAt());
+    const strained = [0, 0, 0, DEFAULT_TUNING.planner.overstretch + 0.1];
+    p.autoStep = false;
+    for (let k = 0; k < 10; k++) {
+      g.update(0, DT);
+      p.update(bodyAt(), g, strained, DT);
+    }
+    expect(p.paws[3].planted).toBe(true);
+    p.autoStep = true; // ordinary locomotion steps it at once
+    g.update(0, DT);
+    p.update(bodyAt(), g, strained, DT);
+    expect(p.paws[3].planted).toBe(false);
+  });
   it('takes scripted steps and pauses automatic stepping while autoStep is off', () => {
     const p = new FootPlanner(rig, flatWorld(), DEFAULT_TUNING.planner);
     p.reset(bodyAt());
@@ -220,6 +236,24 @@ describe('FootPlanner', () => {
     expect(p.paws[2].justPlanted).toBe(true);
     expect(k).toBe(Math.ceil(0.25 / DT)); // on the swing's own schedule
     expect(p.paws[2].pos.distanceTo(V(-0.3, 0.5 * Math.sin((k - 1) * 0.2), 0.04 * (k - 1)))).toBeLessThan(1e-12);
+  });
+  it('reports how far a swing will land beyond its leg\'s reach, so the body can lower for it in time', () => {
+    const p = new FootPlanner(rig, stepWorld(0.6, 1), DEFAULT_TUNING.planner);
+    p.reset(bodyAt());
+    const g = gaitOf();
+    const hips = [V(0.29, 0.97, -0.62), V(0.31, 0.95, 0.74), V(-0.29, 0.97, -0.62), V(-0.31, 0.95, 0.74)];
+    const reach = [1.28, 1.04, 1.28, 1.04];
+    p.setLegs(hips, reach);
+    expect(p.landingShortfall(1, 0.9)).toBe(0); // planted
+    for (let k = 0; k < 120; k++) g.update(1.4, DT);
+    const body = bodyAt({ velocity: V(0, 0, 1.4) });
+    p.predictTarget(1, body, g, 0.2, V(0, 0, 0)); // the joint at touchdown, as the planner predicts it
+    p.forceStep(1, V(0.34, -0.3, 0.9), V(0, 1, 0), 0.3, 0.1); // a landing 1.25 m below the shoulder...
+    p.paws[1].scripted = false; // ...on an ordinary swing
+    const d = p.paws[1].to.distanceTo(V(0.31, 0.95, 0.74 + 1.4 * 0.2));
+    expect(p.landingShortfall(1, 0.9)).toBeCloseTo(d - 0.9 * 1.04, 6);
+    p.paws[1].scripted = true; // a scripted action keeps its paws in reach itself
+    expect(p.landingShortfall(1, 0.9)).toBe(0);
   });
   it('clamps the landing reach against the real ground under the target (a side slope)', () => {
     // 20° side slope rising toward +X (his left at heading 0): the right paws' ground is lower than the body's

@@ -59,6 +59,78 @@ describe('climbing', () => {
     expect(d.kin.pos.z).toBeGreaterThan(0);
     expect(d.nanResets).toBe(0);
   });
+  it('scrambles up ledges from 0.8 to 2.5 m at a trot and at a walk with every metric in bounds', { timeout: 120_000 }, () => {
+    for (const h of [0.8, 1.6, 2.5]) {
+      for (const prowl of [false, true]) {
+        // a long top, so he never reaches its far edge
+        const world = CollisionWorld.fromObjects([floor(), box(10, h, 1, 0, h / 2, 0), box(10, h, 40, 0, h / 2, 20.5)]);
+        const metrics = new MotionMetrics(world, 6);
+        const modes = new Set<string>();
+        const d = run(world, ['KeyW'], 6, (x) => {
+          if (prowl) x.controller.prowl = true;
+          metrics.sample(x);
+          modes.add(x.climb.mode);
+        });
+        const what = `${h} m, ${prowl ? 'walk' : 'trot'}`;
+        expect(modes.has('scramble'), what).toBe(true);
+        expect(metrics.report(what).failures, what).toEqual([]);
+        expect(d.kin.pos.y, what).toBeCloseTo(h, 6);
+      }
+    }
+  });
+  it('runs on off the far edge of a ledge it scrambled on to and hops down, every metric in bounds', { timeout: 120_000 }, () => {
+    for (const h of [1.0, 2.3]) {
+      // an 8 m top: at a trot his forepaws reach its far edge in mid-stride
+      const world = wallWorld(h, 0);
+      const metrics = new MotionMetrics(world, 8);
+      const modes = new Set<string>();
+      const d = run(world, ['KeyW'], 8, (x) => {
+        metrics.sample(x);
+        modes.add(x.climb.mode);
+      });
+      expect(modes.has('hop'), `${h} m`).toBe(true);
+      expect(metrics.report(`${h} m`).failures, `${h} m`).toEqual([]);
+      expect(d.kin.pos.y, `${h} m`).toBeCloseTo(0, 6);
+    }
+  });
+  it('hops a drop just deeper than a step at a trot, lengthening the leap until the hind paws are clear', { timeout: 60_000 }, () => {
+    const world = dropWorld(0.7, 0);
+    const metrics = new MotionMetrics(world, 4);
+    let hopped = false;
+    const d = run(world, ['KeyW'], 4, (x) => {
+      metrics.sample(x);
+      hopped ||= x.climb.mode === 'hop';
+    });
+    expect(hopped).toBe(true);
+    expect(metrics.report('0.7 m').failures).toEqual([]);
+    expect(d.kin.pos.y).toBeCloseTo(-0.7, 6);
+  });
+  it('leaps long enough over a pit to a landing almost level with the take-off (the hind paws clear the edge first)', { timeout: 60_000 }, () => {
+    // a 1 m deep, 1.5 m wide pit (too wide to stride across), then ground only 0.2 m below the take-off: a fall shorter
+    // than the hind paws' tuck
+    const world = CollisionWorld.fromObjects([box(20, 1, 20, 0, -0.5, -10), box(20, 1, 1.5, 0, -1.5, 0.75), box(20, 1, 20, 0, -0.7, 11.5)]);
+    const metrics = new MotionMetrics(world, 4);
+    let hopped = false;
+    const d = run(world, ['KeyW'], 4, (x) => {
+      metrics.sample(x);
+      hopped ||= x.climb.mode === 'hop';
+    });
+    expect(hopped).toBe(true);
+    expect(metrics.report('pit').failures).toEqual([]);
+    expect(d.kin.pos.y).toBeCloseTo(-0.2, 6);
+  });
+  it('stands at a drop behind him without his hips sagging toward it', { timeout: 60_000 }, () => {
+    const world = dropWorld(1.5, 0);
+    const d = new DragonCharacter({ rig: toothlessFixtureRig(), world });
+    d.spawn(0, -0.8, Math.PI); // facing away: the hind paws 0.2 m from the edge, the hips' rear terrain probe past it
+    const metrics = new MotionMetrics(world, 2);
+    for (let k = 0; k < Math.round(2 / DT); k++) {
+      d.update({ input: input([]), cameraYaw: 0, cameraPos: CAM }, DT);
+      metrics.sample(d);
+    }
+    expect(d.body.pose.pelvisPos.y).toBeCloseTo(d.body.hipHeight, 2);
+    expect(metrics.report('edge').failures).toEqual([]);
+  });
   it('is blocked by a 3 m wall and never passes through it', { timeout: 60_000 }, () => {
     let maxChestZ = -Infinity;
     const chest = new THREE.Vector3();

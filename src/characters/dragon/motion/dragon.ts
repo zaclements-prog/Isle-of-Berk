@@ -91,6 +91,8 @@ export class DragonCharacter {
   private readonly prevMargin = [0, 0, 0, 0];
   private readonly hips = [0, 1, 2, 3].map(() => new THREE.Vector3());
   private readonly reach: number[];
+  /** Per leg, how far the body lowers for it this step (BodySolver): the leg's shortfall or its landing's. */
+  private readonly short = [0, 0, 0, 0];
   private readonly groundProbe = new THREE.Vector3();
   private readonly groundOrigin = new THREE.Vector3();
   private readonly groundHit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
@@ -215,7 +217,9 @@ export class DragonCharacter {
     this.planner.update(this.plannerBody(), this.gait, this.strain, dt);
     this.kin.pos.y = (this.planner.support(0) + this.planner.support(1) + this.planner.support(2) + this.planner.support(3)) / 4;
     // 5) body
-    const pose = this.body.update(this.kin, this.planner, this.gait, this.legs.shortfall, this.mods.maxTiltDeg, dt,
+    // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
+    for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
+    const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
       this.groundUnder(1, 3), this.groundUnder(0, 2), this.frontRaise());
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
@@ -290,10 +294,13 @@ export class DragonCharacter {
   /**
    * Terrain height under the midpoint of two paws' neutral positions (shoulders: 1, 3; hips: 0, 2), a little ahead
    * along his velocity: the mean of three probes body.terrainSpan apart along his heading, so a staircase reads as a
-   * ramp. Probes whose origin lies inside a solid, or that find nothing, are left out (−Infinity if all are).
+   * ramp. Probes whose origin lies inside a solid, that find nothing, or that find ground more than body.terrainDrop
+   * below the two paws (the far side of a drop: he hops it or stops, he never rides down to it) are left out
+   * (−Infinity if all are).
    */
   private groundUnder(a: number, b: number): number {
     const t = this.tuning;
+    const lowest = (this.planner.support(a) + this.planner.support(b)) / 2 - t.body.terrainDrop;
     const p = this.groundProbe;
     p.addVectors(this.planner.neutral[a], this.planner.neutral[b]).multiplyScalar(0.5);
     rotY(p, this.kin.heading, p).add(this.kin.pos).addScaledVector(this.kin.velocity, t.body.terrainLookahead);
@@ -306,7 +313,7 @@ export class DragonCharacter {
       const x = p.x + fx * k;
       const z = p.z + fz * k;
       if (this.world.isInside(this.groundOrigin.set(x, top, z))) continue;
-      if (!this.world.groundAt(x, z, top, 2 * t.climb.ledgeMax, this.groundHit)) continue;
+      if (!this.world.groundAt(x, z, top, 2 * t.climb.ledgeMax, this.groundHit) || this.groundHit.point.y < lowest) continue;
       sum += this.groundHit.point.y;
       n++;
     }

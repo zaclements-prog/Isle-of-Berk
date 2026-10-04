@@ -10,7 +10,9 @@ export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
+/** Hermite step from 0 at e0 to 1 at e1 (reversed when e1 < e0); with e1 = e0, a plain step there (no 0/0). */
 export function smoothstep(e0: number, e1: number, x: number): number {
+  if (e1 === e0) return x < e0 ? 0 : 1;
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
   return t * t * (3 - 2 * t);
 }

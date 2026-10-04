@@ -54,6 +54,13 @@ export interface MotionTuning {
     terrainFollow: number;
     /** Spacing (m) of the three terrain probes along his heading under the hips and shoulders (stairs read as ramps). */
     terrainSpan: number;
+    /** Share of a leg's reach a swing may land at (from the joint at touchdown) before the body lowers for it. */
+    landingReach: number;
+    /**
+     * Terrain further than this (m) below the paws is the far side of a drop, never ridden down to. Deeper than the
+     * fall of a stride on a descending ramp (he rides the ramp ahead of his trailing paws).
+     */
+    terrainDrop: number;
   };
   legs: { scapulaFollow: number; swingCurlDeg: number; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
   look: {
@@ -99,7 +106,8 @@ export interface MotionTuning {
     climbMinDeg: number; wallMinDeg: number; climbSpeed: number; scrambleSpeed: number; maxTiltDeg: number;
     cadenceScale: number; strideScale: number; swingScale: number; wingsOpen: number;
     /**
-     * dropMin: he hops down drops deeper than this (m); at most planner.maxStepDown, or deeper drops strand his paws.
+     * dropMin: he hops down drops deeper than this (m). At most planner.maxStepDown, or deeper drops strand his paws;
+     * no deeper than a step up, or walking down one his forepaws' swing and his chest catch the edge.
      * hopUpSpeed: a hop's least upward launch speed (m/s); it leaps higher when the hind paws need it to clear the edge.
      */
     ledgeMax: number; scrambleTime: number; dropMin: number; hopUpSpeed: number; probeAhead: number;
@@ -115,8 +123,12 @@ export interface MotionTuning {
     blendTime: number;
     /** The highest drop (m) he hops down; at a deeper one he stops at the edge. */
     dropMax: number;
+    /** How far past the lip (m) the forepaws grip the top in a scramble. */
+    scrambleGrip: number;
     /** A hop's least forward speed (m/s): he leaps clear of the edge, however slowly he walked up to it. */
     hopSpeed: number;
+    /** A hop's greatest forward speed (m/s): he leaps further, up to this, to land all four paws beyond a gap. */
+    hopSpeedMax: number;
     /** How far (m) the hind paws draw up toward the body in a hop's flight, to pass over the edge. */
     hopTuck: number;
     /** Time (s) the paws take to gather from the take-off stance into the flight pose. */
@@ -146,7 +158,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   planner: {
     raibertGain: 0.45, castUp: 0.8, castDown: 1.8, maxSlopeDeg: 75, edgeDrop: 0.15, edgeProbe: 0.1, candidateOffset: 0.12,
     retargetHalfLife: 0.04, freezeRetargetAt: 0.8, forcedStepDist: 0.2, forcedSwingTime: 0.28,
-    forcedLift: 0.09, overstretch: 0.97, clearance: 0.05, minSwingTime: 0.12, maxAirborne: 2, maxStepUp: 0.6, maxStepDown: 1.0,
+    forcedLift: 0.09, overstretch: 0.97, clearance: 0.05, minSwingTime: 0.12, maxAirborne: 2, maxStepUp: 0.6, maxStepDown: 0.6,
     reachFrac: 0.9, sideLead: 0.2, strainLookahead: 3, leadEnvelopeFrac: 0.9, overstretchSwingMax: 0.4,
     swingProbes: 12, maxLift: 0.6, liftRate: 4,
   },
@@ -155,7 +167,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
     leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
-    crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4,
+    crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
   legs: { scapulaFollow: 0.35, swingCurlDeg: 35, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
   look: {
@@ -172,9 +184,9 @@ export const DEFAULT_TUNING: MotionTuning = {
   breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8, exertionFullSpeed: 10 },
   climb: {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
-    swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 1.0, hopUpSpeed: 1.2, probeAhead: 1.2,
+    swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 0.6, hopUpSpeed: 1.2, probeAhead: 1.2,
     dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
-    hopSpeed: 3.5, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
+    scrambleGrip: 0.12, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,

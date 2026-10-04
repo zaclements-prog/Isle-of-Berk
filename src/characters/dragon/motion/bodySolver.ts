@@ -54,9 +54,10 @@ export class BodySolver {
   /** Pelvis-head height above the hind soles at bind. */
   readonly hipHeight: number;
   /**
-   * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height is the
-   * target itself, not a spring chasing it (a fall outruns any spring); when the action ends, the spring takes over at
-   * that height and speed, so a landing's fall speed becomes its absorb.
+   * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height and
+   * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
+   * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
+   * speed, so a landing's fall speed becomes its absorb.
    */
   readonly override = { active: false, height: 0, pitch: 0, exact: false };
   private readonly height: SpringState = { x: 0, v: 0 };
@@ -67,7 +68,8 @@ export class BodySolver {
   private crouch = 0;
   private readonly pelvis: number;
   private readonly spine: number[];
-  private readonly pelvisOffset: THREE.Vector3;
+  /** The pelvis head's horizontal offset from the character origin at bind (body frame). */
+  readonly pelvisOffset: THREE.Vector3;
   /** Fore-aft distance between the front and hind sole pairs at bind (m). */
   readonly feetLength: number;
   private readonly feetWidth: number;
@@ -167,8 +169,12 @@ export class BodySolver {
     if (this.override.active && this.override.exact) {
       this.height.v = (heightT - this.height.x) / dt;
       this.height.x = heightT;
-    } else stepSpring(this.height, heightT, t.heightOmega, 1, dt);
-    stepSpring(this.pitch, pitchT, t.tiltOmega, 1, dt);
+      this.pitch.v = (pitchT - this.pitch.x) / dt;
+      this.pitch.x = pitchT;
+    } else {
+      stepSpring(this.height, heightT, t.heightOmega, 1, dt);
+      stepSpring(this.pitch, pitchT, t.tiltOmega, 1, dt);
+    }
     stepSpring(this.roll, rollT, t.tiltOmega, 1, dt);
 
     stepSpring(this.bend, clamp(t.bendGain * kin.yawRate, -deg(t.maxBendDeg), deg(t.maxBendDeg)), t.tiltOmega, 1, dt);
