@@ -4,6 +4,7 @@ import { mulberry32 } from '../../../core/rng';
 import type { CollisionWorld, RayHit } from '../../../world/collision';
 import { BodyKinematics, DragonController, createIntent, type MoveIntent } from './controller';
 import { BodySolver } from './bodySolver';
+import { ClimbController } from './climbing';
 import { FootPlanner, type PlannerBody } from './footPlanner';
 import { GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
 import { LegRig } from './legs';
@@ -66,6 +67,8 @@ export class DragonCharacter {
   readonly secondary: SecondaryMotion;
   readonly proxies: BodyProxies;
   readonly mods: MotionMods;
+  /** Spec §6.6 climbing (climb mode, scramble-up, blocked walls, hop-down), run in hooks.beforeMove. */
+  readonly climb: ClimbController;
   readonly hooks: { beforeMove: DragonHook[]; preFinals: DragonHook[]; face: DragonHook[] } = { beforeMove: [], preFinals: [], face: [] };
   time = 0;
   nanResets = 0;
@@ -116,6 +119,11 @@ export class DragonCharacter {
     this.mods = { speedCap: Infinity, gait: NO_GAIT_MODS, maxTiltDeg: t.body.maxTiltDeg, up: new THREE.Vector3(0, 1, 0), scripted: false };
     this.head = this.skeleton.id(opts.rig.chains.neck[opts.rig.chains.neck.length - 1]);
     this.chest = this.skeleton.id(opts.rig.chains.spine[opts.rig.chains.spine.length - 1]);
+    // how far the body reaches ahead of the origin at bind (the muzzle) — climbing measures walls from the origin
+    this.proxies.update(this.skeleton);
+    const frontExtent = Math.max(...this.proxies.items.map((p, k) => this.proxies.centers[k].z + p.radius));
+    this.climb = new ClimbController(opts.world, t.climb, frontExtent, t.planner.maxStepUp);
+    this.climb.attach(this);
   }
 
   spawn(x: number, z: number, heading: number): void {
