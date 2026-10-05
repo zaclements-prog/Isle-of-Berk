@@ -423,8 +423,8 @@ export class ClimbController {
     d.mods.maxTiltDeg = lerp(d.tuning.body.maxTiltDeg, c.maxTiltDeg, w);
     d.mods.up.copy(UP).lerp(this.climbUp, w).normalize();
     d.mods.wallNormalY = lerp(d.tuning.body.wallNormalY, Math.cos(deg(c.wallMinDeg)), w);
-    // Ruling 3: the merged fold clip is sampled at the fold amount, so the wings open by easing it below 1
-    if (d.layers.has('wingFold')) d.layers.set('wingFold', 1, 1 - c.wingsOpen * w);
+    // spec §6.6 "wings open ~20% for balance": a flare of the folded wing (unfolding stood the ribs up), by the weight
+    d.wings.demand('climb', { flare: d.tuning.wings.climbFlare }, w);
   }
 
   private resetMods(d: DragonCharacter): void {
@@ -438,7 +438,7 @@ export class ClimbController {
     d.planner.autoStep = true;
     d.body.override.active = false;
     d.body.override.exact = false;
-    if (d.layers.has('wingFold')) d.layers.set('wingFold', 1, 1);
+    d.wings.demand('climb', null);
   }
 
   /**

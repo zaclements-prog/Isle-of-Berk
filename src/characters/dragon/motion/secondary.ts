@@ -39,6 +39,8 @@ export class SecondaryMotion {
   readonly ears: Array<{ bone: number; backSign: number; s: SpringState }>;
   readonly fins: Array<{ bone: number; phase: number; s: SpringState }>;
   exertion = 0;
+  /** Breathing depth scale (M6: shallower while the front legs are posed on the ground). */
+  breathGain = 1;
   private breathPhase = 0;
   private time = 0;
   private nextEarTwitch: number;
@@ -130,7 +132,7 @@ export class SecondaryMotion {
 
   /** Chest rise and fall; the neck base cancels it so the head stays steady. Moves the shoulders — apply before leg IK. */
   applyBreathing(s: RigSkeleton): void {
-    const b = deg(this.t.breath.amplitudeDeg) * Math.sin(TAU * this.breathPhase);
+    const b = deg(this.t.breath.amplitudeDeg) * this.breathGain * Math.sin(TAU * this.breathPhase);
     for (const c of this.chest) s.localQuat[c].multiply(_qa.setFromAxisAngle(AX, b));
     s.localQuat[this.neckBase].multiply(_qa.setFromAxisAngle(AX, -b * this.chest.length));
   }

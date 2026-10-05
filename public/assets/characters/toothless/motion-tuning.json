@@ -167,7 +167,6 @@
     "cadenceScale": 0.8,
     "strideScale": 0.7,
     "swingScale": 1.5,
-    "wingsOpen": 0.2,
     "ledgeMax": 2.5,
     "scrambleTime": 0.9,
     "dropMin": 0.6,
