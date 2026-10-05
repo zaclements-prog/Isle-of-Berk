@@ -86,6 +86,8 @@ export class ClimbController {
   t = 0;
   /** Set by an action that scripts the body itself (the jump's flight): climbing stands aside. */
   suspended = false;
+  /** Weight of the climb_reach layer (head and chest up the slope), eased in and out of climb mode. */
+  reach = 0;
   readonly probe: ClimbProbe = {
     slopeDeg: 0, slopeNormal: new THREE.Vector3(0, 1, 0), wall: false, wallDist: Infinity, wallPoint: new THREE.Vector3(),
     wallNormal: new THREE.Vector3(), step: false, ledge: false, ledgeHeight: 0, ledgeTop: new THREE.Vector3(), drop: 0, dropPoint: new THREE.Vector3(),
@@ -351,6 +353,7 @@ export class ClimbController {
   }
 
   step(d: DragonCharacter, dt: number): void {
+    this.easeReach(d, dt);
     if (this.suspended) {                       // an M6 action (the jump) owns the body: no probing, no mods reset
       this.mode = 'ground';
       return;
@@ -515,6 +518,13 @@ export class ClimbController {
     const S = this.sc;
     d.mods.scripted = true;
     d.planner.autoStep = false;
+    // choreography (M6): the scramble_up clip shapes spine, neck and tail through reach → hook → pull-over → settle,
+    // timed to the scripted body curve; the wings flare for balance
+    if (d.layers.has('scramble_up')) {
+      const dur = d.layers.meta('scramble_up')?.duration ?? T;
+      d.layers.set('scramble_up', smoothstep(0, 0.08, tau) * (1 - smoothstep(0.88, 1, tau)), tau * dur, false, 2);
+    }
+    d.wings.demand('climb', { flare: d.tuning.wings.climbFlare });
     // the body; the heading turns square to the wall during the leap
     const pitch = this.scramblePose(tau, _p);
     d.kin.heading = tau < S.leapEnd ? this.scrHeading0 + angleDiff(this.scrHeading0, this.wallHeading) * smoothstep(0, S.leapEnd, tau) : this.wallHeading;
@@ -553,7 +563,17 @@ export class ClimbController {
       d.planner.carry(i, this.fromWall(_t, _o), _n);
     }
     // the last step stays scripted (the paws plant on their spots); ordinary locomotion resumes next step
-    if (this.t >= T) this.mode = 'ground';
+    if (this.t >= T) {
+      this.mode = 'ground';
+      if (d.layers.has('scramble_up')) d.layers.set('scramble_up', 0);
+    }
+  }
+
+  /** climb_reach eases toward 0.6 in climb mode and the scramble's first half, and back to 0 elsewhere. */
+  private easeReach(d: DragonCharacter, dt: number): void {
+    const want = this.mode === 'climb' || (this.mode === 'scramble' && this.t < this.duration * 0.3) ? 0.6 : 0;
+    this.reach += Math.sign(want - this.reach) * Math.min(Math.abs(want - this.reach), dt / 0.4);
+    if (d.layers.has('climb_reach')) d.layers.set('climb_reach', this.reach, 0, false, 1);
   }
 
   /**

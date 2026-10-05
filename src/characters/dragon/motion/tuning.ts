@@ -257,7 +257,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     scrambleGrip: 0.12, tiltOmega: 14, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
   },
   scramble: {
-    hookBack: 0.45, hookUp: 0.5, maxPitchDeg: 40, leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6, pullEnd: 0.65, hindLand: 0.85,
+    hookBack: 0.45, hookUp: 0.575, maxPitchDeg: 40, leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6, pullEnd: 0.65, hindLand: 0.85,
     pullRise: 0.62, pullAhead: 0.05, overReach: 0.5, pullPitchDeg: 10, overPitchLeadDeg: 15, overBack: -0.45, overUp: 0.4,
     overPitchDeg: 20, foreStep1: 0.47, foreStep1End: 0.62, foreStep2: 0.76, stepEnd: 0.9, stepLift: 0.12, clear: 0.15,
     foreRise: 0.6, foreCross: 0.85, foreDrop: 0.8, hindRise: 0.75, hindCross: 0.92, hindDrop: 0.88,

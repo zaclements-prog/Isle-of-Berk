@@ -189,7 +189,7 @@
   },
   "scramble": {
     "hookBack": 0.45,
-    "hookUp": 0.5,
+    "hookUp": 0.575,
     "maxPitchDeg": 40,
     "leapEnd": 0.3,
     "leapUp": 0.1,
