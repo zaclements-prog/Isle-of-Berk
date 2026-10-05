@@ -18,6 +18,10 @@ import { applyDitherFade, dragonFade } from '../../characters/dragon/fade';
 import { MotionOverlays, OVERLAY_NAMES, type OverlayName } from './overlays';
 import { LAB_SCRIPTS, scriptByName } from './scripts';
 import { cameraFollow, runLabScript } from './labRunner';
+import { createToothlessBrain } from '../../characters/dragon/toothlessBrain';
+import { applyExpression } from '../../characters/dragon/face/expression';
+import { PlasmaFx } from '../../fx/plasmaFx';
+import { M6_SCRIPTS, runM6Script } from './m6Scripts';
 
 const app = createApp(document.getElementById('app')!);
 const course = buildCourse();
@@ -97,6 +101,27 @@ async function startToothless(): Promise<void> {
   const cam = new OrbitCamera(tuning.camera, world);
   const hold = { chest: new THREE.Vector3() };
   cam.reset(cameraFollow(dragon, hold));
+  // M6: the brain (behaviours, face, jump, plasma) and the plasma FX. Plasma aims along the camera like the game page,
+  // unless a playing M6 script names its aim point.
+  const aimDir = new THREE.Vector3();
+  const aimHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
+  let scriptAim: THREE.Vector3 | null = null;
+  let scriptEnd = -1;
+  let queue: Array<{ t: number; name: string }> = [];
+  const tb = createToothlessBrain(dragon, asset.rig, {
+    seed: 1, sunDir: app.lighting.sunDir,
+    aimAt: (_d, out) => {
+      if (scriptAim) return out.copy(scriptAim);
+      aimDir.subVectors(cam.target, cam.position).normalize();
+      const hit = world.raycast(cam.position, aimDir, 120, aimHit);
+      return hit ? out.copy(hit.point) : out.copy(cam.position).addScaledVector(aimDir, 120);
+    },
+  });
+  const fx = new PlasmaFx({
+    world, cfg: tuning.plasma, prepare: (m) => app.materials.prepare(m),
+    shake: (a, t) => cam.shake(a, t), seed: 1,
+  });
+  app.scene.add(fx.root);
   const overlays = new MotionOverlays();
   app.scene.add(overlays.root); // dev overlay: exempt from the material pipeline (Ruling 3)
   const canvas = app.renderer.domElement;
@@ -133,19 +158,27 @@ async function startToothless(): Promise<void> {
       scripted = null;
       yawPx = 0;
     }
+    while (queue.length && queue[0].t <= app.loop.simTime) tb.brain.behaviour(queue.shift()!.name);
+    if (app.loop.simTime > scriptEnd) {                      // an M6 script's aim and quiet selector last its duration
+      scriptAim = null;
+      tb.brain.behaviours.autonomous = true;
+    }
     viewPos(prevCam);
     cam.update({ mouseDX: inp.mouseDX + yawPx, mouseDY: inp.mouseDY, wheel: inp.wheel }, cameraFollow(dragon, hold), dt);
     viewPos(curCam);
     dragon.update({ input: inp, cameraYaw: cam.yaw, cameraPos: cam.position }, dt);
+    while (tb.plasma.shots.length) fx.fire(tb.plasma.shots.shift()!);
   });
-  app.loop.addRender((alpha) => {
+  app.loop.addRender((alpha, frameDt) => {
     dragon.writeTo(asset.bones, alpha);
+    applyExpression(asset, tb.brain.face.state);
     dragonFade.value = hold3.on ? 0 : cam.fade;
     if (view.follow) {
       app.camera.position.lerpVectors(prevCam, curCam, alpha);
       app.camera.lookAt(cam.target);
     }
     overlays.update(dragon);
+    fx.update(frameDt, app.camera, canvas.height);
   }, 0);
 
   const fc = gui.addFolder('Toothless');
@@ -164,20 +197,33 @@ async function startToothless(): Promise<void> {
   }
 
   debug.register('lab', {
-    run: (name: string) => runLabScript({ rig: asset.rig, world, script: scriptByName(name), tuning, clips: asset.clips, posesMeta }),
-    runAll: () => Object.fromEntries(LAB_SCRIPTS.map((s) => [s.name, runLabScript({ rig: asset.rig, world, script: s, tuning, clips: asset.clips, posesMeta })])),
+    run: (name: string) => {
+      const m6 = M6_SCRIPTS.find((x) => x.name === name);
+      const o = { rig: asset.rig, world, tuning, clips: asset.clips, posesMeta };
+      return m6 ? runM6Script({ ...o, script: m6 }) : runLabScript({ ...o, script: scriptByName(name) });
+    },
+    runAll: () => Object.fromEntries([
+      ...LAB_SCRIPTS.map((s) => [s.name, runLabScript({ rig: asset.rig, world, script: s, tuning, clips: asset.clips, posesMeta })]),
+      ...M6_SCRIPTS.map((s) => [s.name, runM6Script({ rig: asset.rig, world, script: s, tuning, clips: asset.clips, posesMeta })]),
+    ]),
     play: (name: string) => {
-      const s = scriptByName(name);
+      const m6 = M6_SCRIPTS.find((x) => x.name === name);
+      const s = m6 ?? scriptByName(name);
       dragon.controller.prowl = false; // a script's C press toggles from trot, as in the headless runner
       dragon.spawn(s.spawn.x, s.spawn.z, s.spawn.heading);
       cam.reset(cameraFollow(dragon, hold));
       snapView();
+      tb.brain.reset();
+      tb.brain.behaviours.autonomous = m6?.autonomous ?? true;
+      queue = (m6?.behaviours ?? []).map((b) => ({ t: b.t + app.loop.simTime, name: b.name })).sort((a, b) => a.t - b.t);
+      scriptAim = m6?.aim ? new THREE.Vector3(...m6.aim) : null;
+      scriptEnd = app.loop.simTime + s.duration;
       scripted = new ScriptedInput(s.events.map((e) => ({ ...e, t: e.t + app.loop.simTime })));
       source = scripted;
       yawPx = s.cameraYawRate ? -(s.cameraYawRate / 120) / tuning.camera.sensitivity : 0;
       return s.description;
     },
-    scripts: () => LAB_SCRIPTS.map((s) => `${s.name}: ${s.description}`),
+    scripts: () => [...LAB_SCRIPTS, ...M6_SCRIPTS].map((s) => `${s.name}: ${s.description}`),
     /** Where he is and what he is doing, for checking a play against the headless run. */
     state: () => ({
       pos: dragon.kin.pos.toArray().map((v) => +v.toFixed(3)), heading: +dragon.kin.heading.toFixed(3),
@@ -192,6 +238,7 @@ async function startToothless(): Promise<void> {
       snapView();
     },
     toggle: (name: OverlayName) => (OVERLAY_NAMES.includes(name) ? overlays.toggle(name) : OVERLAY_NAMES),
+    behaviour: (name: string) => tb.brain.behaviour(name),
   });
   debug.register('cam', {
     /** View him from azimuth `az` (deg, relative to his heading; 90 = his right side), elevation `el` (deg) and `dist` (m). */
