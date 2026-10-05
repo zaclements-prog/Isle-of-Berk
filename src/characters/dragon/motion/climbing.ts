@@ -84,6 +84,8 @@ function climbPath(from: THREE.Vector3, to: THREE.Vector3, peak: number, gap: nu
 export class ClimbController {
   mode: ClimbMode = 'ground';
   t = 0;
+  /** Set by an action that scripts the body itself (the jump's flight): climbing stands aside. */
+  suspended = false;
   readonly probe: ClimbProbe = {
     slopeDeg: 0, slopeNormal: new THREE.Vector3(0, 1, 0), wall: false, wallDist: Infinity, wallPoint: new THREE.Vector3(),
     wallNormal: new THREE.Vector3(), step: false, ledge: false, ledgeHeight: 0, ledgeTop: new THREE.Vector3(), drop: 0, dropPoint: new THREE.Vector3(),
@@ -349,6 +351,10 @@ export class ClimbController {
   }
 
   step(d: DragonCharacter, dt: number): void {
+    if (this.suspended) {                       // an M6 action (the jump) owns the body: no probing, no mods reset
+      this.mode = 'ground';
+      return;
+    }
     if (this.mode === 'scramble') {
       this.stepScramble(d, dt);
       return;
