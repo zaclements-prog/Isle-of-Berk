@@ -70,6 +70,23 @@ describe('toothless.poses.glb', () => {
   });
 });
 
+describe('toothless.poses.glb — the M6 pose library (spec §5.11)', () => {
+  const LIBRARY = ['sit', 'lie', 'sleep', 'stretch', 'sniff', 'stalk', 'jump_crouch', 'jump_launch', 'jump_tuck', 'jump_land',
+    'plasma_rear', 'climb_reach', 'scramble_hook', 'scratch', 'shake', 'yawn', 'scramble_up'];
+  const LENGTH: Record<string, number> = { scratch: 28 / 30, shake: 36 / 30, yawn: 72 / 30, scramble_up: 27 / 30 };
+  it('keeps full tracks for every bone, keyed from t = 0 at 30 fps', () => {
+    for (const c of LIBRARY) {
+      const anim = poses.animations.find((a: any) => a.name === c);
+      expect(anim, c).toBeTruthy();
+      const nodes = new Set(anim.channels.filter((ch: any) => ch.target.path === 'rotation').map((ch: any) => ch.target.node));
+      expect(nodes.size, c).toBe(101);
+      const times = poses.accessors[anim.samplers[anim.channels[0].sampler].input];
+      expect(times.min[0], c).toBeCloseTo(0, 6);
+      expect(times.max[0], c).toBeCloseTo(LENGTH[c] ?? 1 / 30, 4);        // a single pose: two keys, frames 0 and 1
+    }
+  });
+});
+
 describe('toothless.rig.json', () => {
   const bones = new Set(rig.bones.map((b: any) => b.name));
   it('references only existing bones', () => {

@@ -109,7 +109,9 @@ def stage_assemble():
 def stage_export():
     rig, body = open_stage("assembled")
     body.name = body.data.name = "Toothless"
-    PO.make_clips(rig)
+    QR.setup_clay(bpy.context.scene)
+    qa.library_renders(bpy.context.scene, rig, os.path.join(BUILD, "qa_library"), os.path.join(QA_DIR, "library_sheet.jpg"))
+    PO.make_clips(rig)                     # after the renders: the clips' NLA tracks would override the posed bones
     EX.write_all(rig, body, ASSETS)
     size = os.path.getsize(os.path.join(ASSETS, "toothless.glb"))
     print("GLB bytes", size)

@@ -184,3 +184,48 @@ def mask_render(sc, body, out_dir, name="deform_mask_ao"):
     finally:
         sh.light, sh.color_type, sh.show_cavity, sc.view_settings.view_transform = saved
         me.color_attributes.remove(me.color_attributes["_MASK_view"])
+
+
+LIBRARY_VIEWS = {"side": dict(loc=(8.5, 0.9, 1.0), target=(0, 0.9, 0.7), ortho=7.6),
+                 "tq": dict(loc=(-4.6, -5.4, 2.4), target=(0, 0.4, 0.7), lens=32)}
+
+
+def library_renders(sc, rig, frames_dir, sheet_path):
+    """Clay contact sheet of the pose library (spec 5.12): side + three-quarter view of every pose (clips at their middle
+    frame) on a ground plane. The single views go to frames_dir (build output); the stacked half-size JPEG sheet to
+    sheet_path (committed)."""
+    import bpy
+    import numpy as np
+    import library as LIB
+    import rig as R
+    import scene as SC
+    bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 1.0, 0))
+    ground = bpy.context.active_object
+    ground.name = ground.data.name = "QA_Ground"
+    SC.move_to(ground, SC.collection("00_Studio"))
+    mat = bpy.data.materials.new("QA_GroundMat")
+    mat.diffuse_color = (0.32, 0.34, 0.3, 1.0)
+    ground.data.materials.append(mat)
+    rows = []
+    try:
+        for name in LIB.LIBRARY:
+            frames = LIB.frames_of(name)
+            LIB.apply_pose(rig, frames[len(frames) // 2])
+            views = [QR.shoot(sc, frames_dir, f"library_{name}_{v}", res=(640, 420), **kw) for v, kw in LIBRARY_VIEWS.items()]
+            a, b = (QR._resize(QR._load(p), 240) for p in views)
+            rows.append(np.concatenate([a, np.ones((a.shape[0], 4, 4), np.float32), b], axis=1))
+    finally:
+        R.reset_pose(rig)
+        mesh = ground.data
+        bpy.data.objects.remove(ground)
+        bpy.data.meshes.remove(mesh)
+        bpy.data.materials.remove(mat)
+    gap = np.ones((4, rows[0].shape[1], 4), np.float32)
+    sheet = np.concatenate([np.concatenate([r, gap], axis=0) for r in rows[::-1]], axis=0)   # images are stored bottom-up
+    img = bpy.data.images.new("library_sheet", sheet.shape[1], sheet.shape[0], alpha=True)
+    img.pixels = sheet.ravel()
+    img.filepath_raw = sheet_path
+    img.file_format = "JPEG"                         # a committed QA image: JPEG keeps the repo light
+    img.save(quality=88)
+    bpy.data.images.remove(img)
+    return sheet_path

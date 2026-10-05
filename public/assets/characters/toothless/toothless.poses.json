@@ -1,4 +1,9 @@
 {
+ "version": 2,
+ "wingFlare": {
+  "deg": 25.0,
+  "liftDeg": 8.0
+ },
  "clips": {
   "bind": {
    "mask": "all"
@@ -31,6 +36,723 @@
    "mask": [
     "jaw"
    ]
+  },
+  "sit": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 0.8,
+   "blendOut": 0.6,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0.4,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.384,
+    "pitch": 0.278
+   },
+   "soles": {
+    "hind_L": [
+     0.3418,
+     0.0234,
+     -0.411
+    ],
+    "hind_R": [
+     -0.3418,
+     0.0234,
+     -0.411
+    ]
+   }
+  },
+  "lie": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "front_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "front_L",
+    "front_R",
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 1.0,
+   "blendOut": 0.8,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0.45,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.388,
+    "pitch": -0.004
+   },
+   "soles": {
+    "front_L": [
+     0.3646,
+     0.0026,
+     1.5159
+    ],
+    "front_R": [
+     -0.3646,
+     0.0026,
+     1.5159
+    ],
+    "hind_L": [
+     0.4002,
+     0.0327,
+     -0.3286
+    ],
+    "hind_R": [
+     -0.4002,
+     0.0327,
+     -0.3286
+    ]
+   }
+  },
+  "sleep": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "front_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "front_L",
+    "front_R",
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 1.6,
+   "blendOut": 1.0,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0.45,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.4,
+    "pitch": -0.004
+   },
+   "look": 0.0,
+   "soles": {
+    "hind_L": [
+     0.4002,
+     0.0447,
+     -0.3286
+    ],
+    "hind_R": [
+     -0.4002,
+     0.0447,
+     -0.3286
+    ]
+   },
+   "face": {
+    "blink": [
+     [
+      0,
+      1
+     ]
+    ],
+    "smile": [
+     [
+      0,
+      0.15
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      20
+     ]
+    ]
+   }
+  },
+  "stretch": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "front_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "front_L",
+    "front_R",
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 0.9,
+   "blendOut": 0.7,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0.2,
+    "flare": 1
+   },
+   "root": {
+    "height": 1.131,
+    "pitch": -0.485
+   },
+   "look": 0.5,
+   "soles": {
+    "front_L": [
+     0.3611,
+     0.0024,
+     1.3535
+    ],
+    "front_R": [
+     -0.3611,
+     0.0024,
+     1.3535
+    ],
+    "hind_L": [
+     0.3284,
+     -0.0,
+     -0.6234
+    ],
+    "hind_R": [
+     -0.3284,
+     -0.0,
+     -0.6234
+    ]
+   },
+   "face": {
+    "squint": [
+     [
+      0,
+      0.7
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      25
+     ]
+    ]
+   }
+  },
+  "sniff": {
+   "mask": [
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.5,
+   "blendOut": 0.4,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.95,
+    "pitch": -0.12
+   },
+   "look": 0.4,
+   "face": {
+    "nostril_flare": [
+     [
+      0,
+      0.6
+     ]
+    ]
+   }
+  },
+  "stalk": {
+   "mask": [
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.6,
+   "blendOut": 0.5,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.8,
+    "pitch": -0.06
+   },
+   "face": {
+    "pupil": [
+     [
+      0,
+      0.95
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      -12
+     ]
+    ]
+   }
+  },
+  "jump_crouch": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.1,
+   "blendOut": 0.1,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0
+   },
+   "root": {
+    "height": 0.78,
+    "pitch": -0.1
+   }
+  },
+  "jump_launch": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "front_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "front_L",
+    "front_R",
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 0.08,
+   "blendOut": 0.15,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0.7
+   },
+   "look": 0.5,
+   "bodyPitch": 0.087
+  },
+  "jump_tuck": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "front_",
+    "hind_"
+   ],
+   "ownsLegs": [
+    "front_L",
+    "front_R",
+    "hind_L",
+    "hind_R"
+   ],
+   "loop": false,
+   "blendIn": 0.2,
+   "blendOut": 0.15,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 1
+   },
+   "look": 0.5,
+   "bodyPitch": 0.035
+  },
+  "jump_land": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.15,
+   "blendOut": 0.3,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0.6
+   },
+   "look": 0.6,
+   "bodyPitch": -0.209
+  },
+  "plasma_rear": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.15,
+   "blendOut": 0.3,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0
+   },
+   "root": {
+    "height": 1,
+    "pitch": 0.03
+   },
+   "face": {
+    "jaw": [
+     [
+      0,
+      0
+     ],
+     [
+      0.3,
+      0.75
+     ]
+    ],
+    "teeth_out": [
+     [
+      0,
+      0
+     ],
+     [
+      0.15,
+      1
+     ]
+    ],
+    "snarl": [
+     [
+      0,
+      0.7
+     ]
+    ],
+    "pupil": [
+     [
+      0,
+      0
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      45
+     ]
+    ],
+    "plasmaGlow": [
+     [
+      0,
+      0
+     ],
+     [
+      0.3,
+      1
+     ]
+    ]
+   }
+  },
+  "climb_reach": {
+   "mask": [
+    "chest",
+    "neck_",
+    "head"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.4,
+   "blendOut": 0.4,
+   "interrupt": "exit",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0.8
+   }
+  },
+  "scramble_hook": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.15,
+   "blendOut": 0.2,
+   "interrupt": "none",
+   "duration": 0.0,
+   "wings": {
+    "fold": 1,
+    "lift": 0,
+    "flare": 0.8
+   },
+   "look": 0.3
+  },
+  "scratch": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "hind_femur_L",
+    "hind_tibia_L",
+    "hind_metatarsal_L",
+    "hind_toes_L"
+   ],
+   "ownsLegs": [
+    "hind_L"
+   ],
+   "loop": true,
+   "blendIn": 0.1,
+   "blendOut": 0.1,
+   "interrupt": "exit",
+   "duration": 0.9333,
+   "wings": {
+    "fold": 1,
+    "lift": 0.4,
+    "flare": 0
+   },
+   "look": 0.2,
+   "loopStart": 0.4,
+   "exit": "reverse",
+   "soles": {
+    "hind_L": [
+     0.3418,
+     0.0234,
+     -0.411
+    ]
+   },
+   "face": {
+    "squint": [
+     [
+      0,
+      0.8
+     ]
+    ],
+    "smile": [
+     [
+      0,
+      0.35
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      15
+     ]
+    ]
+   }
+  },
+  "shake": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_",
+    "ear_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.1,
+   "blendOut": 0.2,
+   "interrupt": "exit",
+   "duration": 1.2,
+   "wings": {
+    "fold": 1.0,
+    "lift": 0.0,
+    "flare": 0.0
+   },
+   "root": {
+    "height": 0.94,
+    "pitch": 0.0
+   },
+   "look": 0.0,
+   "face": {
+    "squint": [
+     [
+      0,
+      0.6
+     ]
+    ]
+   }
+  },
+  "yawn": {
+   "mask": [
+    "neck_",
+    "head"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.2,
+   "blendOut": 0.3,
+   "interrupt": "exit",
+   "duration": 2.4,
+   "wings": {
+    "fold": 1.0,
+    "lift": 0.0,
+    "flare": 0.0
+   },
+   "look": 0.4,
+   "face": {
+    "jaw": [
+     [
+      0,
+      0
+     ],
+     [
+      0.5,
+      0.25
+     ],
+     [
+      1.1,
+      0.95
+     ],
+     [
+      1.7,
+      0.95
+     ],
+     [
+      2.3,
+      0
+     ]
+    ],
+    "squint": [
+     [
+      0,
+      0
+     ],
+     [
+      0.8,
+      0.85
+     ],
+     [
+      1.8,
+      0.85
+     ],
+     [
+      2.4,
+      0
+     ]
+    ],
+    "smile": [
+     [
+      0.8,
+      0
+     ],
+     [
+      1.2,
+      0.6
+     ],
+     [
+      1.7,
+      0.6
+     ],
+     [
+      2.2,
+      0
+     ]
+    ],
+    "ears": [
+     [
+      0,
+      0
+     ],
+     [
+      0.9,
+      30
+     ],
+     [
+      1.9,
+      30
+     ],
+     [
+      2.4,
+      0
+     ]
+    ]
+   }
+  },
+  "scramble_up": {
+   "mask": [
+    "spine_",
+    "chest",
+    "neck_",
+    "head",
+    "tail_"
+   ],
+   "ownsLegs": [],
+   "loop": false,
+   "blendIn": 0.1,
+   "blendOut": 0.2,
+   "interrupt": "none",
+   "duration": 0.9,
+   "wings": {
+    "fold": 1.0,
+    "lift": 0.0,
+    "flare": 0.8
+   },
+   "look": 0.3
   }
  }
 }
