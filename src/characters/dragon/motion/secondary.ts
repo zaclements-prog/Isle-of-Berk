@@ -98,11 +98,12 @@ export class SecondaryMotion {
     this.time += dt;
     const n = this.tail.length;
     const latAccel = inp.speed * inp.yawRate;
+    const vertAccel = clamp(inp.verticalAccel, -t.tail.vertAccelMax, t.tail.vertAccelMax);
     for (let k = 0; k < n; k++) {
       const f = (k + 1) / n;
       const omega = lerp(t.tail.omegaBase, t.tail.omegaTip, k / Math.max(n - 1, 1));
       const yawT = clamp((t.tail.turnGain * inp.yawRate + t.tail.latAccelGain * latAccel) * f, -this.tailYawLimit, this.tailYawLimit);
-      const pitchT = clamp(-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight - t.tail.vertAccelGain * inp.verticalAccel * f,
+      const pitchT = clamp(-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight - t.tail.vertAccelGain * vertAccel * f,
         -this.tailPitchLimit, this.tailPitchLimit);
       stepSpring(this.tailYaw[k], yawT, omega, t.tail.zeta, dt);
       stepSpring(this.tailPitch[k], pitchT, omega, t.tail.zeta, dt);

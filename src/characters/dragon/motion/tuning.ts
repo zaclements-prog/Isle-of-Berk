@@ -83,6 +83,11 @@ export interface MotionTuning {
     defaultRadius: number;
     /** Half-life (s) of the smoothing on the pelvis vertical acceleration that lags the tail (vertAccelGain). */
     vertAccelHalfLife: number;
+    /**
+     * Cap (m/s²) on the vertical acceleration the tail lags. Footfalls stay well inside it (walk to gallop: ±3 at the
+     * 99th percentile); a leap's free fall (−9.8) and its landing (spikes of 200+) would curl the tail into a loop.
+     */
+    vertAccelMax: number;
   };
   ears: { omega: number; zeta: number; twitchMin: number; twitchMax: number; twitchImpulse: number; gallopBackDeg: number };
   fins: {
@@ -245,7 +250,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   tail: {
     omegaBase: 14, omegaTip: 6, zeta: 0.45, droopDeg: 1.5, turnGain: 0.1, latAccelGain: 0.02, vertAccelGain: 0.015,
-    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05, vertAccelHalfLife: 0.05,
+    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05, vertAccelHalfLife: 0.05, vertAccelMax: 4,
   },
   ears: { omega: 16, zeta: 0.35, twitchMin: 1.5, twitchMax: 5, twitchImpulse: 5, gallopBackDeg: 25 },
   fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5, twitchMin: 2, twitchMax: 6, twitchImpulse: 3 },

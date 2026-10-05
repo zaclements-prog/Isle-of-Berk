@@ -20,6 +20,8 @@ export interface DragonAction {
   readonly aggressive: boolean;
   /** Called every step in DragonCharacter.hooks.beforeMove, after the behaviours. `standing` = posture settled on stand. */
   step(d: DragonCharacter, dt: number, standing: boolean): void;
+  /** Drop whatever it is doing at once (a respawn, a lab script start): no layer, demand or scripted body left over. */
+  reset?(d: DragonCharacter): void;
 }
 
 export interface BrainOptions {
@@ -71,9 +73,10 @@ export class DragonBrain {
     return this.behaviours.force(name);
   }
 
-  /** Standing and idle-fresh, no gesture (the lab page calls it when a script starts). */
+  /** Standing and idle-fresh, no gesture or action (the lab page calls it when a script starts). */
   reset(): void {
     this.behaviours.reset();
+    for (const a of this.actions) a.reset?.(this.d);
   }
 
   private think(d: DragonCharacter, dt: number): void {

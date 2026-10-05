@@ -58,6 +58,17 @@ export class PlasmaAction implements DragonAction {
     return this.phase !== 'idle' || this.linger > 0;
   }
 
+  /** Abandon the blast at once (a respawn): no rear-up layer, pending shot, cooldown or lingering aggression. */
+  reset(d: DragonCharacter): void {
+    if (d.layers.has('plasma_rear')) d.layers.set('plasma_rear', 0);
+    this.phase = 'idle';
+    this.t = 0;
+    this.cool = 0;
+    this.linger = 0;
+    this.skid = 0;
+    this.shots.length = 0;
+  }
+
   /** World position of the mouth anchor (the muzzle). */
   mouth(d: DragonCharacter, out: THREE.Vector3): THREE.Vector3 {
     return d.skeleton.toWorld(this.mouthBone, this.mouthLocal, out);

@@ -8,6 +8,7 @@ import { lerp, rotY, smoothstep } from '../motion/math';
 type JumpTuning = MotionTuning['jump'];
 const UP = new THREE.Vector3(0, 1, 0);
 const ORDER = 2;
+const JUMP_LAYERS: readonly string[] = ['jump_crouch', 'jump_launch', 'jump_tuck', 'jump_land'];
 const _p = new THREE.Vector3();
 const _t = new THREE.Vector3();
 const _dir = new THREE.Vector3();
@@ -40,6 +41,22 @@ export class JumpAction implements DragonAction {
 
   get active(): boolean {
     return this.phase !== 'idle';
+  }
+
+  /** Abandon the jump at once (a respawn): no jump layer, wing demand, suspended climbing or scripted body left behind. */
+  reset(d: DragonCharacter): void {
+    if (this.phase !== 'idle') {
+      for (const name of JUMP_LAYERS) if (d.layers.has(name)) d.layers.set(name, 0);
+      d.wings.demand('jump', null);
+      d.climb.suspended = false;
+      d.body.override.active = false;
+      d.body.override.snap = false;
+      d.mods.scripted = false;
+      d.planner.autoStep = true;
+    }
+    this.phase = 'idle';
+    this.t = 0;
+    this.cool = 0;
   }
 
   step(d: DragonCharacter, dt: number, standing: boolean): void {
