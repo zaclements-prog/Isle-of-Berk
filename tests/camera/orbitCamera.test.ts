@@ -36,6 +36,15 @@ describe('OrbitCamera', () => {
     expect(c.position.z).toBeGreaterThan(-3);
     expect(w.closestPoint(c.position, T.radius * 0.5)).toBeNull();
   });
+  it('keeps its distance when its target sits inside a big surface bounds but well clear of it (he lies down)', () => {
+    // one big sloped triangle whose bounding box holds the whole camera arm; the surface itself is 13+ m away
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([50, 0, 0, -50, 0, 0, 0, 50, -50], 3));
+    const c = new OrbitCamera(T, CollisionWorld.fromObjects([new THREE.Mesh(g)]));
+    const f = follow({ chest: new THREE.Vector3(0, 1, -20) });
+    c.reset(f);
+    settle(c, f, 1);
+    expect(c.currentDistance).toBeCloseTo(T.distance, 3);
+  });
   it('eases back out slowly when the obstacle is gone', () => {
     const c = new OrbitCamera(T, wallBehind());
     const f = follow();

@@ -76,6 +76,13 @@ describe('CollisionWorld', () => {
     expect(w.closestPoint(V(0, 1, 4), 3)!.distance).toBeCloseTo(Math.SQRT2 * 1.5, 1);
   });
 
+  it('is not stopped at its start by a surface farther away than its radius (the start inside that surface bounds)', () => {
+    // one sloped triangle: its bounding box holds the start, the triangle itself is 2.1 m away and the path leads off it
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-5, 0, 0, 5, 0, 0, 0, 5, 5], 3));
+    const w = CollisionWorld.fromObjects([new THREE.Mesh(g)]);
+    expect(w.sphereCast(V(0, 1, 4), V(0, 1, 10), 0.3)).toBe(1);
+  });
+
   it('returns 0 when starting inside collision', () => {
     const w = wallWorld(2);
     const stats = { queries: 0 };
