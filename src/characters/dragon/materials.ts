@@ -21,6 +21,8 @@ export interface DragonMaterials {
     rimColor: { value: THREE.Color }; rimStrength: { value: number }; scaleBump: { value: number };
     plasmaGlow: { value: number }; pupil: { value: number }; eyeGlow: { value: number }; irisDepth: { value: number };
     sunDir: { value: THREE.Vector3 };
+    /** Iris offset in eye-UV units (x toward the dragon's left, y down): the eyes' gaze (M6). */
+    gaze: { value: THREE.Vector2 };
   };
 }
 
@@ -108,8 +110,9 @@ function eyeHook(m: THREE.Material, u: DragonMaterials['uniforms']): void {
     shader.uniforms.berkPupil = u.pupil;
     shader.uniforms.berkEyeGlow = u.eyeGlow;
     shader.uniforms.berkIrisDepth = u.irisDepth;
+    shader.uniforms.berkEyeGaze = u.gaze;
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float berkPupil;\nuniform float berkEyeGlow;\nuniform float berkIrisDepth;\nvec3 berkEyeIris; float berkEyeIrisMask;')
+      .replace('#include <common>', '#include <common>\nuniform float berkPupil;\nuniform float berkEyeGlow;\nuniform float berkIrisDepth;\nuniform vec2 berkEyeGaze;\nvec3 berkEyeIris; float berkEyeIrisMask;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // parallax: the iris sits behind the cornea, so shift its lookup against the view direction (cotangent frame)
@@ -122,7 +125,7 @@ function eyeHook(m: THREE.Material, u: DragonMaterials['uniforms']): void {
           float invmax = inversesqrt(max(max(dot(eT, eT), dot(eB, eB)), 1e-12));
           vec3 vTs = normalize(transpose(mat3(eT * invmax, eB * invmax, eN)) * normalize(vViewPosition));
           vec2 uvP = vUv - vTs.xy / max(vTs.z, 0.3) * berkIrisDepth;
-          vec2 e = uvP * 2.0 - 1.0;
+          vec2 e = uvP * 2.0 - 1.0 - berkEyeGaze;
           // Blender wrote v = -1 on the back hemisphere; the glTF export flips V (v' = 1 - v), so it arrives as 2
           if (vUv.y < -0.01 || vUv.y > 1.01) { diffuseColor.rgb = vec3(0.02); berkEyeIrisMask = 0.0; berkEyeIris = vec3(0.0); }
           else {
@@ -154,6 +157,7 @@ export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m
     // scaleBump: bump height in metres. 1.5 mm keeps the ~2.6 cm scales a fine texture; 3 mm read as beads.
     rimColor: { value: new THREE.Color(0.55, 0.68, 0.95) }, rimStrength: { value: 0.35 }, scaleBump: { value: 0.0015 },
     plasmaGlow: { value: 0 }, pupil: { value: 0.15 }, eyeGlow: { value: 0.35 }, irisDepth: { value: 0.08 }, sunDir: { value: opts.sunDir },
+    gaze: { value: new THREE.Vector2() },
   };
   // Half the dielectric reflectance (specularIntensity 0.5 → F0 0.02, F90 0.5): at full F0 the sky reflection alone
   // lifts the lit near-black skin to slate grey (tuned in the viewer under the Neutral curve at exposure 1.8).
