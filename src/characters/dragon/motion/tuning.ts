@@ -83,6 +83,11 @@ export interface MotionTuning {
     defaultRadius: number;
     /** Half-life (s) of the smoothing on the pelvis vertical acceleration that lags the tail (vertAccelGain). */
     vertAccelHalfLife: number;
+    /**
+     * Cap (m/s²) on the vertical acceleration the tail lags. Footfalls stay well inside it (walk to gallop: ±3 at the
+     * 99th percentile); a leap's free fall (−9.8) and its landing (spikes of 200+) would curl the tail into a loop.
+     */
+    vertAccelMax: number;
   };
   ears: { omega: number; zeta: number; twitchMin: number; twitchMax: number; twitchImpulse: number; gallopBackDeg: number };
   fins: {
@@ -104,7 +109,7 @@ export interface MotionTuning {
   };
   climb: {
     climbMinDeg: number; wallMinDeg: number; climbSpeed: number; scrambleSpeed: number; maxTiltDeg: number;
-    cadenceScale: number; strideScale: number; swingScale: number; wingsOpen: number;
+    cadenceScale: number; strideScale: number; swingScale: number;
     /**
      * dropMin: he hops down drops deeper than this (m). At most planner.maxStepDown, or deeper drops strand his paws;
      * no deeper than a step up, or walking down one his forepaws' swing and his chest catch the edge.
@@ -165,6 +170,47 @@ export interface MotionTuning {
      */
     foreRise: number; foreCross: number; foreDrop: number; hindRise: number; hindCross: number; hindDrop: number;
   };
+  /** Wing fold/flare/lift springs (M6 WingController); climbFlare = the spec §6.6 "wings open ~20%" while climbing. */
+  wings: { omega: number; climbFlare: number };
+  /** Library-pose legs (M6): breathGainPosed = breathing depth while the front legs are posed (lying: shallower); a
+   *  posed paw below the ground hands its leg to the IK in full by groundGuard metres of depth. */
+  pose: { breathGainPosed: number; groundGuard: number };
+  /** Face and mood (M6, spec §6.12). pupilByMood / earsByMood follow MOODS: calm, curious, excited, tired, aggressive. */
+  face: {
+    blinkMin: number; blinkMax: number; doubleBlink: number; doubleGap: number; blinkClose: number; blinkHold: number; blinkOpen: number;
+    turnBlinkRate: number; turnBlinkGap: number; moodOmega: number; pupilOmega: number; earOmega: number;
+    tiredFrom: number; tiredFull: number; tiredLid: number; sunSquint: number; sunNarrow: number;
+    contentSmile: number; contentPupil: number; pantJaw: number; eyeGlow: number; eyeGlowAggressive: number;
+    pupilByMood: number[]; earsByMood: number[];
+  };
+  /** Personality idles (M6, spec §6.11): times s, impulses rad/s. */
+  behaviour: {
+    thinkEvery: number; restWeight: number; holdMin: number; holdMax: number; watchMin: number; watchMax: number;
+    stretchHold: number; glanceHold: number; lookAroundHold: number; lookAroundYawDeg: number; twitchImpulse: number; flickImpulse: number;
+    sleepLookOmega: number; reverseRate: number;
+  };
+  /** The jump (M6, spec §6.13): m, s, m/s. tuckAt: flight fraction; releaseTime / landLead: s before touchdown;
+   *  frontLag / hindLag: s after the body's touchdown that the front / hind paws plant (front first). */
+  jump: {
+    crouchTime: number; apex: number; gravity: number; minForward: number; wallMargin: number; maxFlight: number;
+    tuckAt: number; releaseTime: number; landLead: number; frontLag: number; hindLag: number; minLift: number;
+    landImpulse: number; recoverHold: number; recoverTime: number; cooldown: number;
+    /** Body behind the origin (hind paws, hips) and paw-level clearance the arc keeps over the ground (m). */
+    rearExtent: number; clearance: number;
+    /** Speed (m/s) a landing keeps when no direction is held. */
+    landCarry: number;
+  };
+  /** The plasma blast (M6, spec §6.13): deg, s, m/s, m. recoilDrop: suspension dip (m/s); recoilKick: head (rad/s). */
+  plasma: {
+    turnFirstDeg: number; chargeFacingDeg: number; turnTimeout: number; chargeTime: number; cooldown: number;
+    recoilDrop: number; recoilKick: number; skidSpeed: number; skidDecay: number; lingerAggro: number;
+    boltSpeed: number; boltRadius: number; boltRange: number; shake: number; shakeTime: number;
+  };
+  /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
+  attention: {
+    maxDist: number; near: number; movingSpeed: number; moveCone: number; stillCone: number; movingFactor: number;
+    motionBonus: number; enter: number; exit: number; switchRatio: number; dwell: number; bored: number;
+  };
   camera: {
     distance: number; minDistance: number; maxDistance: number; pitchDeg: number; minPitchDeg: number; maxPitchDeg: number;
     sensitivity: number; wheelScale: number; followOmega: number; lookAhead: number;
@@ -204,22 +250,49 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   tail: {
     omegaBase: 14, omegaTip: 6, zeta: 0.45, droopDeg: 1.5, turnGain: 0.1, latAccelGain: 0.02, vertAccelGain: 0.015,
-    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05, vertAccelHalfLife: 0.05,
+    gallopRaiseDeg: 2.5, clearance: 0.04, defaultRadius: 0.05, vertAccelHalfLife: 0.05, vertAccelMax: 4,
   },
   ears: { omega: 16, zeta: 0.35, twitchMin: 1.5, twitchMax: 5, twitchImpulse: 5, gallopBackDeg: 25 },
   fins: { omega: 12, zeta: 0.4, flutterDeg: 3, flutterHz: 3, phaseStep: 0.7, flutterFullSpeed: 5, twitchMin: 2, twitchMax: 6, twitchImpulse: 3 },
   breath: { calmPerMin: 12, exertedPerMin: 40, recoverTime: 20, amplitudeDeg: 0.8, exertionFullSpeed: 10 },
   climb: {
     climbMinDeg: 45, wallMinDeg: 70, climbSpeed: 1.8, scrambleSpeed: 3, maxTiltDeg: 60, cadenceScale: 0.8, strideScale: 0.7,
-    swingScale: 1.5, wingsOpen: 0.2, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 0.6, hopUpSpeed: 1.2, probeAhead: 1.2,
+    swingScale: 1.5, ledgeMax: 2.5, scrambleTime: 0.9, dropMin: 0.6, hopUpSpeed: 1.2, probeAhead: 1.2,
     dropAhead: 0.35, hopClear: 0.3, scrambleLand: 0.9, topFlatness: 0.15, blendTime: 0.12, dropMax: 3,
     scrambleGrip: 0.12, tiltOmega: 14, hopSpeed: 3.5, hopSpeedMax: 6, hopTuck: 0.3, hopGather: 0.15, hopReach: 0.25, hopPitchDeg: 10,
   },
   scramble: {
-    hookBack: 0.45, hookUp: 0.5, maxPitchDeg: 40, leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6, pullEnd: 0.65, hindLand: 0.85,
+    hookBack: 0.45, hookUp: 0.575, maxPitchDeg: 40, leapEnd: 0.3, leapUp: 0.1, pitchLead: 0.6, pullEnd: 0.65, hindLand: 0.85,
     pullRise: 0.62, pullAhead: 0.05, overReach: 0.5, pullPitchDeg: 10, overPitchLeadDeg: 15, overBack: -0.45, overUp: 0.4,
     overPitchDeg: 20, foreStep1: 0.47, foreStep1End: 0.62, foreStep2: 0.76, stepEnd: 0.9, stepLift: 0.12, clear: 0.15,
     foreRise: 0.6, foreCross: 0.85, foreDrop: 0.8, hindRise: 0.75, hindCross: 0.92, hindDrop: 0.88,
+  },
+  wings: { omega: 8, climbFlare: 0.8 },
+  pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
+  face: {
+    blinkMin: 2, blinkMax: 6, doubleBlink: 0.18, doubleGap: 0.12, blinkClose: 0.07, blinkHold: 0.04, blinkOpen: 0.12,
+    turnBlinkRate: 2.5, turnBlinkGap: 0.8, moodOmega: 1.2, pupilOmega: 6, earOmega: 5,
+    tiredFrom: 40, tiredFull: 90, tiredLid: 0.35, sunSquint: 0.3, sunNarrow: 0.35,
+    contentSmile: 0.7, contentPupil: 0.2, pantJaw: 0.18, eyeGlow: 0.35, eyeGlowAggressive: 0.4,
+    pupilByMood: [0.5, 0.92, 0.7, 0.6, 0.04], earsByMood: [0, -15, -6, 12, 45],
+  },
+  behaviour: {
+    thinkEvery: 0.5, restWeight: 2.5, holdMin: 1.8, holdMax: 3, watchMin: 3, watchMax: 6, stretchHold: 1.3, glanceHold: 1.4,
+    lookAroundHold: 0.9, lookAroundYawDeg: 55, twitchImpulse: 7, flickImpulse: 4, sleepLookOmega: 6, reverseRate: 1.5,
+  },
+  jump: {
+    crouchTime: 0.12, apex: 2, gravity: 9.81, minForward: 1.5, wallMargin: 0.3, maxFlight: 2.5,
+    tuckAt: 0.3, releaseTime: 0.28, landLead: 0.3, frontLag: 0.02, hindLag: 0.1, minLift: 0.25,
+    landImpulse: 1.2, recoverHold: 0.2, recoverTime: 0.35, cooldown: 0.3, rearExtent: 1.1, clearance: 0.1, landCarry: 0.8,
+  },
+  plasma: {
+    turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
+    recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
+    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35,
+  },
+  attention: {
+    maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,
+    enter: 0.3, exit: 0.15, switchRatio: 1.6, dwell: 4.5, bored: 12,
   },
   camera: {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,

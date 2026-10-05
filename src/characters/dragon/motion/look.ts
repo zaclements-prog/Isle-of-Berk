@@ -39,6 +39,8 @@ export class LookController {
   readonly headPitch: SpringState = { x: 0, v: 0 };
   readonly eyeYaw: SpringState = { x: 0, v: 0 };
   readonly eyePitch: SpringState = { x: 0, v: 0 };
+  /** 0…1 scale on the applied head/neck turn (M6: 0 while he sleeps, so the curled head stays put). */
+  gain = 1;
   private idle = 0;
   private nextGlance: number;
   private glanceLeft = 0;
@@ -95,7 +97,10 @@ export class LookController {
       }
     }
     _d.subVectors(this.target, inp.headPos).applyQuaternion(_qi.copy(inp.bodyQuat).invert());
-    const yaw = clamp(Math.atan2(_d.x, _d.z), -deg(t.yawLimitDeg), deg(t.yawLimitDeg));
+    let yawRaw = Math.atan2(_d.x, _d.z);
+    // a target behind him: stay on the side the head already turned to (no flip-flop across ±180°)
+    if (Math.abs(yawRaw) > deg(t.yawLimitDeg) && Math.abs(this.headYaw.x) > 0.2) yawRaw = Math.sign(this.headYaw.x) * Math.abs(yawRaw);
+    const yaw = clamp(yawRaw, -deg(t.yawLimitDeg), deg(t.yawLimitDeg));
     const pitch = clamp(Math.atan2(_d.y, Math.hypot(_d.x, _d.z)) - this.headBindPitch, -deg(t.pitchLimitDeg), deg(t.pitchLimitDeg));
     stepAngleSpring(this.headYaw, yaw, t.headOmega, 1, dt);
     stepSpring(this.headPitch, pitch, t.headOmega, 1, dt);
@@ -107,8 +112,8 @@ export class LookController {
   apply(s: RigSkeleton): void {
     for (let k = 0; k < this.chain.length; k++) {
       const w = this.t.weights[k] ?? 1 / this.chain.length;
-      const yaw = clamp(this.headYaw.x * w, -this.yawLimit, this.yawLimit);
-      const pitch = clamp(this.headPitch.x * w, -this.pitchLimit, this.pitchLimit);
+      const yaw = clamp(this.headYaw.x * w * this.gain, -this.yawLimit, this.yawLimit);
+      const pitch = clamp(this.headPitch.x * w * this.gain, -this.pitchLimit, this.pitchLimit);
       s.localQuat[this.chain[k]].multiply(_qa.setFromAxisAngle(AZ, yaw)).multiply(_qb.setFromAxisAngle(AX, pitch));
     }
   }

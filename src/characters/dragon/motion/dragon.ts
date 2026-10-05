@@ -9,13 +9,16 @@ import { FootPlanner, type PlannerBody } from './footPlanner';
 import { GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
 import { LegRig } from './legs';
 import { LookController } from './look';
-import { PoseLayerStack, withFoldClip, type PosesMeta } from './poseLayers';
+import { ClipPose, PoseLayerStack, withFoldClip, type PosesMeta } from './poseLayers';
 import { BodyProxies } from './proxies';
 import type { MotionRig } from './rigTypes';
 import { SecondaryMotion } from './secondary';
+import { WingController } from './wings';
 import { RigSkeleton } from './skeleton';
 import { DEFAULT_TUNING, mergeTuning, type MotionTuning } from './tuning';
 import { dampFactor, deg, rotY } from './math';
+
+const _ik = new THREE.Quaternion();
 
 export interface DragonOptions {
   rig: MotionRig;
@@ -25,6 +28,8 @@ export interface DragonOptions {
   clips?: ReadonlyMap<string, THREE.AnimationClip>;
   posesMeta?: PosesMeta;
   seed?: number;
+  /** Pose whose legs are the midpoint of every IK↔pose leg blend (paws lift instead of sweeping through the ground). */
+  legTuckClip?: string;
 }
 
 export interface DragonFrameInput {
@@ -68,6 +73,9 @@ export class DragonCharacter {
   readonly body: BodySolver;
   readonly legs: LegRig;
   readonly layers: PoseLayerStack;
+  readonly wings: WingController;
+  /** Per leg (LEG_KEYS order): how strongly pose layers drive it instead of the leg IK (0…1). */
+  readonly own = [0, 0, 0, 0];
   readonly look: LookController;
   readonly secondary: SecondaryMotion;
   readonly proxies: BodyProxies;
@@ -77,6 +85,8 @@ export class DragonCharacter {
   readonly hooks: { beforeMove: DragonHook[]; preFinals: DragonHook[]; face: DragonHook[] } = { beforeMove: [], preFinals: [], face: [] };
   time = 0;
   nanResets = 0;
+  /** The camera position of the current step (hooks read it: glance at the camera). */
+  readonly cameraPos = new THREE.Vector3();
   verticalAccel = 0;
   private readonly head: number;
   private readonly chest: number;
@@ -107,6 +117,21 @@ export class DragonCharacter {
     planted: [true, true, true, true],
     s: [1, 1, 1, 1],
   };
+  private readonly legBones: number[][];
+  private readonly legSave: THREE.Quaternion[][];
+  private readonly legPosed: THREE.Quaternion[][];
+  private readonly guardSole = new THREE.Vector3();
+  private readonly guardHit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
+  private readonly guardKeep = { stretch: [0, 0, 0, 0], shortfall: [0, 0, 0, 0], margin: [0, 0, 0, 0] };
+  private readonly guardTargets = {
+    sole: [0, 1, 2, 3].map(() => new THREE.Vector3()),
+    normal: [0, 1, 2, 3].map(() => new THREE.Vector3(0, 1, 0)),
+    planted: [true, true, true, true],
+    s: [1, 1, 1, 1],
+  };
+  private readonly guardDepth = [0, 0, 0, 0];
+  /** Per leg, the tucked-leg locals (null without the clip: plain slerp). */
+  private readonly legTuck: THREE.Quaternion[][] | null;
   private prevPelvisY = 0;
   private prevVy = 0;
   /** Proxy indices of the head, muzzle and neck, and each proxy's forward lever arm about the pelvis at bind (m). */
@@ -136,6 +161,7 @@ export class DragonCharacter {
     this.layers = new PoseLayerStack(this.skeleton, fold.clips, fold.meta);
     if (this.layers.has('wingFold')) this.layers.set('wingFold', 1, 1);
     else if (this.layers.has('wings_folded')) this.layers.set('wings_folded', 1);
+    this.wings = new WingController(opts.rig, this.skeleton, this.layers, opts.posesMeta ?? { clips: {} }, t.wings);
     const rng = mulberry32(opts.seed ?? 1);
     this.look = new LookController(opts.rig, this.skeleton, t.look, rng);
     this.secondary = new SecondaryMotion(opts.rig, this.skeleton, opts.world, t, rng);
@@ -144,6 +170,17 @@ export class DragonCharacter {
       speedCap: Infinity, gait: NO_GAIT_MODS, maxTiltDeg: t.body.maxTiltDeg, up: new THREE.Vector3(0, 1, 0), scripted: false,
       wallNormalY: t.body.wallNormalY,
     };
+    this.legBones = this.legs.legs.map((l) => l.bones);
+    this.legSave = this.legBones.map((b) => b.map(() => new THREE.Quaternion()));
+    this.legPosed = this.legBones.map((b) => b.map(() => new THREE.Quaternion()));
+    const tuckClip = opts.clips?.get(opts.legTuckClip ?? 'jump_tuck');
+    if (tuckClip) {
+      const pose = new ClipPose(tuckClip, this.skeleton, ['front_', 'hind_']);
+      const qs = pose.bones.map(() => new THREE.Quaternion());
+      pose.sample(0, qs);
+      const byBone = new Map(pose.bones.map((b, k) => [b, qs[k]]));
+      this.legTuck = this.legBones.map((bones) => bones.map((b) => (byBone.get(b) ?? this.skeleton.bindLocalQuat[b]).clone()));
+    } else this.legTuck = null;
     this.front = this.proxies.items.flatMap((p, k) => (FRONT_PROXIES.includes(p.name) ? [k] : []));
     const jaw = opts.rig.jaw;
     const jawBone = jaw?.restCloseRad ? this.skeleton.id(jaw.bone) : -1;
@@ -173,7 +210,10 @@ export class DragonCharacter {
     const s = this.skeleton;
     this.resetPose();
     this.body.apply(s);
+    this.wings.update(0);
+    this.wings.settle();
     this.layers.apply(s);
+    this.wings.apply(s);
     s.fk();
     this.fillTargets();
     this.legs.solve(s, this.targets, this.body.pose.bodyQuat);
@@ -193,9 +233,14 @@ export class DragonCharacter {
     const t = this.tuning;
     const s = this.skeleton;
     s.snapshot();
+    this.cameraPos.copy(frame.cameraPos);
     // 1) input → intent (hooks may adjust mods first: climbing, actions)
     this.controller.read(frame.input, frame.cameraYaw, t.controller, this.intent);
     for (const h of this.hooks.beforeMove) h(this, dt);
+    // pose layers set by behaviours/actions decide which legs they drive; the planner leaves those paws alone
+    this.layers.legOwnership(this.own);
+    for (let i = 0; i < 4; i++) this.planner.paws[i].posed = this.own[i] > 0;
+    this.secondary.breathGain = 1 - (1 - t.pose.breathGainPosed) * Math.max(this.own[1], this.own[3]);
     // 2) kinematics; the body proxies slide along steep geometry (skipped while a scripted action owns the body)
     if (!this.mods.scripted) {
       this.kin.plan(this.intent, dt, t.controller, this.mods.speedCap);
@@ -221,7 +266,8 @@ export class DragonCharacter {
     this.planner.setLegs(this.hips, this.reach);
     this.planner.update(this.plannerBody(), this.gait, this.strain, dt);
     this.kin.pos.y = (this.planner.support(0) + this.planner.support(1) + this.planner.support(2) + this.planner.support(3)) / 4;
-    // 5) body
+    // 5) body (library poses with a root blend the placement)
+    this.poseBody();
     // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
     for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
     const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
@@ -230,7 +276,9 @@ export class DragonCharacter {
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
     this.resetPose();
     this.body.apply(s);
+    this.wings.update(dt);
     this.layers.apply(s);
+    this.wings.apply(s);
     this.secondary.applyBreathing(s);
     s.fk();
     for (const h of this.hooks.preFinals) h(this, dt);
@@ -241,9 +289,12 @@ export class DragonCharacter {
     }, dt);
     this.look.apply(s);
     s.fk();
+    this.saveOwnedLegs();
     this.fillTargets();
     this.legs.solve(s, this.targets, pose.bodyQuat);
+    this.blendOwnedLegs();
     s.fk();
+    this.guardOwnedLegs(pose.bodyQuat);
     this.secondary.applyAppendages(s);
     // 8) face (M6)
     for (const h of this.hooks.face) h(this, dt);
@@ -272,6 +323,10 @@ export class DragonCharacter {
 
   chestPos(out: THREE.Vector3): THREE.Vector3 {
     return out.copy(this.skeleton.worldPos[this.chest]);
+  }
+
+  headPos(out: THREE.Vector3): THREE.Vector3 {
+    return out.copy(this.skeleton.worldPos[this.head]);
   }
 
   /**
@@ -370,6 +425,95 @@ export class DragonCharacter {
       n++;
     }
     return n ? sum / n : -Infinity;
+  }
+
+  /** Body placement from the live pose layers that carry a root (weighted mean over those layers). */
+  private poseBody(): void {
+    let w = 0;
+    let h = 0;
+    let p = 0;
+    for (const l of this.layers.active()) {
+      const r = l.meta.root;
+      if (!r) continue;
+      w += l.weight;
+      h += l.weight * r.height;
+      p += l.weight * r.pitch;
+    }
+    const b = this.body.posture;
+    b.weight = Math.min(1, w);
+    if (w > 0) {
+      b.height = this.kin.pos.y + h / w;
+      b.pitch = p / w;
+    }
+  }
+
+  /** Keep the layered pose of every owned leg before the leg IK overwrites it. */
+  private saveOwnedLegs(): void {
+    const s = this.skeleton;
+    for (let i = 0; i < 4; i++) {
+      if (this.own[i] <= 0) continue;
+      this.legBones[i].forEach((b, k) => this.legSave[i][k].copy(s.localQuat[b]));
+    }
+  }
+
+  /**
+   * Owned legs: the IK solution blends to the layered pose by the ownership weight — through the tucked leg
+   * (IK → tuck for w < ½, tuck → pose above), so a paw lifts and re-places instead of sweeping through the ground.
+   */
+  private blendOwnedLegs(): void {
+    const s = this.skeleton;
+    for (let i = 0; i < 4; i++) {
+      const w = this.own[i];
+      if (w <= 0) continue;
+      const tuck = this.legTuck?.[i];
+      this.legBones[i].forEach((b, k) => {
+        if (!tuck || w >= 1) s.localQuat[b].slerp(this.legSave[i][k], w);
+        else if (w < 0.5) s.localQuat[b].slerp(tuck[k], 2 * w);
+        else s.localQuat[b].copy(tuck[k]).slerp(this.legSave[i][k], 2 * w - 1);
+      });
+    }
+  }
+
+  /**
+   * A posed paw must not sink: wherever an owned sole ends below the ground (a pose held while the body moves, a blend
+   * path), that leg is re-solved by the IK onto the ground and blended in by depth / pose.groundGuard (full at 2 cm), so
+   * no posed paw goes more than a few millimetres under. The IK's bookkeeping (stretch, shortfall, margin) is kept.
+   */
+  private guardOwnedLegs(bodyQuat: THREE.Quaternion): void {
+    const s = this.skeleton;
+    let any = false;
+    for (let i = 0; i < 4; i++) {
+      this.guardDepth[i] = 0;
+      if (this.own[i] <= 0) continue;
+      this.legs.soleWorld(i, s, this.guardSole);
+      const g = this.world.groundAt(this.guardSole.x, this.guardSole.z, this.guardSole.y + 1, 3, this.guardHit);
+      if (!g || g.point.y <= this.guardSole.y) continue;
+      this.guardDepth[i] = g.point.y - this.guardSole.y;
+      this.guardTargets.sole[i].set(this.guardSole.x, g.point.y + 0.002, this.guardSole.z);
+      this.guardTargets.normal[i].copy(g.normal);
+      any = true;
+    }
+    if (!any) return;
+    const k = this.guardKeep;
+    for (let i = 0; i < 4; i++) {
+      k.stretch[i] = this.legs.stretch[i];
+      k.shortfall[i] = this.legs.shortfall[i];
+      k.margin[i] = this.legs.margin[i];
+      this.legBones[i].forEach((b, n) => this.legPosed[i][n].copy(s.localQuat[b]));
+      if (this.guardDepth[i] === 0) this.legs.soleWorld(i, s, this.guardTargets.sole[i]);
+    }
+    this.legs.solve(s, this.guardTargets, bodyQuat);
+    for (let i = 0; i < 4; i++) {
+      const c = Math.min(1, this.guardDepth[i] / this.tuning.pose.groundGuard);
+      this.legBones[i].forEach((b, n) => {
+        if (c > 0) s.localQuat[b].copy(_ik.copy(this.legPosed[i][n]).slerp(s.localQuat[b], c));
+        else s.localQuat[b].copy(this.legPosed[i][n]);
+      });
+      this.legs.stretch[i] = k.stretch[i];
+      this.legs.shortfall[i] = k.shortfall[i];
+      this.legs.margin[i] = k.margin[i];
+    }
+    s.fk();
   }
 
   private plannerBody(): PlannerBody {

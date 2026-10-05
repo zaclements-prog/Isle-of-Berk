@@ -24,6 +24,7 @@ export interface CameraInput {
 }
 
 const _goal = new THREE.Vector3();
+const _shake = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _want = new THREE.Vector3();
 
@@ -50,6 +51,10 @@ export class OrbitCamera {
   private readonly climbPitch: SpringState = { x: 0, v: 0 };
   private readonly dist: SpringState = { x: 0, v: 0 };
   private sinceMouse = 0;
+  private shakeT = 0;
+  private shakeDur = 1;
+  private shakeAmp = 0;
+  private shakeClock = 0;
 
   constructor(private readonly t: CameraTuning, public world: CollisionWorld) {
     this.pitch = deg(t.pitchDeg);
@@ -104,9 +109,30 @@ export class OrbitCamera {
       this.position.copy(this.target).addScaledVector(_dir, this.currentDistance);
     }
 
+    if (this.shakeT > 0) {
+      // M6 impact shake: a decaying sum of sines (deterministic), position more than aim
+      this.shakeT = Math.max(0, this.shakeT - dt);
+      this.shakeClock += dt;
+      const k = (this.shakeAmp * (this.shakeT / this.shakeDur) ** 2) / 1.5;
+      const c = this.shakeClock;
+      _shake.set(Math.sin(c * 71.3) + 0.5 * Math.sin(c * 37.1), Math.sin(c * 83.7 + 1.3) + 0.5 * Math.sin(c * 29.3), Math.sin(c * 61.9 + 2.1))
+        .multiplyScalar(k);
+      this.position.add(_shake);
+      this.target.addScaledVector(_shake, 0.5);
+    }
+
     let nearest = Infinity;
     for (const s of f.bodySpheres) nearest = Math.min(nearest, this.position.distanceTo(s.center) - s.radius);
     this.fade = 1 - smoothstep(t.fadeNear, t.fadeFar, nearest);
+  }
+
+  /** Impact shake (M6 plasma): amplitude (m) fading over duration (s); a stronger shake overrides a weaker one. */
+  shake(amplitude: number, duration: number): void {
+    const now = this.shakeT > 0 ? this.shakeAmp * (this.shakeT / this.shakeDur) ** 2 : 0;
+    if (amplitude <= now) return;
+    this.shakeAmp = amplitude;
+    this.shakeDur = Math.max(duration, 1e-3);
+    this.shakeT = this.shakeDur;
   }
 
   apply(camera: THREE.PerspectiveCamera): void {

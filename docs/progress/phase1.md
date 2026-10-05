@@ -200,3 +200,95 @@ Added while tuning on the course (no spec value; each came from a failing script
 - Perturbed spawns: `boulders` 6/18 (climb mode on short, round boulder flanks drives the body into the rock); `ledge-blocked` 9/18 (spawns turned 3°: sliding along the 3 m wall he reaches the neighbouring 2.5 m ledge, scrambles it and fails: 0.5 m slip, 2.4 m float); `down-steps-small` 12/18 (failures seen: paw penetration 2.7–17 cm, a 2.5 cm float); `gallop-straight` 17/18 (1.4 cm slip).
 - The tail's ground avoidance probes down from 1.5 m above each segment, so on a steep face it can miss. The tail proxies show no penetration on the course.
 - The test scene's swatches float (the look-dev scene), so on the game page he steers round them more than he collides with them. The Cove (Plan 5) is the real test.
+
+## M6 — Behaviours and actions (Plan 4, 2026-10-05)
+
+Game page `/`: the leap (tucked, mid-air), a plasma blast (dorsal glow, the impact puff at his mouth's target), its soft round scorch on the ground, sitting, curled up asleep (the camera holds its distance), and the face preset:
+
+![jump](img/m6/game-jump.png) ![plasma](img/m6/game-plasma.png) ![scorch](img/m6/game-scorch.png)
+![sit](img/m6/game-sit.png) ![sleep](img/m6/game-sleep.png) ![face](img/m6/game-face.png)
+
+The pose library's clay contact sheet (side and three-quarter, every pose; clips at their middle frame): [library_sheet.jpg](img/toothless/library_sheet.jpg).
+
+Motion Lab strips, the exported asset with the library:
+
+![idle cycle, one frame per 2 s](img/m6/idle-cycle-58s-strip.png)
+![sit](img/m6/behaviour-sit-strip.png)
+![scratch](img/m6/behaviour-scratch-strip.png)
+![sleep](img/m6/behaviour-sleep-strip.png)
+![jump while trotting](img/m6/jump-trot-strip.png)
+![jump off the 2 m ledge](img/m6/jump-off-ledge-strip.png)
+![plasma at the wall](img/m6/plasma-wall-strip.png)
+![plasma impact and scorch](img/m6/plasma-wall-impact-strip.png)
+![plasma behind him: turn, then fire](img/m6/plasma-turn-strip.png)
+![plasma on High (N8AO on)](img/m6/plasma-high-strip.png)
+
+- **Pose library** (`pipeline/blender/toothless/library.py`, spec §5.11):
+  - 13 poses: sit, lie, sleep, stretch, sniff, stalk, the four jump poses, plasma rear-up, climb reach, scramble hook.
+  - 4 clips: scratch, shake, yawn, scramble-up.
+  - `toothless.poses.glb` now has 23 clips; `toothless.poses.json` v2 gives each clip its mask, owned legs, root, wings, soles, loop, blends, interrupt policy and face curves.
+- **Pose runtime:**
+  - Ordered layers (posture < gesture < action).
+  - Owned legs blend from the leg IK to the pose through the tucked leg, with a ground guard for posed paws.
+  - Layers with a root place the body.
+  - The `WingController` is the only writer of the wing fold, plus flare and lift.
+- **Face and mood:** five moods; scheduled, doubled and turn blinks; pupils; ears; smile and pant; layer face curves; the eye-gaze uniform.
+- **Attention:** plasma aim, then scored interest points, then the behaviour's look, with hysteresis and boredom.
+- **Personality idles:**
+  - A utility selector with cooldowns, and the stand ↔ sit ↔ lie ↔ sleep chain.
+  - Gestures with enter, loop and exit; input interrupts with the exit.
+  - `berk.behaviour(name)` forces one.
+- **The jump:** an anticipation crouch, then ballistic flight with the tuck and flared wings, a front-feet-first landing, and recovery.
+- **Plasma:** turn, charge, fire and recoil. Pooled bolts with a trail and light; the impact flash, sparks, smoke and camera shake; scorch decals cut from a local patch of collision triangles.
+- **Scramble polish:** climb reach while climbing, and the scramble-up clip timed to the scripted body.
+- **Game page:** `createToothless` wires the asset, motion, brain, camera and FX for any page. The HUD lists Space jump and F / left-click plasma. `berk.tp`, `berk.behaviour`, `berk.state`, `berk.toothless.{mood, face, posture, fire, jump}`, `berk.cam.preset(hero | side | low | wide | face)`.
+- Tests: 519 vitest, 64 Blender pipeline tests (Plan 2's 55 + the library's 9), tsc clean, production build OK. The visual checks ran in headless Chromium on SwiftShader, at `?q=low` and, for the FX against N8AO, `?q=high`. Consoles were clean throughout.
+
+### M6 lab gate
+
+The 17 M6 scripts gate in vitest on the fixture rig and on the exported rig with the library (`tests/lab/m6.test.ts`, 34 of 34). In the browser, on the page's real rig ([metrics.json](img/m6/metrics.json)):
+
+| Script | Slip (cm) | Penetration (cm) | Float (cm) | Proxy (cm) | Limit violations | Pass |
+|---|---:|---:|---:|---:|---:|:---:|
+| `behaviour-sit` | 0.00 | 0.27 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-lie` | 0.00 | 0.74 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-sleep` | 0.00 | 0.39 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-stretch` | 0.00 | 1.56 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-sniff` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-scratch` | 0.00 | 0.27 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-shake` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-yawn` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-look_around` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `behaviour-glance_camera` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `idle-free-28s` | 0.00 | 1.27 | 0.00 | 0.00 | 0 | ✓ |
+| `idle-cycle-58s` | 0.00 | 0.67 | 0.00 | 0.00 | 0 | ✓ |
+| `jump-standing` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `jump-trot` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `jump-off-ledge` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `plasma-wall` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `plasma-turn` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+
+Plan 3's 19 course scripts still pass beside them, on the same page with the library and the brain live.
+
+### Tuning and pose changes during M6
+
+- **Pose data, sleep's root:** 0.388 → 0.400 m (Task 2). The tucked left elbow sat 4.1 cm into the ground, against a −3.5 cm bound. Now the lowest skin is at −2.9 cm and the hind soles at 4.5 cm (the bound is 5).
+- **`scramble.hookUp`:** 0.5 → 0.575 m (Task 9). At the hook, the scramble-up clip's spine curl put the forepaws' metacarpals at their −90° limit. ledge-scramble's slip rose to 0.99 cm against a 1 cm gate. A slightly higher hook relaxes the wrist. The window is narrow: below about 0.55 the wrist limits with the clip; above about 0.6 the forepaws can't reach the lip without it. At 0.575, the climbing scripts pass 54 of 54 perturbed spawns.
+- **`tail.vertAccelMax`** (new): 4 m/s² (Task 10). The tail lagged the pelvis's vertical acceleration without a cap. A leap's free fall (−9.8 m/s² for a second) and its landing spikes curled the tail into a loop over his back. Footfalls stay inside ±3 m/s². The secondary curl in leaps and the hop drops from 45–50° to 2–8°.
+- **New tuning sections** with the plan's defaults: `wings`, `pose`, `face`, `behaviour`, `jump`, `plasma`, `attention`. `climb.wingsOpen` is replaced by `wings.climbFlare`: the climb's "wings open ~20 %" is now a flare of the folded wing, because unfolding stood the ribs up. The preset `motion-tuning.json` is regenerated with every section.
+
+### Decisions
+
+- **The pose library was built on Linux** with the `bpy` 5.1.2 module (the same Blender release as `run.ps1`'s), with Mesa's software GL for the Workbench renders. This environment can't download Blender itself. Plan 2's build ran end to end, and its folded-wing metrics match exactly.
+  - QuadriFlow's remesh isn't byte-identical across platforms (23,330 faces against Windows' 24,080), so the committed `toothless.glb` stays.
+  - `toothless.rig.json` differed only by float32 rounding, so it stays too.
+  - The poses GLB is armature-only, so it doesn't depend on the mesh.
+- **Plan 3's code differed from the plan text** that M6's edits were written against: Plan 3's fix rounds rebuilt the scramble, the planner and the body solver's climbing. Where a Find text no longer matched, the same change went into the equivalent code, and every such case is listed in its commit. Two edits were already in: Task 1's collision fix and Task 3's boundedness change, both done in Plan 3.
+- **A lab script start resets the actions too.** `DragonBrain.reset()` used to reset only the behaviours. A jump or blast still running carried into the next script; after plasma-turn, plasma-wall never fired. DragonAction gains `reset(d)`. The game page's `berk.tp` resets the brain as well.
+
+### Known gaps
+
+- None of Plan 3's course scripts fails. The M5 robustness weak spots under perturbed spawns remain (boulders, ledge-blocked when turned 3°, down-steps-small).
+- The Cove page (Plan 4 Task 11 variant B: interest points from fish and butterflies, the underwater legs) waits for Plan 5a Task 14, which builds the Cove page.
+- The eye gaze was only seen near centre on the game page (gaze yaw ≈ 0 at the capture). The direction check is the plan's own, from planning.
+- Lighting for close-ups: on the test scene the dark skin reads almost black in shadow. That is a look-dev matter for the Cove.

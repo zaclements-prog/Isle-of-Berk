@@ -3,6 +3,7 @@ import json
 import os
 import bpy
 import anatomy as A
+import library as LIB
 
 REQUIRED_OPTS = {
     "export_format": "GLB", "use_selection": True, "export_yup": True, "export_apply": False,
@@ -80,7 +81,7 @@ def rig_json(rig, mesh):
                   for side in ("L", "R")},
         "ears": {side: [f"ear_{i}_{side}" for i in range(1, 4)] for side in ("L", "R")},
         "morphs": keys,
-        "clips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded", "jaw_open"],
+        "clips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded", "jaw_open", *LIB.LIBRARY],
         "proportions": {k: round(v, 4) for k, v in A.proportions().items()},
     }
 
@@ -90,6 +91,13 @@ POSES = {"clips": {"bind": {"mask": "all"}, "wings_fold_25": WING_MASK, "wings_h
                    "wings_fold_75": WING_MASK, "wings_folded": WING_MASK, "jaw_open": {"mask": ["jaw"]}}}
 
 
+def poses_json(rig):
+    """toothless.poses.json v2: Plan 2's clip masks plus the library metadata (masks, ownsLegs, root, wings, soles,
+    loop, blends, interrupt, duration, face curves), and the wing flare the engine's WingController applies."""
+    return {"version": 2, "wingFlare": {"deg": LIB.FLARE_DEG, "liftDeg": LIB.FLARE_LIFT_DEG},
+            "clips": {**POSES["clips"], **LIB.meta_entries(rig)}}
+
+
 def write_all(rig, mesh, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     export_glb(rig, mesh, os.path.join(out_dir, "toothless.glb"))
@@ -97,4 +105,4 @@ def write_all(rig, mesh, out_dir):
     with open(os.path.join(out_dir, "toothless.rig.json"), "w", encoding="utf-8") as f:
         json.dump(rig_json(rig, mesh), f, indent=1)
     with open(os.path.join(out_dir, "toothless.poses.json"), "w", encoding="utf-8") as f:
-        json.dump(POSES, f, indent=1)
+        json.dump(poses_json(rig), f, indent=1)

@@ -32,6 +32,8 @@ export interface PawState {
   /** Whether any surface qualified for the landing at all (else the target is the raw prediction, maybe in mid-air). */
   targetFound: boolean;
   wasStance: boolean;
+  /** Driven by a pose layer (M6 leg ownership): no automatic lift-offs or corrections; metrics skip slip/float. */
+  posed: boolean;
   /** Retargeting has stopped and `to` is blending onto `settle`, the surface under it, by touchdown. */
   settled: boolean;
   readonly settle: THREE.Vector3;
@@ -136,7 +138,7 @@ export class FootPlanner {
     this.paws = LEG_KEYS.map((key) => ({
       key, planted: true, pos: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0),
       from: new THREE.Vector3(), to: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), toNormal: new THREE.Vector3(0, 1, 0),
-      s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, targetFound: true, wasStance: true,
+      s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, targetFound: true, wasStance: true, posed: false,
       settled: false, settle: new THREE.Vector3(), settleNormal: new THREE.Vector3(0, 1, 0),
     }));
   }
@@ -345,7 +347,7 @@ export class FootPlanner {
     for (let i = 0; i < 4; i++) {
       const p = this.paws[i];
       const stance = gait.inStance(i);
-      if (this.autoStep && !stopped && p.planted && !p.justPlanted && p.wasStance && !stance) {
+      if (this.autoStep && !stopped && p.planted && !p.posed && !p.justPlanted && p.wasStance && !stance) {
         this.lift(i, body, gait, gait.swingDuration, false);
         airborne++;
       }
@@ -356,7 +358,7 @@ export class FootPlanner {
     //    A scripted action (autoStep off) owns its paws: it keeps them in reach itself.
     for (let i = 0; i < 4; i++) {
       const p = this.paws[i];
-      if (!this.autoStep || !p.planted || p.justPlanted || (stopped && airborne >= t.maxAirborne)) continue;
+      if (!this.autoStep || !p.planted || p.posed || p.justPlanted || (stopped && airborne >= t.maxAirborne)) continue;
       if (stretch[i] > t.overstretch) {
         this.lift(i, body, gait, stopped ? t.forcedSwingTime : Math.min(gait.swingDuration, t.overstretchSwingMax), stopped);
         airborne++;
@@ -368,6 +370,7 @@ export class FootPlanner {
       let worstErr = t.forcedStepDist;
       for (let i = 0; i < 4; i++) {
         const p = this.paws[i];
+        if (p.posed) continue;
         this.neutralWorld(i, body.pos, body.heading, _a);
         const err = Math.hypot(p.pos.x - _a.x, p.pos.z - _a.z);
         if (err > worstErr) {

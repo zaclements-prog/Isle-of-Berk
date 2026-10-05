@@ -13,7 +13,7 @@ export interface MetricsReport {
   limitViolations: number;
   worstLimit: string;
   nanResets: number;
-  /** Largest per-bone rotation from bind in the first / last 10 s (rad), for runs ≥ 30 s. */
+  /** Largest per-bone rotation from its pose at the start of the run, in the first / last 10 s (rad), runs ≥ 30 s. */
   boundedFirst: number;
   boundedLast: number;
   pass: boolean;
@@ -71,12 +71,13 @@ export class MotionMetrics {
       // height above it would start inside too, and miss)
       const depth = this.world.depthInside(_sole, 50);
       if (depth > 0) this.maxPen = Math.max(this.maxPen, depth);
-      if (paw.planted) {
+      const planted = paw.planted && !paw.posed;     // a posed paw follows its pose layer (M6), not a contact
+      if (planted) {
         if (!this.wasPlanted[i] || paw.justPlanted) this.locked[i].copy(_sole);
         this.maxSlip = Math.max(this.maxSlip, _sole.distanceTo(this.locked[i]));
         if (depth < 0 && this.world.groundAt(_sole.x, _sole.z, _sole.y, 3, _hit)) this.maxFloat = Math.max(this.maxFloat, _sole.y - _hit.point.y);
       }
-      this.wasPlanted[i] = paw.planted;
+      this.wasPlanted[i] = planted;
     }
     d.proxies.update(s);
     d.proxies.items.forEach((p, k) => {

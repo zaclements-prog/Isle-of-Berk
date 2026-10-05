@@ -39,6 +39,10 @@ export class SecondaryMotion {
   readonly ears: Array<{ bone: number; backSign: number; s: SpringState }>;
   readonly fins: Array<{ bone: number; phase: number; s: SpringState }>;
   exertion = 0;
+  /** Mood ear attitude (rad, + = back/flat) added to every ear's target — set by the face (M6). */
+  earBias = 0;
+  /** Breathing depth scale (M6: shallower while the front legs are posed on the ground). */
+  breathGain = 1;
   private breathPhase = 0;
   private time = 0;
   private nextEarTwitch: number;
@@ -94,11 +98,12 @@ export class SecondaryMotion {
     this.time += dt;
     const n = this.tail.length;
     const latAccel = inp.speed * inp.yawRate;
+    const vertAccel = clamp(inp.verticalAccel, -t.tail.vertAccelMax, t.tail.vertAccelMax);
     for (let k = 0; k < n; k++) {
       const f = (k + 1) / n;
       const omega = lerp(t.tail.omegaBase, t.tail.omegaTip, k / Math.max(n - 1, 1));
       const yawT = clamp((t.tail.turnGain * inp.yawRate + t.tail.latAccelGain * latAccel) * f, -this.tailYawLimit, this.tailYawLimit);
-      const pitchT = clamp(-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight - t.tail.vertAccelGain * inp.verticalAccel * f,
+      const pitchT = clamp(-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight - t.tail.vertAccelGain * vertAccel * f,
         -this.tailPitchLimit, this.tailPitchLimit);
       stepSpring(this.tailYaw[k], yawT, omega, t.tail.zeta, dt);
       stepSpring(this.tailPitch[k], pitchT, omega, t.tail.zeta, dt);
@@ -109,7 +114,7 @@ export class SecondaryMotion {
       e.s.v += (this.rng() < 0.5 ? -1 : 1) * t.ears.twitchImpulse;
       this.nextEarTwitch = lerp(t.ears.twitchMin, t.ears.twitchMax, this.rng());
     }
-    for (const e of this.ears) stepSpring(e.s, e.backSign * deg(t.ears.gallopBackDeg) * inp.gallopWeight, t.ears.omega, t.ears.zeta, dt);
+    for (const e of this.ears) stepSpring(e.s, e.backSign * (deg(t.ears.gallopBackDeg) * inp.gallopWeight + this.earBias), t.ears.omega, t.ears.zeta, dt);
     this.nextFinTwitch -= dt;
     if (this.nextFinTwitch <= 0 && this.fins.length) {
       const f = this.fins[Math.min(this.fins.length - 1, Math.floor(this.rng() * this.fins.length))];
@@ -130,7 +135,7 @@ export class SecondaryMotion {
 
   /** Chest rise and fall; the neck base cancels it so the head stays steady. Moves the shoulders — apply before leg IK. */
   applyBreathing(s: RigSkeleton): void {
-    const b = deg(this.t.breath.amplitudeDeg) * Math.sin(TAU * this.breathPhase);
+    const b = deg(this.t.breath.amplitudeDeg) * this.breathGain * Math.sin(TAU * this.breathPhase);
     for (const c of this.chest) s.localQuat[c].multiply(_qa.setFromAxisAngle(AX, b));
     s.localQuat[this.neckBase].multiply(_qa.setFromAxisAngle(AX, -b * this.chest.length));
   }

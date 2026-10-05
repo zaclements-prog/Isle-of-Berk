@@ -76,9 +76,15 @@ export class BodySolver {
    * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height and
    * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
    * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
-   * speed, so a landing's fall speed becomes its absorb.
+   * speed, so a landing's fall speed becomes its absorb. With `snap` (M6 jump), only the height jumps to its target,
+   * with no speed: the pitch still springs.
    */
-  readonly override = { active: false, height: 0, pitch: 0, exact: false };
+  readonly override = { active: false, height: 0, pitch: 0, exact: false, snap: false };
+  /**
+   * Library-pose placement (M6): the height (world, pelvis head) and pitch targets blend toward these by `weight`
+   * (roll levels out with it). Scripted `override`s still replace everything.
+   */
+  readonly posture = { weight: 0, height: 0, pitch: 0 };
   private readonly height: SpringState = { x: 0, v: 0 };
   private readonly pitch: SpringState = { x: 0, v: 0 };
   private readonly roll: SpringState = { x: 0, v: 0 };
@@ -189,10 +195,20 @@ export class BodySolver {
     pitchT = clamp(pitchT, -maxTilt, maxTilt);
     rollT = clamp(rollT, -maxTilt, maxTilt);
     let heightT = hH + this.hipHeight * up.y - crouch - lowerHind + bob;
+    if (this.posture.weight > 0) {
+      const pw = clamp(this.posture.weight, 0, 1);
+      heightT += (this.posture.height - heightT) * pw;
+      pitchT += (this.posture.pitch - pitchT) * pw;
+      rollT -= rollT * pw;
+    }
     if (this.override.active) {
       heightT = this.override.height;
       pitchT = this.override.pitch;
       rollT = 0;
+      if (this.override.snap) {
+        this.height.x = heightT;          // a ballistic flight (M6 jump) follows its arc exactly: no spring lag
+        this.height.v = 0;
+      }
     }
 
     for (const p of sup.paws) {

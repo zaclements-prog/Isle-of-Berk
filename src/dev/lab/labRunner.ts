@@ -17,6 +17,8 @@ export interface LabRunOptions {
   clips?: ReadonlyMap<string, THREE.AnimationClip>;
   posesMeta?: PosesMeta;
   onStep?: (d: DragonCharacter, t: number) => void;
+  /** Called once after spawning (M6: attach the brain and actions). */
+  setup?: (d: DragonCharacter, cam: OrbitCamera) => void;
 }
 
 /** Build the camera's view of the dragon (shared by the runner, the lab page and the game page). */
@@ -37,6 +39,7 @@ export function runLabScript(o: LabRunOptions): MetricsReport {
   const cam = new OrbitCamera(d.tuning.camera, o.world);
   const hold = { chest: new THREE.Vector3() };
   cam.reset(cameraFollow(d, hold));
+  o.setup?.(d, cam);
   const input = new ScriptedInput(o.script.events);
   const metrics = new MotionMetrics(o.world, o.script.duration);
   const yawPx = o.script.cameraYawRate ? -(o.script.cameraYawRate * dt) / d.tuning.camera.sensitivity : 0;
