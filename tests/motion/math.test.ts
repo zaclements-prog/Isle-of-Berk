@@ -22,6 +22,9 @@ describe('angles and phases', () => {
     expect(smoothstep(0, 1, 0.5)).toBeCloseTo(0.5, 12);
     expect(smoothstep(0, 1, 2)).toBe(1);
     expect(smoothstep(1, 0, 0.25)).toBeCloseTo(smoothstep(0, 1, 0.75), 12);
+    // coincident edges: a step, never NaN
+    expect(smoothstep(0.5, 0.5, 0.4)).toBe(0);
+    expect(smoothstep(0.5, 0.5, 0.5)).toBe(1);
   });
   it('rotates about +Y so heading ψ maps +Z to (sin ψ, 0, cos ψ)', () => {
     const v = rotY(new THREE.Vector3(0, 0, 1), deg(90), new THREE.Vector3());

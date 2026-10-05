@@ -88,10 +88,15 @@ export class CollisionWorld {
    * normal points up). Needs outward-wound closed meshes or terrain surfaces (no mirrored transforms).
    */
   isInside(p: THREE.Vector3, maxUp = 50): boolean {
+    return this.depthInside(p, maxUp) >= 0;
+  }
+
+  /** How far (m) `p` lies inside a solid, measured up to the surface above it (see isInside); −1 when outside. */
+  depthInside(p: THREE.Vector3, maxUp = 50): number {
     this.ray.origin.copy(p);
     this.ray.direction.set(0, 1, 0);
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide, 0, maxUp);
-    return !!hit?.face && hit.face.normal.y > 0;
+    return hit?.face && hit.face.normal.y > 0 ? hit.distance : -1;
   }
 
   /** Ground straight below (x, top, z), searching `depth` metres down. */
@@ -99,9 +104,13 @@ export class CollisionWorld {
     return this.raycast(_o.set(x, top, z), DOWN, depth, out);
   }
 
+  /**
+   * Closest surface point within `maxDist` of `p`, or null. three-mesh-bvh prunes by bounding box, not by triangle,
+   * so its result can lie beyond maxDist when a leaf's box is nearer than its triangles; that result is discarded.
+   */
   closestPoint(p: THREE.Vector3, maxDist: number, out?: SurfacePoint): SurfacePoint | null {
     const hit = this.bvh.closestPointToPoint(p, this.cpTarget, 0, maxDist);
-    if (!hit) return null;
+    if (!hit || hit.distance > maxDist) return null;
     const r = out ?? { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
     r.point.copy(hit.point);
     r.distance = hit.distance;
@@ -152,8 +161,8 @@ export class CollisionWorld {
    */
   sphereCast(from: THREE.Vector3, to: THREE.Vector3, radius: number, stats?: { queries: number }): number {
     if (stats) stats.queries++;
-    // a real contact only: closestPoint can return a triangle beyond maxDist (three-mesh-bvh prunes boxes, not
-    // triangles), which stopped every cast that started inside a far surface's bounds (the camera fell into him)
+    // a real contact only: a nearest surface merely found nearby does not stop the cast at its start (that stopped
+    // every cast starting inside a far surface's bounds, and the camera fell into him)
     if (this.sphereContact(from, radius, this.scratchContact)) return 0;
     const len = from.distanceTo(to);
     if (len < 1e-9) return 1;

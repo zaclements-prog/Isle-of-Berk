@@ -14,6 +14,8 @@ export interface LookInput {
   readonly bodyQuat: THREE.Quaternion;
   readonly headPos: THREE.Vector3;
   readonly cameraPos: THREE.Vector3;
+  /** Height gained per metre along the travel direction (climbing: the face's rise), so he looks up what he climbs. */
+  readonly rise?: number;
 }
 
 const AX = new THREE.Vector3(1, 0, 0);
@@ -67,7 +69,7 @@ export class LookController {
       this.mode = 'travel';
       this.idle = 0;
       const a = inp.heading + t.leadGain * inp.yawRate;
-      this.target.set(Math.sin(a), 0, Math.cos(a)).multiplyScalar(t.aheadDist).add(inp.headPos);
+      this.target.set(Math.sin(a), inp.rise ?? 0, Math.cos(a)).multiplyScalar(t.aheadDist).add(inp.headPos);
     } else {
       this.idle += dt;
       if (this.glanceLeft > 0) {

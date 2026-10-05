@@ -3,7 +3,7 @@ import type { GaitEngine } from './gait';
 import { LEG_KEYS, type MotionRig } from './rigTypes';
 import type { RigSkeleton } from './skeleton';
 import type { MotionTuning } from './tuning';
-import { clamp, deg, rotY, TAU } from './math';
+import { clamp, dampFactor, deg, lerp, rotY, TAU } from './math';
 import { stepSpring, type SpringState } from './springs';
 
 type BodyTuning = MotionTuning['body'];
@@ -12,6 +12,25 @@ type BodyTuning = MotionTuning['body'];
 export interface SupportSource {
   support(i: number): number;
   readonly paws: ReadonlyArray<{ justPlanted: boolean }>;
+}
+
+/**
+ * What climbing rides on (DragonCharacter): planted paws trail a body moving up a steep face by half a stride, which
+ * on 60° leaves the body half a metre too low, so a climbing body rides on the face under its joints instead.
+ */
+export interface ClimbRide {
+  /** 0–1: how far climb mode applies. */
+  readonly weight: number;
+  /** The body's up axis while climbing. */
+  readonly up: THREE.Vector3;
+  /** Heights to ride on under the hips and the shoulders (−Infinity: no face found), such that each joint pair stands
+   *  hipHeight along `up` from the face. */
+  readonly hind: number;
+  readonly front: number;
+  /** Horizontal distance (m) along his heading between those two probe points. */
+  readonly span: number;
+  /** The tilt springs' stiffness while climbing (rad/s): cresting a face the body pitches through 60° in a stride. */
+  readonly tiltOmega: number;
 }
 
 export interface BodyKinState {
@@ -53,16 +72,25 @@ export class BodySolver {
   readonly pose: BodyPose;
   /** Pelvis-head height above the hind soles at bind. */
   readonly hipHeight: number;
-  /** Scripted actions drive the height/pitch targets directly (roll levels out). */
-  readonly override = { active: false, height: 0, pitch: 0 };
+  /**
+   * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height and
+   * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
+   * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
+   * speed, so a landing's fall speed becomes its absorb.
+   */
+  readonly override = { active: false, height: 0, pitch: 0, exact: false };
   private readonly height: SpringState = { x: 0, v: 0 };
   private readonly pitch: SpringState = { x: 0, v: 0 };
   private readonly roll: SpringState = { x: 0, v: 0 };
   private readonly bend: SpringState = { x: 0, v: 0 };
+  /** The gait crouch (m) as applied: it follows deeper crouches at once and releases at body.crouchRelease. */
+  private crouch = 0;
   private readonly pelvis: number;
   private readonly spine: number[];
-  private readonly pelvisOffset: THREE.Vector3;
-  private readonly feetLength: number;
+  /** The pelvis head's horizontal offset from the character origin at bind (body frame). */
+  readonly pelvisOffset: THREE.Vector3;
+  /** Fore-aft distance between the front and hind sole pairs at bind (m). */
+  readonly feetLength: number;
   private readonly feetWidth: number;
   private readonly spinePitchLimit: number;
   private readonly spineYawLimit: number;
@@ -84,12 +112,27 @@ export class BodySolver {
     };
   }
 
-  reset(pos: THREE.Vector3, heading: number, groundY: number): void {
+  /**
+   * Snap to rest over `groundY`. Given the supports (the paws just planted at spawn), the body starts already pitched
+   * and rolled to them, as update() would settle it, rather than level over a slope with its downhill legs
+   * over-stretched until the springs catch up.
+   */
+  reset(pos: THREE.Vector3, heading: number, groundY: number, sup?: SupportSource): void {
     this.height.x = groundY + this.hipHeight;
     this.height.v = 0;
     this.pitch.x = this.pitch.v = 0;
     this.roll.x = this.roll.v = 0;
+    if (sup) {
+      const t = this.t;
+      const maxTilt = deg(t.maxTiltDeg);
+      const hH = (sup.support(0) + sup.support(2)) / 2;
+      const hF = (sup.support(1) + sup.support(3)) / 2;
+      this.height.x = hH + this.hipHeight;
+      this.pitch.x = clamp(Math.atan2(hF - hH, this.feetLength), -maxTilt, maxTilt);
+      this.roll.x = clamp(Math.atan2((sup.support(0) + sup.support(1) - sup.support(2) - sup.support(3)) / 2, this.feetWidth) * t.rollFollow, -maxTilt, maxTilt);
+    }
     this.bend.x = this.bend.v = 0;
+    this.crouch = 0;
     this.pose.spinePitch.fill(0);
     this.pose.spineYaw.fill(0);
     this.compose(pos, heading);
@@ -98,33 +141,54 @@ export class BodySolver {
   /**
    * `groundFront` / `groundHind`: terrain height under the shoulders / hips (−Infinity when unknown). The body rides on
    * the higher of those and the paw supports, so it never sinks into rising ground before the paws step up.
+   * `frontRaise`: extra height for the front supports (m) so the head clears the ground ahead (DragonCharacter).
+   * `climb`: climbing, the body rides on the face under its joints (see ClimbRide), pitches over the joints' real
+   * spread, and its pelvis stands hipHeight along the climb's up axis from the face rather than straight above it (on
+   * a 60° face, straight above leaves the body half its height from the surface).
    */
   update(
     kin: BodyKinState, sup: SupportSource, gait: GaitEngine, shortfall: readonly number[], maxTiltDeg: number, dt: number,
-    groundFront = -Infinity, groundHind = -Infinity,
+    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide,
   ): BodyPose {
     const t = this.t;
-    const hH = Math.max((sup.support(0) + sup.support(2)) / 2, groundHind);
-    const hF = Math.max((sup.support(1) + sup.support(3)) / 2, groundFront);
+    // ride on the terrain under the hips/shoulders: on a slope the supports' average is biased by the stance (a
+    // trailing paw sits uphill of its joint at lift-off), which held him 0.2 m high going down a 30° ramp. The supports
+    // stay the floor where the terrain probe found nothing, and the probe the floor under rising ground.
+    let hH = this.ride((sup.support(0) + sup.support(2)) / 2, groundHind);
+    let hF = this.ride((sup.support(1) + sup.support(3)) / 2, groundFront);
+    let span = this.feetLength;
+    const up = climb?.up ?? AY;
+    const cw = climb?.weight ?? 0;
+    if (climb && cw > 0) {
+      if (Number.isFinite(climb.hind)) hH = lerp(hH, climb.hind, cw);
+      if (Number.isFinite(climb.front)) hF = lerp(hF, climb.front, cw);
+      span = lerp(span, Math.max(climb.span, 0.3 * this.feetLength), cw);
+    }
+    hF += frontRaise;
+    const tiltOmega = climb ? lerp(t.tiltOmega, climb.tiltOmega, cw) : t.tiltOmega;
     const hL = (sup.support(0) + sup.support(1)) / 2;
     const hR = (sup.support(2) + sup.support(3)) / 2;
     const lowerHind = Math.max(shortfall[0], shortfall[2], 0) * t.shortfallLower;
     const lowerFront = Math.max(shortfall[1], shortfall[3], 0) * t.shortfallLower;
     const w = gait.weights;
     const moving = clamp(kin.speed / t.crouchFullSpeed, 0, 1);
-    const crouch = (w[0] * t.crouchWalk + w[1] * t.crouchTrot + w[2] * t.crouchGallop) * moving;
+    // he sinks into a gait's crouch at once but rises out of it slowly: stopping, his paws are still spread from
+    // the stride, and rising straight to standing height would over-stretch the planted legs
+    const crouchT = (w[0] * t.crouchWalk + w[1] * t.crouchTrot + w[2] * t.crouchGallop) * moving;
+    this.crouch = crouchT >= this.crouch ? crouchT : this.crouch + (crouchT - this.crouch) * dampFactor(t.crouchRelease, dt);
+    const crouch = this.crouch;
     const ph = gait.phase;
     const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph));
     const maxTilt = deg(maxTiltDeg);
 
-    let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), this.feetLength);
+    let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), span);
     pitchT += clamp(deg(t.accelPitchDeg) * kin.accel, -deg(t.maxAccelPitchDeg), deg(t.maxAccelPitchDeg));
     pitchT += deg(t.rockGallopDeg) * w[2] * Math.sin(TAU * ph);
-    let rollT = Math.atan2(hL - hR, this.feetWidth);
+    let rollT = Math.atan2(hL - hR, this.feetWidth) * t.rollFollow;
     rollT -= clamp(Math.atan((kin.speed * kin.yawRate) / 9.81) * t.leanGain, -deg(t.maxLeanDeg), deg(t.maxLeanDeg));
     pitchT = clamp(pitchT, -maxTilt, maxTilt);
     rollT = clamp(rollT, -maxTilt, maxTilt);
-    let heightT = hH + this.hipHeight - crouch - lowerHind + bob;
+    let heightT = hH + this.hipHeight * up.y - crouch - lowerHind + bob;
     if (this.override.active) {
       heightT = this.override.height;
       pitchT = this.override.pitch;
@@ -134,9 +198,16 @@ export class BodySolver {
     for (const p of sup.paws) {
       if (p.justPlanted) this.height.v -= t.footfallImpulse * clamp(kin.speed / t.footfallFullSpeed, t.footfallMinScale, 1);
     }
-    stepSpring(this.height, heightT, t.heightOmega, 1, dt);
-    stepSpring(this.pitch, pitchT, t.tiltOmega, 1, dt);
-    stepSpring(this.roll, rollT, t.tiltOmega, 1, dt);
+    if (this.override.active && this.override.exact) {
+      this.height.v = (heightT - this.height.x) / dt;
+      this.height.x = heightT;
+      this.pitch.v = (pitchT - this.pitch.x) / dt;
+      this.pitch.x = pitchT;
+    } else {
+      stepSpring(this.height, heightT, t.heightOmega, 1, dt);
+      stepSpring(this.pitch, pitchT, tiltOmega, 1, dt);
+    }
+    stepSpring(this.roll, rollT, tiltOmega, 1, dt);
 
     stepSpring(this.bend, clamp(t.bendGain * kin.yawRate, -deg(t.maxBendDeg), deg(t.maxBendDeg)), t.tiltOmega, 1, dt);
     const bend = this.bend.x;
@@ -145,8 +216,14 @@ export class BodySolver {
       this.pose.spineYaw[k] = clamp(bend * (t.bendShare[k] ?? 1 / this.spine.length), -this.spineYawLimit, this.spineYawLimit);
       this.pose.spinePitch[k] = clamp(flex / this.spine.length, -this.spinePitchLimit, this.spinePitchLimit);
     }
-    this.compose(kin.pos, kin.heading);
+    this.compose(kin.pos, kin.heading, this.override.active ? AY : up);
     return this.pose;
+  }
+
+  /** Height to ride on over one support pair: the supports blended toward the terrain under the joints (body.terrainFollow). */
+  private ride(supports: number, ground: number): number {
+    if (!Number.isFinite(ground)) return supports;
+    return Math.max(supports + (ground - supports) * this.t.terrainFollow, ground);
   }
 
   /** Landing absorb: push the height spring down by dv (m/s). */
@@ -166,7 +243,8 @@ export class BodySolver {
     }
   }
 
-  private compose(pos: THREE.Vector3, heading: number): void {
+  /** The pose from the springs; the pelvis stands hipHeight along `up` from its paws (straight above on level ground). */
+  private compose(pos: THREE.Vector3, heading: number, up: THREE.Vector3 = AY): void {
     const p = this.pose;
     p.height = this.height.x;
     p.pitch = this.pitch.x;
@@ -176,6 +254,8 @@ export class BodySolver {
     _qr.setFromAxisAngle(AZ, p.roll); // rotating +roll about +Z lifts +X (the left side)
     p.bodyQuat.copy(_qy).multiply(_qp).multiply(_qr);
     rotY(this.pelvisOffset, heading, p.pelvisPos).add(pos);
+    p.pelvisPos.x += up.x * this.hipHeight;
+    p.pelvisPos.z += up.z * this.hipHeight;
     p.pelvisPos.y = p.height;
   }
 }

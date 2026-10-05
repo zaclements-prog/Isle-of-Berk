@@ -113,3 +113,90 @@ The after-face strip is `setBlink` 0 / 0.5 / 1. More views: ![folded](img/toothl
 - The bind pose shows the jaw ajar by design. Clay renders taken before the skinning (`model_*`) show it, and the engine closes it at load. The motion system (Plan 3) must apply `jaw.restCloseRad` when it drives the jaw itself.
 - The folded wings still read as layered sheets from behind, with the thin rib spars catching the rim light. The fold geometry itself is Task 4's and unchanged apart from the planform.
 - The neck stays short and thick next to the film's, because the neck joints are locked.
+
+## M5 — Motion core (Plan 3, 2026-10-04)
+
+Game page `/` (`?q=low`): standing (`hero`), galloping (`hero`, mid-gallop), turning, and backed against a block so the camera is forced into him (he dithers out: fade 0.66 here, gone at 1):
+
+![game hero](img/motion/game-hero.png) ![game gallop](img/motion/game-gallop.png)
+![game turn](img/motion/game-turn.png) ![camera fade](img/motion/game-fade.png)
+
+Motion Lab film strips, the exported asset, side views (`berk.cam.orbit`):
+
+![walk](img/motion/walk-straight-strip.png)
+![trot](img/motion/trot-straight-strip.png)
+![gallop](img/motion/gallop-straight-strip.png)
+![ramp 30°](img/motion/ramp30-strip.png)
+![ramp 60°](img/motion/ramp60-strip.png)
+![ledge scramble](img/motion/ledge-scramble-strip.png)
+![drop hop](img/motion/drop-hop-strip.png)
+![idle turn, first 9 s](img/motion/idle-turn-60s-strip.png)
+
+- **Motion core** (`src/characters/dragon/motion/`, spec §6.1–6.10 and §6.14–6.16): `DragonCharacter` runs the §6.1 pipeline at a fixed 1/120 s, rebuilding the pose from bind each step: camera-relative controller (WASD/arrows, Shift gallop, C prowl, Ctrl unbound), gait, foot planner (Raibert targets, foothold search within reach, swing arcs sized to clear the ground), body solver (support- and terrain-driven height, pitch and roll, spine bend), leg IK (hind pantograph, front shoulder blade), head/neck look, tail/ears/fins/breathing, pose layers (the merged wing-fold clip, Ruling 3), body collision proxies and climbing (climb mode on 45–70° faces, scramble-up, blocked, hop down). The orbit camera has collision, recentring, climb pitch and the dithered proximity fade.
+- **Game page**: Toothless on the test scene, click for pointer lock. `berk.tp(x, z, heading?)`, `berk.cam.preset('hero' | 'side' | 'low' | 'wide')`, `berk.state()`. The swatches are solid; he steers round them. The presets move the follow camera, and as the controls are camera-relative, walking on steers him away from it, as a mouse flick would.
+- **Motion Lab** `/lab.html`: the course, 19 scripted runs, the §8.2 metrics, overlays, lil-gui tuning panels, film strips. `berk.lab.run/runAll/play/state/scripts/tuning`, `berk.cam.orbit/free`, `berk.tp`, `berk.toggle`.
+- **Preset**: `public/assets/characters/toothless/motion-tuning.json` holds the full tuned set. Both pages merge it over the defaults (`loadTuning`), and the real-rig gate runs with it.
+- Tests: 421 vitest (unit, plus both course gates), tsc clean, production build OK. Every visual check ran in headless Chromium on SwiftShader at `?q=low`, so there are no GPU perf numbers for M5.
+
+### Course metrics
+
+`berk.lab.runAll()` in the browser on the exported asset, clips and pose library included ([metrics.json](img/motion/metrics.json)). Limits: slip ≤ 1 cm, penetration, float and proxy ≤ 2 cm, no joint-limit violations, no NaN, bounded rotations.
+
+| Script | Slip (cm) | Penetration (cm) | Float (cm) | Proxy (cm) | Limit violations | Pass |
+|---|---:|---:|---:|---:|---:|:---:|
+| `walk-straight` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `trot-straight` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `gallop-straight` | 0.00 | 0.00 | 0.27 | 0.00 | 0 | ✓ |
+| `trot-circle` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `ramp15` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `ramp30` | 0.00 | 0.19 | 0.00 | 0.00 | 0 | ✓ |
+| `ramp45` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `ramp60` | 0.00 | 0.55 | 0.00 | 0.00 | 0 | ✓ |
+| `side-slope` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `steps-small` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `steps-large` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `ledge-scramble` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `ledge-blocked` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `boulders` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `corners` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `drop-hop` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `down-ramp30` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `down-steps-small` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+| `idle-turn-60s` | 0.00 | 0.00 | 0.00 | 0.00 | 0 | ✓ |
+
+- The same 19 scripts gate in vitest twice: on the fixture rig (`tests/lab/labRunner.test.ts`) and on the exported rig with the preset (`tests/lab/realRig.test.ts`; headless, so no clips).
+- 16 of the scripts also have a goal (distance travelled, end or peak height); `trot-circle`, `corners` and `idle-turn-60s` have none. Before the goals existed, a dragon that stood still passed with perfect metrics.
+- Slip reads 0: the IK pins a planted paw, so it only slips when its leg cannot reach the lock. The metric catches that: a test drags a planted contact.
+- Robustness: a sweep that moves every spawn ±10 cm and ±3° passes 296 of 324 runs. The weak spots are listed under Known gaps.
+
+### Tuned values
+
+Changed from the spec/plan defaults:
+- `climb.dropMin` 1.5 → **0.6 m** (spec §6.6: hop down drops over 1.5 m). Walking down a drop deeper than a step left his paws reaching for ground they could not touch: a 0.8–1.0 m walk-down failed. He now hops down anything deeper than 0.6 m. That is no deeper than a step up: walking down, his forepaws' swing and his chest catch the edge.
+- `planner.maxStepDown` 1.0 → **0.6 m**, with it (a unit test pins `dropMin ≤ maxStepDown`).
+
+Added while tuning on the course (no spec value; each came from a failing script or a sweep):
+- planner: `swingProbes` 12 and `maxLift` 0.6 m (swing arcs sized to clear risers); `liftRate` 4 m/s (a late foothold change grows the arc without popping the paw: the largest one-frame jump went from 25 cm to 3.3 cm).
+- body:
+  - `rollFollow` 1 (the plan's lever below 1 made the side slope worse); `crouchRelease` 0.3 s; `proxySkin` 0.04 m.
+  - `terrainFollow` 1 and `terrainSpan` 0.4 m: he rides the terrain under his hips and shoulders, so stairs read as a ramp (0.5 and 0 failed the descents).
+  - `landingReach` 0.95 and `terrainDrop` 1.0 m.
+- climb:
+  - `dropAhead` 0.35, `hopClear` 0.3, `scrambleLand` 0.9, `topFlatness` 0.15, `blendTime` 0.12 s, `dropMax` 3 m, `scrambleGrip` 0.12 m.
+  - `tiltOmega` 14 rad/s: cresting the 60° face, 10 floated the forepaws, and 18–30 over-stretched them on the face.
+  - The hop: `hopSpeed` 3.5 and `hopSpeedMax` 6 m/s, `hopTuck` 0.3 m, `hopGather` 0.15 s, `hopReach` 0.25 s, `hopPitchDeg` 10.
+- scramble: the scramble-up choreography, 28 values (key poses, timings, paw paths). They were set by hand so every joint stays inside its limits through the leap, the pull-up and the step over the lip.
+
+### Decisions
+
+- **Boundedness is measured from each bone's pose at the start**, not from bind. The browser run failed `idle-turn-60s` because `wing_rib1_a_L` sat 2.94 rad from bind, over the 2.8 cap, in both windows. That is the folded wing: the fold turns the ribs ~170° from their spread bind, and the headless runs have no pose library, so they never fold them. A spinning bone still sweeps toward π from wherever it started. Tests pin both cases (a slow drift fails on growth, a spin from the start on the cap), and the limits are unchanged.
+- **The lab's side view is view-only.** `berk.cam.orbit` used to set the follow camera's yaw. The controls are camera-relative, so a camera held at 90° to his heading turned him every step: in the first film strips he trotted in circles and never reached the ramp, ledge or drop. Plays now follow the headless path (`berk.lab.state()`).
+- **Climbing works in the face's frame**, blended in by the climb weight: footholds are found along an up axis half-way between world up and the body's own, the body rides the face under its joints, and he looks up what he climbs.
+- **Hop down as a carried ballistic leap**: the paws are carried through the flight and the body follows the arc exactly (no spring lag), so it lands on its paws.
+
+### Known gaps (→ M6)
+
+- Plan 4 (M6): scramble choreography polish (it reads as a scripted move, and the hind paws swing up clear of the face instead of pushing against it), the jump and plasma actions, behaviours (§6.11), the eye gaze uniform and the face/mood layer (§6.12), the full pose library (§5.11).
+- Perturbed spawns: `boulders` 6/18 (climb mode on short, round boulder flanks drives the body into the rock); `ledge-blocked` 9/18 (spawns turned 3°: sliding along the 3 m wall he reaches the neighbouring 2.5 m ledge, scrambles it and fails: 0.5 m slip, 2.4 m float); `down-steps-small` 12/18 (failures seen: paw penetration 2.7–17 cm, a 2.5 cm float); `gallop-straight` 17/18 (1.4 cm slip).
+- The tail's ground avoidance probes down from 1.5 m above each segment, so on a steep face it can miss. The tail proxies show no penetration on the course.
+- The test scene's swatches float (the look-dev scene), so on the game page he steers round them more than he collides with them. The Cove (Plan 5) is the real test.

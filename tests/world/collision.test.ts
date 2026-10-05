@@ -34,6 +34,12 @@ describe('CollisionWorld', () => {
       expect(w.sphereContact(c, 0.3)).toBeNull();
     }
   });
+  it('measures how deep a point lies inside a solid, however deep', () => {
+    const w = flatWorld(); // the floor slab: top y = 0, 1 m thick
+    expect(w.depthInside(V(0, -0.6, 0))).toBeCloseTo(0.6, 6);
+    expect(w.depthInside(V(0, -0.02, 0))).toBeCloseTo(0.02, 6);
+    expect(w.depthInside(V(0, 0.3, 0))).toBe(-1);
+  });
   it('knows when a point is inside a solid', () => {
     const w = wallWorld(2);
     expect(w.isInside(V(0, 1, 3))).toBe(true);
@@ -60,6 +66,14 @@ describe('CollisionWorld', () => {
     const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-5, 0, 0, 5, 0, 0, 0, 5, 5], 3));
     const w = CollisionWorld.fromObjects([new THREE.Mesh(g)]);
     expect(w.sphereCast(V(0, 1, 4), V(0, 1, 10), 0.3)).toBe(1);
+  });
+
+  it('honours closestPoint maxDist even when a farther triangle\'s bounds are within it', () => {
+    // the sloped triangle's bounding box holds the query point; the triangle itself is 2.1 m away
+    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-5, 0, 0, 5, 0, 0, 0, 5, 5], 3));
+    const w = CollisionWorld.fromObjects([new THREE.Mesh(g)]);
+    expect(w.closestPoint(V(0, 1, 4), 0.3)).toBeNull();
+    expect(w.closestPoint(V(0, 1, 4), 3)!.distance).toBeCloseTo(Math.SQRT2 * 1.5, 1);
   });
 
   it('returns 0 when starting inside collision', () => {

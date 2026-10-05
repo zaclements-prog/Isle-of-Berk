@@ -33,6 +33,33 @@ describe('BodySolver', () => {
     expect(Math.abs(p.pitch)).toBeLessThan(1e-6);
     expect(Math.abs(p.roll)).toBeLessThan(1e-6);
   });
+  it('starts already pitched and rolled to the supports it is reset over (no level-body spawn transient)', () => {
+    const m = make();
+    m.b.reset(new THREE.Vector3(), 0, 0, support([0, 0.5, -0.2, 0.3]));
+    const c = rig.contacts;
+    const length = (c.front_L.sole[2] + c.front_R.sole[2]) / 2 - (c.hind_L.sole[2] + c.hind_R.sole[2]) / 2;
+    const width = (c.hind_L.sole[0] + c.front_L.sole[0]) / 2 - (c.hind_R.sole[0] + c.front_R.sole[0]) / 2;
+    const hL = (0 + 0.5) / 2;
+    const hR = (-0.2 + 0.3) / 2;
+    expect(m.b.pose.pitch).toBeCloseTo(Math.atan2((0.5 + 0.3) / 2 - (0 - 0.2) / 2, length), 9);
+    expect(m.b.pose.roll).toBeCloseTo(Math.atan2(hL - hR, width), 9);
+    expect(m.b.pose.height).toBeCloseTo((0 - 0.2) / 2 + m.b.hipHeight, 9);
+    // and that is where update() settles: one step barely moves it
+    const pitch0 = m.b.pose.pitch;
+    m.b.update(kin(), support([0, 0.5, -0.2, 0.3]), m.gait, [0, 0, 0, 0], 35, DT);
+    expect(Math.abs(m.b.pose.pitch - pitch0)).toBeLessThan(1e-3);
+  });
+  it('sinks into the gait crouch at once but rises out of it gradually when he stops', () => {
+    const m = make();
+    for (let k = 0; k < 120; k++) m.gait.update(3.2, DT);
+    const trot = settle(m, kin({ speed: 3.2 }), support([0, 0, 0, 0]), 240).height;
+    const stand = m.b.hipHeight;
+    expect(stand - trot).toBeGreaterThan(0.05); // trotting crouch
+    for (let k = 0; k < 120; k++) m.gait.update(0, DT);
+    const after = settle(m, kin({ speed: 0 }), support([0, 0, 0, 0]), 12).height; // 0.1 s after stopping
+    expect(stand - after).toBeGreaterThan(0.5 * (stand - trot)); // still more than half crouched
+    expect(settle(m, kin({ speed: 0 }), support([0, 0, 0, 0]), 480).height).toBeCloseTo(stand, 3);
+  });
   it('pitches with the front/hind support difference', () => {
     const p = settle(make(), kin(), support([0, 0.5, 0, 0.5]));
     expect(p.pitch).toBeCloseTo(Math.atan2(0.5, 1.44), 3);
@@ -74,6 +101,40 @@ describe('BodySolver', () => {
     expect(p.height).toBeCloseTo(2.5, 6);
     expect(p.pitch).toBeCloseTo(0.6, 6);
     expect(m.b.hipHeight).toBeCloseTo(1.02, 9);
+  });
+  it('holds the pelvis exactly on an exact scripted height, and hands its speed to the spring after (a landing absorb)', () => {
+    const m = make();
+    settle(m, kin(), support([0, 0, 0, 0]));
+    m.b.override.active = true;
+    m.b.override.exact = true;
+    let h = m.b.hipHeight + 3;
+    for (let i = 0; i < 60; i++) {
+      h -= 6 * DT; // falling at 6 m/s: a spring would trail it by ~0.85 m
+      m.b.override.height = h;
+      expect(m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 35, DT).height).toBeCloseTo(h, 9);
+    }
+    m.b.override.active = false; // touchdown at standing height, still falling at 6 m/s
+    let min = Infinity;
+    for (let i = 0; i < 60; i++) min = Math.min(min, m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 35, DT).height);
+    expect(min).toBeLessThan(m.b.hipHeight - 0.1); // the fall carries on into the spring...
+    expect(settle(m, kin(), support([0, 0, 0, 0])).height).toBeCloseTo(m.b.hipHeight, 6); // ...which recovers
+  });
+  it('climbing, rides the face under its joints: pelvis hipHeight along the up axis, pitched over their spread', () => {
+    const m = make();
+    const tilt = Math.PI / 6; // half of a 60° face rising toward +Z
+    const up = new THREE.Vector3(0, Math.cos(tilt), -Math.sin(tilt));
+    const pitch = (55 * Math.PI) / 180;
+    const ride = { weight: 1, up, hind: 2, front: 2 + 0.74 * Math.tan(pitch), span: 0.74, tiltOmega: 14 };
+    let p = m.b.pose;
+    // the paws' supports (all 0 here) give way to the ride
+    for (let i = 0; i < 480; i++) p = m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 60, DT, -Infinity, -Infinity, 0, ride);
+    expect(p.pitch).toBeCloseTo(pitch, 6);
+    expect(p.pelvisPos.y).toBeCloseTo(2 + m.b.hipHeight * up.y, 6);
+    expect(p.pelvisPos.z).toBeCloseTo(m.b.pelvisOffset.z + m.b.hipHeight * up.z, 6); // back from straight above
+    // half way into climb mode, half of each
+    const half = { ...ride, weight: 0.5 };
+    for (let i = 0; i < 480; i++) p = m.b.update(kin(), support([0, 0, 0, 0]), m.gait, [0, 0, 0, 0], 60, DT, -Infinity, -Infinity, 0, half);
+    expect(p.pelvisPos.y).toBeCloseTo(1 + m.b.hipHeight * up.y, 6);
   });
   it('absorbs a landing impulse', () => {
     const m = make();

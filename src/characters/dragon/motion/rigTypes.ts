@@ -24,4 +24,6 @@ export interface MotionRig {
   wings: Record<'L' | 'R', { humerus: string; forearm: string; thumb: string; ribs: [string, string][]; hipRibs: string[]; finRibs: string[]; foldClips?: string[] }>;
   ears: Record<'L' | 'R', string[]>;
   proportions: { length: number; wingspan: number; shoulderHeight: number; hipHeight: number; headTop: number };
+  /** Jaw hinge; restCloseRad is the rotation about its local X that closes the lips at rest. Absent on the fixture rig. */
+  jaw?: { bone: string; openSign: number; maxOpenRad: number; restCloseRad?: number };
 }
