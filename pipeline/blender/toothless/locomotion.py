@@ -62,19 +62,26 @@ TROT = {
              "flex": 0.018, "tail": 0.05, "tailLift": 0.03},
 }
 
-# Gallop: rotary footfall (LH, RH, RF, LF), the spine gathering (arched) as the hinds swing under the chest and
-# stretching as they push off and the fores reach, one big bob and pitch rock per stride, the tail counterbalancing.
+# Gallop: a bounding, pouncing rotary gallop (LH, RH, RF, LF). The hinds land under the chest with the back bowed
+# and compress, then the spine uncoils and drives the body up into a long, high, stretched flight with the nose up and
+# the fores reaching; the fores catch the weight, the body pivots over them nose down and the back coils again as the
+# hinds swing forward through a lower, gathered flight. Height, pitch and arch are keyed over the cycle; the tail
+# counterbalances.
 GALLOP = {
-    "frames": 14, "speed": 6.5, "duty": 0.3, "offsets": (0.0, 0.65, 0.1, 0.55),
-    "front": {"centre": -0.92, "lift": 0.2, "land": 0.6, "peel": 0.45,
-              "distal": _keys(0.3, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 28), (0.3, -10), (0.6, 15), (0.85, 42)]),
-              "toes": _keys(0.3, [(0, 79), (0.72, 79)], [(0, 42), (0.3, 12), (0.7, 62), (0.88, 86)]),
-              "scapula": _keys(0.3, [(0, 16), (0.5, 2)], [(0, -16), (0.5, 6), (0.85, 18)])},
-    "hind": {"centre": 0.34, "lift": 0.18, "land": 0.6, "peel": 0.45,
-             "distal": _keys(0.3, [(0, 41), (0.5, 36), (0.88, 42)], [(0, 50), (0.3, 10), (0.62, 28), (0.875, 44)]),
-             "toes": _keys(0.3, [(0, 79), (0.7, 79)], [(0, 38), (0.3, 20), (0.69, 66), (0.875, 85)])},
-    "body": {"height": 0.96, "lean": -0.02, "bob": (0.045, 1, 2.95), "pitch": (0.05, 1, 0.31), "roll": 0.012,
-             "flex": 0.012, "tail": 0.04, "tailLift": 0.025, "arch": (0.12, 0.9)},
+    "frames": 16, "speed": 7.0, "duty": 0.26, "offsets": (0.0, 0.65, 0.1, 0.55),
+    "front": {"centre": -0.95, "lift": 0.2, "land": 0.35, "peel": 0.2,
+              "distal": _keys(0.26, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, -15), (0.6, 18), (0.85, 44)]),
+              "toes": _keys(0.26, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
+              "scapula": _keys(0.26, [(0, 18), (0.5, 2)], [(0, -18), (0.5, 8), (0.85, 20)])},
+    "hind": {"centre": 0.39, "lift": 0.24, "land": 0.3, "peel": 0.3,
+             "distal": _keys(0.26, [(0, 48), (0.5, 38), (0.88, 44)], [(0, 52), (0.3, 10), (0.62, 34), (0.875, 50)]),
+             "toes": _keys(0.26, [(0, 79), (0.68, 79)], [(0, 36), (0.3, 18), (0.69, 66), (0.875, 85)])},
+    "body": {"height": 0.95, "lean": -0.02,
+             "bob": [(0.0, -0.02), (0.17, -0.09), (0.3, -0.02), (0.45, 0.13), (0.58, 0.04), (0.72, -0.05),
+                     (0.85, -0.01), (0.94, 0.05)],
+             "pitch": [(0.0, 0.0), (0.2, 0.07), (0.38, 0.08), (0.55, 0.02), (0.72, -0.05), (0.9, -0.04)],
+             "arch": [(0.0, 0.13), (0.2, -0.04), (0.42, -0.2), (0.6, -0.1), (0.78, 0.08), (0.93, 0.21)],
+             "roll": 0.012, "flex": 0.012, "tail": 0.04, "tailLift": 0.035},
 }
 CYCLES = {"walk": WALK, "trot": TROT, "gallop": GALLOP}
 
@@ -115,8 +122,16 @@ def _seg(kind, a, b):
     return (Vector((r[b][1], r[b][2])) - Vector((r[a][1], r[a][2]))).length
 
 
-def leg_targets(cyc, kind, p):
-    """Toe-tip target (y, z) and the distal / toes angles of a leg at leg phase p."""
+def _rise(cyc, t):
+    """Body height above its baseline at cycle phase t (keyed bobs only; a sine bob is small and left out)."""
+    bob = cyc["body"]["bob"]
+    return _pchip(bob, t) if isinstance(bob, list) else 0.0
+
+
+def leg_targets(cyc, kind, p, off=0.0):
+    """Toe-tip target (y, z) and the distal / toes angles of a leg at leg phase p (leg offset `off`). A swinging paw
+    rides up with the body when it rises above the line between its lift-off and touchdown heights (the gallop's
+    flight): the leg stays reaching through the air instead of straining down to the ground."""
     c = cyc[kind]
     T = cyc["frames"] / FPS
     duty = cyc["duty"]
@@ -136,6 +151,9 @@ def leg_targets(cyc, kind, p):
     v = cyc["speed"] * T * (1.0 - duty)                 # ground speed in swing-phase units
     y = _hermite(paw_lo.x, paw_td.x, c["peel"] * v, c["land"] * v, w)      # 2-D vectors: .x = y, .y = z
     z = paw_lo.y + (paw_td.y - paw_lo.y) * w + c["lift"] * math.sin(math.pi * w ** 0.8)
+    t_lo, t_td = (off + duty) % 1.0, off % 1.0
+    base = _rise(cyc, t_lo) + (_rise(cyc, t_td) - _rise(cyc, t_lo)) * w
+    z += max(0.0, _rise(cyc, (off + p) % 1.0) - base)
     paw = Vector((y, z))
     return paw + lt * _dir(toes), distal, toes
 
@@ -143,18 +161,28 @@ def leg_targets(cyc, kind, p):
 def body_bones(cyc, t):
     """Body channels at cycle phase t (LH touchdown at 0): (root height, pitch) and the spine / neck / head / tail
     rotations. bob = (amplitude m, harmonic, phase) on a cosine, pitch = (rad, harmonic, phase) on a sine about the
-    lean; the hips roll toward the swinging hind leg, the spine flexes laterally against the stride, the chest
+    lean, or either (and arch) keyed as [(cycle phase, value)]; the hips roll toward the swinging hind leg, the spine flexes laterally against the stride, the chest
     counter-rolls; arch = (rad per spine bone, phase of the most gathered moment) bows the back up and stretches it
     flat; the neck soaks up the body's pitch and the arch so the head stays level; the tail wave trails the hips."""
     b = cyc["body"]
     w = 2 * math.pi * t
-    amp, h, ph = b["bob"]
-    height = b["height"] + amp * math.cos(h * w + ph)
-    pa, ph_, pph = b["pitch"]
-    pitch = b["lean"] + pa * math.sin(ph_ * w + pph)
+    if isinstance(b["bob"], list):                     # keyed over the cycle (the gallop's bound)
+        h = 1
+        height = b["height"] + _pchip(b["bob"], t)
+    else:
+        amp, h, ph = b["bob"]
+        height = b["height"] + amp * math.cos(h * w + ph)
+    if isinstance(b["pitch"], list):
+        pitch = b["lean"] + _pchip(b["pitch"], t)
+    else:
+        pa, ph_, pph = b["pitch"]
+        pitch = b["lean"] + pa * math.sin(ph_ * w + pph)
     roll = b["roll"] * math.sin(w)
-    aa, at = b.get("arch", (0.0, 0.0))
-    arch = aa * math.cos(w - 2 * math.pi * at)          # + = gathered (back bowed up), - = stretched
+    if isinstance(b.get("arch"), list):
+        arch = _pchip(b["arch"], t)
+    else:
+        aa, at = b.get("arch", (0.0, 0.0))
+        arch = aa * math.cos(w - 2 * math.pi * at)      # + = gathered (back bowed up), - = stretched
     bones = {"pelvis": (pitch, roll, 0.6 * b["flex"] * math.sin(w + 0.4))}
     for k, n in enumerate(("spine_01", "spine_02", "spine_03", "chest")):
         bend = arch if k == 0 else -0.667 * arch        # slopes +1, +1/3, -1/3, -1 x arch along the back
@@ -187,6 +215,25 @@ def _yz(v):
     return Vector((v.y, v.z))
 
 
+_REACH = {}
+
+
+def _reach(rig, kind, upper, lower):
+    """Longest root -> wrist / hock span the joint limits allow: the lower bone at either end of its anatomy.LIMBS
+    range (bind is bent, and the straight leg is past the limit). Measured once on the posed rig."""
+    if lower not in _REACH:
+        pbs = rig.pose.bones
+        spans = []
+        for lim in A.LIMBS[kind]["limits"][lower[:-2]]:
+            for n, ang in ((upper, 0.0), (lower, math.radians(lim))):
+                pbs[n].rotation_mode = "XYZ"
+                pbs[n].rotation_euler = (ang, 0.0, 0.0)
+            bpy.context.view_layer.update()
+            spans.append((pbs[lower].tail - pbs[upper].head).length)
+        _REACH[lower] = max(spans)
+    return _REACH[lower]
+
+
 def solve_leg(rig, kind, side, toe, distal, toes, scapula=None):
     """Close one leg onto its toe-tip target: scapula (front), the two-bone solve to the wrist / hock, then the
     distal and toe segments at their authored angles. Returns {bone: (x, 0, 0)} and the toe-tip miss (m)."""
@@ -209,7 +256,7 @@ def solve_leg(rig, kind, side, toe, distal, toes, scapula=None):
         a = (pbs[upper].tail - pbs[upper].head).length
         b = (pbs[lower].tail - pbs[lower].head).length
         span = mid - root
-        dist_ = max(abs(a - b) + 1e-4, min(a + b - 1e-4, span.length))
+        dist_ = max(abs(a - b) + 1e-4, min(_reach(rig, kind, upper, lower) - 1e-4, span.length))
         u = span.normalized()
         ang = math.acos(max(-1.0, min(1.0, (a * a + dist_ * dist_ - b * b) / (2 * a * dist_))))
         n = Vector((-u.y, u.x))                         # u turned +90 deg in the (y, z) plane
@@ -243,12 +290,13 @@ def cycle_frames(rig, name):
         for key, off in zip(LEGS, cyc["offsets"]):
             kind, side = key.split("_")
             p = (t - off) % 1.0
-            toe, distal, toes = leg_targets(cyc, kind, p)
+            toe, distal, toes = leg_targets(cyc, kind, p, off)
             scap = _pchip(cyc["front"]["scapula"], p) if kind == "front" else None
             leg, miss = solve_leg(rig, kind, side, toe, distal, toes, scap)
             bones.update(leg)
             r = report.setdefault(key, {"miss": 0.0, "range": {}})
-            r["miss"] = max(r["miss"], miss)
+            if p < cyc["duty"]:                              # a swinging paw short of its target is only in the air
+                r["miss"] = max(r["miss"], miss)
             for bn, e in leg.items():
                 lo, hi = r["range"].get(bn, (1e9, -1e9))
                 r["range"][bn] = (min(lo, math.degrees(e[0])), max(hi, math.degrees(e[0])))
@@ -278,5 +326,5 @@ def limit_report(report):
             a, b = lim[base]
             flag = "" if a <= lo and hi <= b else "  <-- OUTSIDE"
             out.append(f"{key:8s} {base:18s} {lo:7.1f} .. {hi:6.1f}  (limit {a} .. {b}){flag}")
-        out.append(f"{key:8s} worst toe miss {r['miss'] * 100:.2f} cm")
+        out.append(f"{key:8s} worst stance toe miss {r['miss'] * 100:.2f} cm")
     return out
