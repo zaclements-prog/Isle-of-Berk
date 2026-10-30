@@ -89,7 +89,7 @@ The engine reads gait timing from the clips instead of the `GAITS` table.
 
 1. Prototype: the walk cycle authored and solved in Blender, with playblasts for review. *(This PR: done.)*
 2. Polish the walk from review notes; add start and stop transitions and the turn-left and turn-right variants.
-3. Trot and gallop cycles (gallop: rotary footfall, spine flexion and extension, suspension phase).
+3. Trot and gallop cycles (gallop: rotary footfall, spine flexion and extension, suspension phase). *(Done: first pass.)*
 4. Bake and export: clips in `toothless.poses.glb` and the `locomotion` block in `poses.json`; schema tests.
 5. Engine: the LocomotionDriver and the cycle base layer.
 6. Engine: the planner contact schedule and swing rebasing from the clips; IK correction from the clip pose.

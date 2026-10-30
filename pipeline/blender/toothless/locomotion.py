@@ -37,9 +37,46 @@ WALK = {
     "hind": {"centre": 0.48, "lift": 0.11, "land": 0.5, "peel": 0.6,
              "distal": [(0.0, 35), (0.34, 33), (0.6, 38), (0.68, 46), (0.78, 10), (0.88, 25), (0.96, 38)],
              "toes": [(0.0, 79), (0.52, 79), (0.68, 40), (0.78, 22), (0.9, 66), (0.96, 85)]},
-    "body": {"height": 0.98, "lean": -0.03, "bob": 0.014, "pitch": 0.012, "roll": 0.035, "flex": 0.03, "tail": 0.07},
+    "body": {"height": 0.98, "lean": -0.03, "bob": (0.014, 2, -0.6), "pitch": (0.012, 2, -0.3), "roll": 0.035,
+             "flex": 0.03, "tail": 0.07},
 }
-CYCLES = {"walk": WALK}
+
+
+def _keys(duty, stance, swing):
+    """Absolute leg-phase keys from stance keys (fraction of stance, value) and swing keys (fraction of swing,
+    value): one channel shape serves every duty factor."""
+    return [(s * duty, v) for s, v in stance] + [(duty + w * (1.0 - duty), v) for w, v in swing]
+
+
+# Trot: diagonal pairs (LH + RF, RH + LF), a short float between pairs, the bob twice a cycle and little roll.
+TROT = {
+    "frames": 20, "speed": 3.0, "duty": 0.45, "offsets": (0.0, 0.5, 0.5, 0.0),
+    "front": {"centre": -0.86, "lift": 0.17, "land": 0.55, "peel": 0.6,
+              "distal": _keys(0.45, [(0, 42), (0.45, 48), (0.8, 50)], [(0, 30), (0.3, -5), (0.62, 15), (0.85, 40)]),
+              "toes": _keys(0.45, [(0, 79), (0.78, 79)], [(0, 45), (0.3, 15), (0.7, 62), (0.88, 86)]),
+              "scapula": _keys(0.45, [(0, 13), (0.5, 1)], [(0, -12), (0.5, 5), (0.85, 14)])},
+    "hind": {"centre": 0.46, "lift": 0.14, "land": 0.55, "peel": 0.6,
+             "distal": _keys(0.45, [(0, 35), (0.5, 33), (0.88, 40)], [(0, 46), (0.31, 10), (0.625, 25), (0.875, 38)]),
+             "toes": _keys(0.45, [(0, 79), (0.74, 79)], [(0, 40), (0.31, 22), (0.69, 66), (0.875, 85)])},
+    "body": {"height": 0.97, "lean": -0.03, "bob": (0.022, 2, -0.9), "pitch": (0.01, 2, -0.6), "roll": 0.015,
+             "flex": 0.018, "tail": 0.05, "tailLift": 0.03},
+}
+
+# Gallop: rotary footfall (LH, RH, RF, LF), the spine gathering (arched) as the hinds swing under the chest and
+# stretching as they push off and the fores reach, one big bob and pitch rock per stride, the tail counterbalancing.
+GALLOP = {
+    "frames": 14, "speed": 6.5, "duty": 0.3, "offsets": (0.0, 0.65, 0.1, 0.55),
+    "front": {"centre": -0.92, "lift": 0.2, "land": 0.6, "peel": 0.45,
+              "distal": _keys(0.3, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 28), (0.3, -10), (0.6, 15), (0.85, 42)]),
+              "toes": _keys(0.3, [(0, 79), (0.72, 79)], [(0, 42), (0.3, 12), (0.7, 62), (0.88, 86)]),
+              "scapula": _keys(0.3, [(0, 16), (0.5, 2)], [(0, -16), (0.5, 6), (0.85, 18)])},
+    "hind": {"centre": 0.34, "lift": 0.18, "land": 0.6, "peel": 0.45,
+             "distal": _keys(0.3, [(0, 41), (0.5, 36), (0.88, 42)], [(0, 50), (0.3, 10), (0.62, 28), (0.875, 44)]),
+             "toes": _keys(0.3, [(0, 79), (0.7, 79)], [(0, 38), (0.3, 20), (0.69, 66), (0.875, 85)])},
+    "body": {"height": 0.96, "lean": -0.02, "bob": (0.045, 1, 2.95), "pitch": (0.05, 1, 0.31), "roll": 0.012,
+             "flex": 0.012, "tail": 0.04, "tailLift": 0.025, "arch": (0.12, 0.9)},
+}
+CYCLES = {"walk": WALK, "trot": TROT, "gallop": GALLOP}
 
 
 def _pchip(keys, p):
@@ -105,22 +142,31 @@ def leg_targets(cyc, kind, p):
 
 def body_bones(cyc, t):
     """Body channels at cycle phase t (LH touchdown at 0): (root height, pitch) and the spine / neck / head / tail
-    rotations. The hips roll toward the swinging hind leg, the spine flexes laterally against the stride, the chest
-    counter-rolls, the neck soaks up the bob so the head stays level, and the tail wave trails the hips."""
+    rotations. bob = (amplitude m, harmonic, phase) on a cosine, pitch = (rad, harmonic, phase) on a sine about the
+    lean; the hips roll toward the swinging hind leg, the spine flexes laterally against the stride, the chest
+    counter-rolls; arch = (rad per spine bone, phase of the most gathered moment) bows the back up and stretches it
+    flat; the neck soaks up the body's pitch and the arch so the head stays level; the tail wave trails the hips."""
     b = cyc["body"]
     w = 2 * math.pi * t
-    height = b["height"] + b["bob"] * math.cos(2 * w - 0.6)
-    pitch = b["lean"] + b["pitch"] * math.sin(2 * w - 0.3)
+    amp, h, ph = b["bob"]
+    height = b["height"] + amp * math.cos(h * w + ph)
+    pa, ph_, pph = b["pitch"]
+    pitch = b["lean"] + pa * math.sin(ph_ * w + pph)
     roll = b["roll"] * math.sin(w)
+    aa, at = b.get("arch", (0.0, 0.0))
+    arch = aa * math.cos(w - 2 * math.pi * at)          # + = gathered (back bowed up), - = stretched
     bones = {"pelvis": (pitch, roll, 0.6 * b["flex"] * math.sin(w + 0.4))}
     for k, n in enumerate(("spine_01", "spine_02", "spine_03", "chest")):
-        bones[n] = (0.0, -0.35 * roll if n == "chest" else 0.0, -b["flex"] * math.sin(w + 0.4 - 0.5 * k))
+        bend = arch if k == 0 else -0.667 * arch        # slopes +1, +1/3, -1/3, -1 x arch along the back
+        bones[n] = (bend, -0.35 * roll if n == "chest" else 0.0, -b["flex"] * math.sin(w + 0.4 - 0.5 * k))
+    steady = -(pitch - b["lean"]) - b["lean"] * 0.3 + arch    # the chest ends tipped -arch: lift the neck by as much
     for k, n in enumerate(("neck_01", "neck_02", "neck_03", "neck_04")):
-        bones[n] = (-0.3 * pitch + 0.008 * math.sin(2 * w - 1.0 - 0.3 * k), 0.0, 0.5 * b["flex"] * math.sin(w - 0.2 * k))
-    bones["head"] = (-0.4 * pitch - 0.01 * math.sin(2 * w - 1.6), 0.0, 0.6 * b["flex"] * math.sin(w - 0.9))
+        bones[n] = (0.25 * steady + 0.008 * math.sin(h * w - 1.0 - 0.3 * k), 0.0, 0.5 * b["flex"] * math.sin(w - 0.2 * k))
+    bones["head"] = (0.1 * steady - 0.01 * math.sin(h * w - 1.6), 0.0, 0.6 * b["flex"] * math.sin(w - 0.9))
+    lift = b.get("tailLift", 0.02)
     for k in range(12):
         lag = 0.9 + 0.35 * k
-        bones[f"tail_{k + 1:02d}"] = (0.02 * math.sin(2 * w - lag) + (0.03 if k < 4 else -0.02),
+        bones[f"tail_{k + 1:02d}"] = (lift * math.sin(h * w - lag) + (0.03 if k < 4 else -0.02),
                                       0.0, b["tail"] * (0.4 + 0.05 * k) * math.sin(w - lag))
     return (height, pitch), bones
 
