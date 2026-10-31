@@ -220,14 +220,17 @@ def loop_line(frames, fr, c):
     return line
 
 
-def apply_loop_frame(rig, fr, frames, c):
+def apply_loop_frame(rig, fr, frames, c, body_fn=None):
     """Pose a loop frame: the body from the library pose, laid along the looping body line, the tail's rudder sway,
     then the wings."""
     LIB.apply_pose(rig, {"root": fr["root"], "wings": (0.0, 0.0, 0.0), "bones": fr["bones"]})
     mean = sum(f["chestZ"] for f in frames) / len(frames)
     head_z = rig.data.bones["head"].head_local.z + (mean - F.CHEST_Z) + c["headFollow"] * (fr["chestZ"] - mean)
-    F._apply_line(rig, fr, frames, loop_line(frames, fr, c), head_z=head_z)
-    sway = c.get("tailSway", 0.0)
+    if body_fn is not None:
+        body_fn(rig, fr, head_z)
+    else:
+        F._apply_line(rig, fr, frames, loop_line(frames, fr, c), head_z=head_z)
+    sway = c.get("tailSway", 0.0) if body_fn is None else 0.0
     if sway:
         n = fr["loop"]
         for j in range(12):
