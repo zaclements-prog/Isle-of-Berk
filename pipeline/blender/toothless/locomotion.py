@@ -37,8 +37,12 @@ WALK = {
     "hind": {"centre": 0.48, "lift": 0.11, "land": 0.5, "peel": 0.6,
              "distal": [(0.0, 35), (0.34, 33), (0.6, 38), (0.68, 46), (0.78, 10), (0.88, 25), (0.96, 38)],
              "toes": [(0.0, 79), (0.52, 79), (0.68, 40), (0.78, 22), (0.9, 66), (0.96, 85)]},
-    "body": {"height": 0.98, "lean": -0.03, "bob": (0.014, 2, -0.6), "pitch": (0.012, 2, -0.3), "roll": 0.035,
-             "flex": 0.03, "tail": 0.07},
+    "body": {"height": 0.95, "lean": -0.03, "bob": (0.0, 1, 0.0), "pitch": (0.0, 1, 0.0), "roll": 0.035,
+             "flex": 0.03, "tail": 0.07,
+             # the body line: a bob per step (amplitude m, harmonic, phase at the neck base) running back along the
+             # body over waveLength m per stride, so shoulders and hips rock in turn and the tail carries the wave on
+             "path": (0.022, 2, 3.12), "waveLength": 5.0, "neckDrop": 0.05, "headLevel": 0.3, "follow": 0.5,
+             "tailDroop": (0.22, 0.12)},
 }
 
 
@@ -51,15 +55,17 @@ def _keys(duty, stance, swing):
 # Trot: diagonal pairs (LH + RF, RH + LF), a short float between pairs, the bob twice a cycle and little roll.
 TROT = {
     "frames": 20, "speed": 3.0, "duty": 0.45, "offsets": (0.0, 0.5, 0.5, 0.0),
-    "front": {"centre": -0.86, "lift": 0.17, "land": 0.55, "peel": 0.6,
+    "front": {"centre": -0.97, "lift": 0.17, "land": 0.55, "peel": 0.6,
               "distal": _keys(0.45, [(0, 42), (0.45, 48), (0.8, 50)], [(0, 30), (0.3, -5), (0.62, 15), (0.85, 40)]),
               "toes": _keys(0.45, [(0, 79), (0.78, 79)], [(0, 45), (0.3, 15), (0.7, 62), (0.88, 86)]),
               "scapula": _keys(0.45, [(0, 13), (0.5, 1)], [(0, -12), (0.5, 5), (0.85, 14)])},
     "hind": {"centre": 0.46, "lift": 0.14, "land": 0.55, "peel": 0.6,
              "distal": _keys(0.45, [(0, 35), (0.5, 33), (0.88, 40)], [(0, 46), (0.31, 10), (0.625, 25), (0.875, 38)]),
              "toes": _keys(0.45, [(0, 79), (0.74, 79)], [(0, 40), (0.31, 22), (0.69, 66), (0.875, 85)])},
-    "body": {"height": 0.97, "lean": -0.03, "bob": (0.022, 2, -0.9), "pitch": (0.01, 2, -0.6), "roll": 0.015,
-             "flex": 0.018, "tail": 0.05, "tailLift": 0.03},
+    "body": {"height": 0.94, "lean": -0.03, "bob": (0.0, 1, 0.0), "pitch": (0.0, 1, 0.0), "roll": 0.015,
+             "flex": 0.018, "tail": 0.05,
+             "path": (0.032, 2, 2.82), "waveLength": 5.0, "neckDrop": 0.06, "headLevel": 0.3, "follow": 0.5,
+             "tailDroop": (0.2, 0.12)},
 }
 
 # Gallop: a bounding, pouncing rotary gallop (LH, RH, RF, LF). The hinds land under the chest with the back bowed
@@ -128,6 +134,9 @@ def _smooth(keys, t, n):
 def _chan(body, name, t):
     """A keyed body channel at cycle phase t: smoothed when the body asks for it (body["smooth"] harmonics)."""
     keys = body[name]
+    if isinstance(keys, tuple):                       # (amplitude, harmonic, phase) on a cosine
+        amp, h, ph = keys
+        return amp * math.cos(2 * math.pi * h * t + ph)
     return _smooth(keys, t % 1.0, body["smooth"]) if body.get("smooth") else _pchip(keys, t)
 
 
@@ -162,8 +171,8 @@ LEAD_Y = A.NECK[0][1][1]          # the neck base: the body line's leading point
 def _line(cyc, t, y):
     """The travelling line's height offset at rest-y `y` (m, +Y behind) and cycle phase t: what the neck base had
     (y - LEAD_Y) / stride of a cycle earlier. The wave stands still in the world while the body runs through it."""
-    stride = cyc["speed"] * cyc["frames"] / FPS
-    return cyc["body"].get("pathGain", 1.0) * _chan(cyc["body"], "path", t - (y - LEAD_Y) / stride)
+    wave = cyc["body"].get("waveLength") or cyc["speed"] * cyc["frames"] / FPS    # default: the stride (fixed in
+    return cyc["body"].get("pathGain", 1.0) * _chan(cyc["body"], "path", t - (y - LEAD_Y) / wave)  # the world)
 
 
 def leg_targets(cyc, kind, p, off=0.0):
@@ -397,8 +406,17 @@ def _path_body(rig, cyc, t, bones):
     data = rig.data.bones
     pelvis_rest = data["pelvis"].head_local
 
+    tail0, tail1 = data["tail_01"].head_local.y, data["tail_12"].tail_local.y
+    droop, curl = b.get("tailDroop", (0.0, 0.0))
+
+    def carriage(y):
+        """The tail hung low through its middle and its tip turned up (m below its rest line)."""
+        u = max(0.0, (y - tail0) / (tail1 - tail0))
+        return -droop * math.sin(math.pi * min(1.0, u / 1.2)) + curl * max(0.0, (u - 0.6) / 0.4) ** 2
+
     def target(p):
-        return (p.z + (b["height"] - pelvis_rest.z) + b["lean"] * (pelvis_rest.y - p.y) + _line(cyc, t, p.y))
+        return (p.z + (b["height"] - pelvis_rest.z) + b["lean"] * (pelvis_rest.y - p.y) + _line(cyc, t, p.y)
+                + carriage(p.y))
     zp = target(pelvis_rest)
     nxt = data["pelvis"].tail_local
     run = pelvis_rest.y - nxt.y
