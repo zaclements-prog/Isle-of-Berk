@@ -585,8 +585,7 @@ def _fold_frames(rig, arm, hinges, names):
             back = mix(inner, R._rib_back(i))
             R.aim(rig, inner, back)
             if i < R.DOUBLED_RIBS:
-                straight = R._frame(back, up).to_quaternion()
-                q = straight.slerp(R._frame(side(R._rib_forward(i)), -up).to_quaternion(), hinges[i])
+                q = R.tip_fold(R._frame(back, up).to_quaternion(), s, hinges[i])
                 R.aim(rig, outer, q @ Vector((0, 1, 0)), up=q @ Vector((0, 0, 1)))
             else:
                 R.aim(rig, outer, back)
@@ -610,8 +609,8 @@ def pose_unfold(rig, k, ch, folded_basis):
     # ripple), instead of flipping over as a block in a sixth of a second
     hinges = []
     for i in range(RIBS):
-        lag = 0.06 * (R.DOUBLED_RIBS - 1 - i) if i < R.DOUBLED_RIBS else 0.0
-        hinges.append(1.0 - _ease(max(0.0, min(1.0, (k - lag) / 0.8))))
+        lag = 0.04 * (R.DOUBLED_RIBS - 1 - i) if i < R.DOUBLED_RIBS else 0.0
+        hinges.append(1.0 - _ease(max(0.0, min(1.0, (k - lag) / 0.88))))
     plan = {}
     cache = {}
     for g, delay in UNFOLD_GROUPS:
