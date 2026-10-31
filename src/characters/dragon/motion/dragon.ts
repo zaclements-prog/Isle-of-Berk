@@ -3,7 +3,7 @@ import type { InputState } from '../../../core/input';
 import { mulberry32 } from '../../../core/rng';
 import type { CollisionWorld, RayHit, SphereContact } from '../../../world/collision';
 import { BodyKinematics, DragonController, createIntent, type MoveIntent } from './controller';
-import { BodySolver, type ClimbRide } from './bodySolver';
+import { BodySolver, type BodyPose, type ClimbRide } from './bodySolver';
 import { ClimbController } from './climbing';
 import { FootPlanner, type PlannerBody } from './footPlanner';
 import { GAITS, GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
@@ -136,6 +136,8 @@ export class DragonCharacter {
   };
   private readonly guardDepth = [0, 0, 0, 0];
   private readonly backProbe = new THREE.Vector3();
+  private readonly pinchAxis = new THREE.Vector3();
+  private readonly pinchQuat = new THREE.Quaternion();
   private readonly roughPts: [number, number, number][] = Array.from({ length: 16 }, () => [0, 0, 0]);
   /** The last roughCap reading (m off the plane of the ground ahead), and how long the trot cap still holds (s). */
   roughness = 0;
@@ -289,7 +291,11 @@ export class DragonCharacter {
       const ahead = t.planner.strainLookahead;
       const predReach = st + ahead * (st - this.prevStretch[i]);
       const predMargin = m + ahead * (m - this.prevMargin[i]);
-      this.strain[i] = Math.max(predReach, 1 - predMargin / deg(t.legs.limitMarginDeg));
+      // (not the joint-margin term in the gallop: at 10 m/s the margin swings fast enough that its extrapolation
+      // predicts limits the stride never reaches, cutting a forelimb's stance short every stride; the reach term and
+      // the ground guard cover it)
+      const marginStrain = (1 - predMargin / deg(t.legs.limitMarginDeg)) * (1 - this.gait.gallopWeight);
+      this.strain[i] = Math.max(predReach, marginStrain);
       this.prevStretch[i] = st;
       this.prevMargin[i] = m;
       this.legs.hip(i, s, this.hips[i]);
@@ -327,6 +333,15 @@ export class DragonCharacter {
     this.blendOwnedLegs();
     s.fk();
     this.guardLegs(pose.bodyQuat);
+    // twice: pitching the nose up turns a leg held at its limit with the body, so one lift leaves part of the pinch
+    const pinchSum = [0, 0];
+    for (let pass = 0; pass < 2 && this.measurePinch(); pass++) {
+      pinchSum[0] += this.body.pinch[0];
+      pinchSum[1] += this.body.pinch[1];
+      this.liftForPinch(pose);
+    }
+    this.body.pinch[0] = pinchSum[0];
+    this.body.pinch[1] = pinchSum[1];
     this.secondary.applyAppendages(s);
     // 8) face (M6)
     for (const h of this.hooks.face) h(this, dt);
@@ -400,6 +415,7 @@ export class DragonCharacter {
   private applyLoco(): void {
     this.body.authored = this.loco.weight;
     this.body.bobOffset = this.loco.bob;
+    this.body.authoredCrouch = this.loco.crouch;
     this.secondary.authored = this.loco.weight;
     this.wings.extraLift = this.loco.wingLift;
   }
@@ -613,6 +629,48 @@ export class DragonCharacter {
       this.legs.margin[i] = k.margin[i];
     }
     s.fk();
+  }
+
+  /**
+   * A planted paw left under its contact by a leg folded to its limit (a fore paw as a braking gallop's bob comes
+   * down): lift the pelvis by the hind pinch and pitch the nose up by what the front needs beyond it, then re-solve
+   * the legs, this step. The body's springs carry the lift on from the next step (BodySolver.pinch).
+   */
+  private liftForPinch(pose: BodyPose): void {
+    const s = this.skeleton;
+    const [ph, pf] = this.body.pinch;
+    const pel = this.body.pelvis;
+    const dp = Math.atan2(Math.max(0, pf - ph), this.body.feetLength);
+    s.localPos[pel].y += ph;
+    pose.pelvisPos.y += ph;
+    if (dp > 0) {
+      this.pinchAxis.set(1, 0, 0).applyQuaternion(pose.bodyQuat);
+      this.pinchQuat.setFromAxisAngle(this.pinchAxis, -dp); // −pitch about the lateral axis lifts the nose
+      s.localQuat[pel].premultiply(this.pinchQuat);
+      pose.bodyQuat.premultiply(this.pinchQuat);
+      pose.pitch += dp;
+    }
+    for (let i = 0; i < 4; i++) this.legBones[i].forEach((b, k) => s.localQuat[b].copy(this.legPre[i][k]));
+    s.fk();
+    this.legs.solve(s, this.targets, pose.bodyQuat);
+    this.blendOwnedLegs();
+    s.fk();
+    this.guardLegs(pose.bodyQuat);
+  }
+
+  /** Planted paws the leg left under their contact (a leg folded to its limit): true when there is any. */
+  private measurePinch(): boolean {
+    const pinch = this.body.pinch;
+    pinch[0] = pinch[1] = 0;
+    for (let i = 0; i < 4; i++) {
+      const p = this.planner.paws[i];
+      if (!p.planted || p.posed || this.own[i] > 0) continue;
+      this.legs.soleWorld(i, this.skeleton, this.guardSole);
+      const d = p.pos.y - this.guardSole.y - 0.003; // a few millimetres of IK residue is not a pinch
+      const pr = i === 1 || i === 3 ? 1 : 0;
+      if (d > pinch[pr]) pinch[pr] = d;
+    }
+    return pinch[0] > 0 || pinch[1] > 0;
   }
 
   /**

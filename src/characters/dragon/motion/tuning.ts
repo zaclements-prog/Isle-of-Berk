@@ -30,7 +30,7 @@ export interface MotionTuning {
     crouchWalk: number; crouchTrot: number; crouchGallop: number;
     footfallImpulse: number; bobWalk: number; bobTrot: number; rockGallopDeg: number; flexGallopDeg: number;
     leanGain: number; maxLeanDeg: number; accelPitchDeg: number; maxAccelPitchDeg: number;
-    bendGain: number; maxBendDeg: number; shortfallLower: number; terrainLookahead: number;
+    bendGain: number; maxBendDeg: number; shortfallLower: number; pinchRaise: number; terrainLookahead: number;
     /** Contacts with |normal.y| below this (steeper than ~50°) push the body sideways; flatter ones belong to the body solver. */
     wallNormalY: number;
     /** Lateral-bend share for spine_01, spine_02, spine_03, chest (should sum near 1). */
@@ -199,6 +199,8 @@ export interface MotionTuning {
     fadeSpeedLo: number; fadeSpeedHi: number; blendTime: number; bobGain: number; gains: number[]; adoptDutyOver: number;
     turnCurveLo: number; turnCurveHi: number; roughLo: number; roughHi: number; raiseFade: number;
     strainLo: number; strainHi: number; fallTime: number;
+    /** Per gait (walk, trot, gallop): how much lower (m) the authored carriage holds the shoulders, by cycle weight. */
+    crouch: number[];
   };
   /** Face and mood (M6, spec §6.12). pupilByMood / earsByMood follow MOODS: calm, curious, excited, tired, aggressive. */
   face: {
@@ -263,7 +265,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   body: {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
-    leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1,
+    leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1, pinchRaise: 1,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
     crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
@@ -296,7 +298,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
   rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2, roughHold: 2 },
   loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
-    strainLo: 0.93, strainHi: 0.99, fallTime: 0.08 },
+    strainLo: 0.93, strainHi: 0.99, fallTime: 0.08, crouch: [0.08, 0.08, 0] },
   face: {
     blinkMin: 2, blinkMax: 6, doubleBlink: 0.18, doubleGap: 0.12, blinkClose: 0.07, blinkHold: 0.04, blinkOpen: 0.12,
     turnBlinkRate: 2.5, turnBlinkGap: 0.8, moodOmega: 1.2, pupilOmega: 6, earOmega: 5,

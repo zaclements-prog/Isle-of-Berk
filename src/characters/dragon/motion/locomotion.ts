@@ -41,6 +41,8 @@ export class LocomotionDriver {
   /** Pelvis bob (m) and wing lift (rad) of the blended cycles this step, already scaled by their weights. */
   bob = 0;
   wingLift = 0;
+  /** Extra crouch (m) of the authored carriage, weighted: the cycles are built on a lower body than standing. */
+  crouch = 0;
 
   constructor(
     private readonly layers: PoseLayerStack,
@@ -63,6 +65,7 @@ export class LocomotionDriver {
     this.weight = 0;
     this.bob = 0;
     this.wingLift = 0;
+    this.crouch = 0;
     for (const c of this.cycles) this.layers.set(c.clip, 0);
   }
 
@@ -82,11 +85,13 @@ export class LocomotionDriver {
     this.weight += clamp(target - this.weight, -down, up);
     this.bob = 0;
     this.wingLift = 0;
+    this.crouch = 0;
     const phase = gait.phase;
     for (const c of this.cycles) {
       const w = this.weight * gait.weights[c.gait] * (t.gains[c.gait] ?? 1);
       this.layers.set(c.clip, w, phase * c.duration, true, LOCO_ORDER);
       if (w <= 0) continue;
+      this.crouch += w * (t.crouch[c.gait] ?? 0);
       this.bob += w * sampleLoop(c.meta.rootBob, phase);
       this.wingLift += w * sampleLoop(c.meta.wingLift, phase);
     }

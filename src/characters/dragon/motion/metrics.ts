@@ -33,7 +33,8 @@ const _contact: SphereContact = { point: new THREE.Vector3(), normal: new THREE.
  * - paw penetration: any paw inside the ground, by its depth below the surface over it
  * - planted float: a planted sole above its ground
  * - body-proxy penetration, joint-limit violations, NaN resets
- * - boundedness: every non-root bone's max rotation in the last 10 s vs the first 10 s (the spin-bug check). It is
+ * - boundedness: every non-root bone's max rotation in the last 10 s vs the first 10 s (the spin-bug check; leg
+ *   hinges, clamped to their limits every step and held to them by the joint-limit metric, only against the cap). It is
  *   measured from the bone's pose at the first sample, not from the bind: the folded wing ribs rest ~170° from their
  *   spread bind (Ruling 3), while a spinning bone still sweeps toward π from wherever it started.
  */
@@ -53,6 +54,8 @@ export class MotionMetrics {
   private first: number[] = [];
   private last: number[] = [];
   private rest: THREE.Quaternion[] = [];
+  /** Leg bones: hinges clamped to anatomical limits each step (and checked by the joint-limit metric). */
+  private limited = new Set<number>();
 
   constructor(private readonly world: CollisionWorld, private readonly duration: number) {}
 
@@ -63,6 +66,7 @@ export class MotionMetrics {
       this.first = new Array(s.count).fill(0);
       this.last = new Array(s.count).fill(0);
       this.rest = s.localQuat.map((q) => q.clone());
+      this.limited = new Set(d.legs.legs.flatMap((l) => l.limits.map((lim) => lim.bone)));
     }
     for (let i = 0; i < 4; i++) {
       const paw = d.planner.paws[i];
@@ -121,7 +125,11 @@ export class MotionMetrics {
       for (let b = 0; b < this.first.length; b++) {
         bf = Math.max(bf, this.first[b]);
         bl = Math.max(bl, this.last[b]);
-        if (this.last[b] > this.first[b] + L.boundedGrowth || this.last[b] > L.boundedMax) {
+        // a joint-limited leg bone sweeps its hinge range in any stride (a hind leg trailing to its femur limit in a
+        // tight turning walk): how much of that range two 10 s samples happen to catch is not growth. It keeps the
+        // absolute cap, and the joint-limit metric holds it to its range every step.
+        const grew = !this.limited.has(b) && this.last[b] > this.first[b] + L.boundedGrowth;
+        if (grew || this.last[b] > L.boundedMax) {
           failures.push(`bone #${b} rotation grew ${this.first[b].toFixed(2)} → ${this.last[b].toFixed(2)} rad`);
           break;
         }
