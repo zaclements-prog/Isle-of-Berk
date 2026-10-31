@@ -34,6 +34,8 @@ interface Flown {
   maxBank: number;
   minRoll: number;
   maxRoll: number;
+  /** Largest rise in forward speed (m/s) above the landing's entry speed. */
+  landSpeedUp: number;
 }
 
 async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, seconds: number, cameraYaw: (t: number) => number = () => 0): Promise<Flown> {
@@ -42,11 +44,12 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
   const d = new DragonCharacter({ rig: a.rig, world, clips: a.clips, posesMeta: a.posesMeta, seed: 1 });
   d.spawn(0, -300, 0);
   const tb = createToothlessBrain(d, a.rig, {});
-  const r: Flown = { d, tb, phases: [], accH: 0, accP: 0, minH: Infinity, maxH: -Infinity, handGait: -1, handSpeed: -1, maxBank: 0, minRoll: 0, maxRoll: 0 };
+  const r: Flown = { d, tb, phases: [], accH: 0, accP: 0, minH: Infinity, maxH: -Infinity, handGait: -1, handSpeed: -1, maxBank: 0, minRoll: 0, maxRoll: 0, landSpeedUp: 0 };
   let prevH = d.body.pose.pelvisPos.y;
   let prevP = d.body.pose.pitch;
   let dh0 = 0;
   let dp0 = 0;
+  let landV0 = 0;
   for (let k = 0; k < Math.round(seconds / DT); k++) {
     const t = k * DT;
     const p = plan(t);
@@ -54,6 +57,8 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
     d.update({ input: input(p.keys, p.press ?? []), cameraYaw: cameraYaw(t), cameraPitch: LEVEL, cameraPos: CAM }, DT);
     const ph = tb.flight.phase;
     if (r.phases[r.phases.length - 1] !== ph) r.phases.push(ph);
+    if (ph === 'landing' && was !== 'landing') landV0 = d.kin.speed;
+    if (ph === 'landing') r.landSpeedUp = Math.max(r.landSpeedUp, d.kin.speed - landV0);
     if (was === 'landing' && ph === 'idle') {
       r.handGait = d.gait.phase;
       r.handSpeed = d.kin.speed;
@@ -164,6 +169,7 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
     }, 20, () => 0);
     expect(r.phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'settle', 'idle']);
     expect(r.d.nanResets).toBe(0);
+    expect(r.landSpeedUp).toBeLessThan(0.3);                      // a slow landing never speeds up
     expect(r.accH).toBeLessThan(0.035);
   });
 

@@ -389,8 +389,9 @@ export class FlightAction implements DragonAction {
     this.clipW = 0;
     this.v0 = this.speed * Math.cos(this.gamma);
     this.fedFeet = false;
-    // the touchdown spot: the clip's travel to touchdown, plus the speed gap closing over its approach
-    const dist = sampleFlight(m.x!, td) + (this.v0 - (m.speed0 ?? this.v0)) * 0.5 * flare;
+    // the touchdown spot: the travel landSpeed gives up to touchdown
+    let dist = 0;
+    for (let t = 0; t < td; t += 1 / 120) dist += this.landSpeed(m, t, flare) / 120;
     _p.set(this.pos.x + Math.sin(this.heading) * dist, 0, this.pos.z + Math.cos(this.heading) * dist);
     const g = d.world.groundAt(_p.x, _p.z, this.pos.y + 2, 60, _hit);
     this.ground = g ? g.point.y : this.groundBelow(d);
@@ -417,8 +418,7 @@ export class FlightAction implements DragonAction {
     const w = smoothstep(0, 0.5, t);
     const h = this.ground + sampleFlight(m.height, t) + this.clipOff * (1 - smoothstep(0, flare, t)) + bob * (1 - w);
     const pitch = lerp(att + this.pitchOff, sampleFlight(m.pitch, t), w);
-    let dx = sampleFlight(m.x!, t) - sampleFlight(m.x!, t0);
-    dx += (this.v0 - (m.speed0 ?? this.v0)) * (1 - smoothstep(0, flare, t)) * dt;
+    const dx = t > t0 ? this.landSpeed(m, t, flare) * (t - t0) : 0;
     const steer = 1 - smoothstep(0, flare, t);                     // small corrections until the flare, then committed
     this.yawRate = clamp(angleDiff(this.heading, d.cameraYaw) * c.headingGain, -deg(c.maxTurnRateDeg), deg(c.maxTurnRateDeg)) * steer * 0.5;
     this.heading = wrapAngle(this.heading + this.yawRate * dt);
@@ -449,6 +449,18 @@ export class FlightAction implements DragonAction {
       this.t = 0;
       this.clip = null;
     }
+  }
+
+  /**
+   * Forward speed (m/s) through a landing clip at its time t. Coming in slower than the clip's own approach, he never
+   * speeds up: the clip's speed, capped at the entry speed (so he holds it until the flare brakes below it). Faster,
+   * the gap to the clip's speed closes by the flare.
+   */
+  private landSpeed(m: FlightClipMeta, t: number, flare: number): number {
+    const h = 1 / 60;
+    const clip = (sampleFlight(m.x!, t + h) - sampleFlight(m.x!, Math.max(0, t - h))) / (t + h - Math.max(0, t - h));
+    if (this.v0 <= (m.speed0 ?? this.v0)) return Math.min(this.v0, clip);
+    return clip + (this.v0 - (m.speed0 ?? this.v0)) * (1 - smoothstep(0, flare, t));
   }
 
   private stepSettle(_d: DragonCharacter, _dt: number): void {
