@@ -87,12 +87,40 @@ The engine reads gait timing from the clips instead of the `GAITS` table.
 
 ## Tasks
 
-1. Prototype: the walk cycle authored and solved in Blender, with playblasts for review. *(This PR: done.)*
+1. Prototype: the walk cycle authored and solved in Blender, with playblasts for review. *(Done.)*
 2. Polish the walk from review notes; add start and stop transitions and the turn-left and turn-right variants.
-3. Trot and gallop cycles (gallop: rotary footfall, spine flexion and extension, suspension phase). *(Done: first pass.)*
-4. Bake and export: clips in `toothless.poses.glb` and the `locomotion` block in `poses.json`; schema tests.
-5. Engine: the LocomotionDriver and the cycle base layer.
-6. Engine: the planner contact schedule and swing rebasing from the clips; IK correction from the clip pose.
-7. Gates: all course and M6 scripts green, plus new loco-specific checks (cycle-phase continuity, no pops on gait
-   change).
-8. Review: lab recordings (cinematic, overlay-free) comparing the authored and procedural motion, then the progress log.
+   *(Walk polished: one body line, panther carriage. Transitions and turn variants are still open: until then the
+   cycles fade out in tight turns.)*
+3. Trot and gallop cycles. *(Done. The gallop was iterated on review notes: a bound, a cat's spine, panther flow,
+   then one travelling line through the air for the spine and tail, with the wave enlarged for more pounce.)*
+4. Bake and export: clips in `toothless.poses.glb` and the `locomotion` block in `poses.json` (v3); schema tests.
+   *(Done.)*
+5. Engine: the LocomotionDriver. *(Done; see "As built" below.)*
+6. Engine: the planner contact schedule from the clips. *(Partly done: the gallop takes its authored duty, while the
+   walk and trot keep gait.ts's, which is within 0.05. Swing rebasing and clip leg shapes are deferred; the legs
+   stay the planner's and the IK's.)*
+7. Gates: all course and M6 scripts green. *(Done: the 19 course scripts also run with the pose library, i.e. with
+   authored locomotion on, and pass.)*
+8. Review: lab recordings with authored locomotion, then the progress log.
+
+## As built (engine)
+
+- **Layers.** The cycles play as *additive* pose layers on the pelvis, spine, neck, head and tail, ordered under
+  the library layers (order −1), so a pose or action overrides the body it shapes. Each layer's weight is its gait's
+  weight in the gait engine; its time is the gait phase.
+- **Body solver and secondary motion.**
+  - The per-frame `rootBob` is added to the pelvis height after the body solver's height spring.
+  - The procedural walk/trot bob, gallop rock and gallop spine flex fade out by the authored weight.
+  - The tail springs keep their dynamics but lose their static droop and gallop raise.
+  - The wing controller takes an unsprung `wingLift`.
+- **Fades.** The authored weight fades in with speed and falls within `loco.fallTime` when:
+  - he is climbing, scripted, or a pose owns the legs;
+  - in a tight turn (yaw rate divided by speed);
+  - on twisted ground, i.e. the four supports out of plane (`LH + RF ≠ LF + RH`);
+  - his head meets ground ahead (front raise);
+  - in the walk and trot, a planted leg nears full reach (contact comes first).
+- **Contact robustness** (needed with the cycles on, and kept for the procedural motion too):
+  - LegRig: a clamped humerus or femur re-aims the radius or tibia from the real joint position.
+  - The ground guard covers swinging paws, backs a paw out of a solid along its swing, and re-solves from the layered
+    pose.
+  - The planner steps short of an obstacle its arc can't clear within `maxLift`.
