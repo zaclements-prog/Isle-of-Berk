@@ -64,11 +64,22 @@ TAKEOFF = {
     "frontHang": {"scapula": 0.0, "humerus": -0.2, "radius": 0.5, "metacarpal": -1.3, "toes": 0.5},
                               # rad: the fore legs hanging relaxed in the air (upper arm a little back, elbow softly
                               # bent, wrist dropped toward the palm (- on this rig: + bends the paw back), toes curled)
-    "frontSwing": (1.2, 1.4, 1.6),   # rad per unit of spring swing: upper arm, forearm, wrist (they trail each other)
+    # the fore legs hang on springs that answer the forces of flight (each joint a damped spring about its hang angle;
+    # loose, not limp): the shoulder's vertical acceleration (the body hauled up on each downstroke, the chest heaving)
+    # swings the upper arm back and opens the elbow; nose-up pitch leaves a hanging arm pointing part way back toward
+    # the ground; the airflow trails the paws back; the forearm and wrist are driven by the joint above's swing, so each
+    # follows it late, like a whip
+    "armHz": (1.9, 2.5, 3.2),        # upper arm, forearm, wrist
+    "armDamp": 0.42,
+    "armAccel": (0.011, 0.007),      # rad per m/s^2 of shoulder acceleration: upper arm back, elbow open
+    "armGravity": 0.65,              # share of the body's pitch change the hanging arm cancels (1 = fully plumb)
+    "armDrag": 0.04,                 # rad back per m/s of forward speed
+    "armFollow": (0.45, 0.8),         # forearm, wrist: rad / (rad/s) of the joint above's swing velocity, trailing it
 }
 
 CHEST_Y, CHEST_Z = A.SPINE[4][1][1], A.SPINE[4][1][2]     # the chest joint (the wings' root) at rest
 PELVIS_Y, PELVIS_Z = A.SPINE[0][1][1], A.SPINE[0][1][2]
+ARM_LIMITS = {"humerus": (-1.1, 0.9), "radius": (-0.5, 1.9), "metacarpal": (-1.5, 1.5), "toes": (-1.3, 1.3)}  # rad, inside anatomy.LIMBS
 LEG_LEVEL = {"scapula": 0, "humerus": 0, "femur": 0, "radius": 1, "tibia": 1, "metacarpal": 2, "metatarsal": 2, "toes": 2}
 
 
@@ -224,6 +235,9 @@ def takeoff_frames(c=TAKEOFF):
     springs = {g: [[0.0, 0.0] for _ in range(3)] for g in ("front", "hind")}
     swing_hist = {g: [] for g in ("front", "hind")}
     lever = 0.0
+    arm_state = {side: {n: [0.0, 0.0] for n in ("humerus", "radius", "metacarpal")} for side in ("L", "R")}
+    arm_in = []
+    pitch_prev, pitch_off = None, 0.0
     for f in range(n + 1):
         t = f / FPS
         dt = 1 / FPS
@@ -272,6 +286,28 @@ def takeoff_frames(c=TAKEOFF):
                     s2 = _spring(springs[g][2], s1, hz * 1.6, c["legDamp"], dt)
                     swing_hist[g].append((s0, s1, s2))
                     ks[g] = (c["tuck"][gi] * ease_in, s0, s1, s2)
+                # the fore arms: forces at the shoulder -> chained springs, the right arm fed the left's inputs late
+                sp_now = c["forward"][0] + (c["forward"][1] - c["forward"][0]) * _ease((t - t_launch) / max(total - t_launch, 1e-6))
+                heave_acc = -c["heave"] * (2 * math.pi / c["period"]) ** 2 * math.sin(2 * math.pi * (u - 0.12))
+                a_sh = accel + heave_acc
+                d_pitch = pitch - (pitch_prev if pitch_prev is not None else pitch)
+                pitch_prev = pitch
+                pitch_off += d_pitch
+                arm_in.append((a_sh, pitch_off, sp_now))
+                arm_out = {}
+                for side in ("L", "R"):
+                    lag = c["sideLag"] if side == "R" else 0
+                    a_i, p_i, v_i = arm_in[max(0, len(arm_in) - 1 - lag)]
+                    st = arm_state[side]
+                    hz, dmp = c["armHz"], c["armDamp"]
+                    hum_t = -c["armAccel"][0] * a_i + c["armGravity"] * p_i - c["armDrag"] * v_i
+                    hum_prev_v = st["humerus"][1]
+                    hum = _spring(st["humerus"], hum_t, hz[0], dmp, dt)
+                    rad_t = -c["armAccel"][1] * a_i + c["armFollow"][0] * st["humerus"][1] / (2 * math.pi * hz[0])
+                    rad = _spring(st["radius"], rad_t, hz[1], dmp, dt)
+                    mc_t = -c["armFollow"][1] * st["radius"][1] / (2 * math.pi * hz[1])
+                    mc = _spring(st["metacarpal"], mc_t, hz[2], dmp, dt)
+                    arm_out[side] = {"humerus": hum, "radius": rad, "metacarpal": mc, "toes": -0.4 * mc}
                 legs = {}
                 for g, prefix in (("front", "front_"), ("hind", "hind_")):
                     b0, s0, s1, s2 = ks[g]
@@ -284,17 +320,12 @@ def takeoff_frames(c=TAKEOFF):
                                         {n: e for n, e in tuck.items() if n.startswith(prefix) and n.endswith(side)}, levels)
                         legs.update(part)
                         if g == "front":
-                            # the fore legs: from the launch reach into the relaxed hang, swung about it by the springs
-                            # (the upper arm swings back as the body is hauled up, the forearm and wrist trail it)
-                            hang = c["frontHang"]
-                            sw = c["frontSwing"]
-                            off_ = {"scapula": 0.0, "humerus": -sw[0] * r0, "radius": sw[1] * r1, "metacarpal": -sw[2] * r2,
-                                    "toes": 0.5 * sw[2] * r2}
-                            for part_name, val in hang.items():
+                            for part_name, val in c["frontHang"].items():
                                 bone = f"front_{part_name}_{side}"
                                 a = launch.get(bone, (0.0, 0.0, 0.0))
-                                tgt = val + off_[part_name]
-                                legs[bone] = (a[0] + (tgt - a[0]) * ease_in, 0.0, 0.0)
+                                dev = arm_out[side].get(part_name, 0.0)
+                                lo, hi = ARM_LIMITS.get(part_name, (-3.0, 3.0))
+                                legs[bone] = (a[0] + (min(hi, max(lo, val + dev)) - a[0]) * ease_in, 0.0, 0.0)
         sp = c["forward"][0] + (c["forward"][1] - c["forward"][0]) * _ease((t - t_launch) / max(total - t_launch, 1e-6))
         x += sp * dt if t >= t_launch else 0.0
         ch = segment_channels(c, u)
