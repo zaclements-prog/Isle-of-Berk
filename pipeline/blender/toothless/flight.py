@@ -362,7 +362,8 @@ def takeoff_frames(c=TAKEOFF):
         if not off or t_off == t:
             lever = (PELVIS_Y - CHEST_Y) * math.sin(pitch)
         chest_z = CHEST_Z + h + lever + heave
-        frames.append({"t": t, "x": x, "root": (rest_h + h, pitch), "bones": bones, "wing": ch, "unfold": unfold,
+        frames.append({"t": t, "x": x, "root": (rest_h + h, pitch), "bodyH": rest_h + h, "heave": heave, "pitch": pitch,
+                       "bones": bones, "wing": ch, "unfold": unfold,
                        "chestZ": chest_z, "lineW": line_w, "wave": c["waveSpeed"] + 0.2 * sp, "i": f, "tOff": t_off if off else t})
     # the airborne chest height carries on from the ground's: once off, chestZ is the body height plus the chest's
     # rest height (the pitch now comes out of the line), so join the two smoothly over the line's blend-in
@@ -435,12 +436,14 @@ def _apply_line(rig, fr, frames, line_fn=None, head_z=None):
         L._level_head(rig, bones, cur + (head_z - cur) * w)
 
 
-def apply_frame(rig, fr, folded_basis=None, frames=None):
+def apply_frame(rig, fr, folded_basis=None, frames=None, body_fn=None):
     """Pose a takeoff frame: body from LIB.apply_pose (wings spread at bind), the spine and tail laid along the body
     line in the air (frames: the whole takeoff, for the line's history), then the wings aimed from their channels,
     slerped from the folded wings by `unfold` (folded_basis: bone -> quaternion, the library's folded pose)."""
     LIB.apply_pose(rig, {"root": fr["root"], "wings": (0.0, 0.0, 0.0), "bones": fr["bones"]})
-    if frames is not None:
+    if body_fn is not None:
+        body_fn(rig, fr)
+    elif frames is not None:
         i = fr["i"]
         span = int(TAKEOFF["period"] * FPS)
         win = [frames[k]["chestZ"] for k in range(max(0, i - span), i + 1)]

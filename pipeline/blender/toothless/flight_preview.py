@@ -5,7 +5,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(os.path.dirname(HERE), "lib"), HERE]
 import bpy
 from mathutils import Vector
-import flight as F, flight_loops as FL, qa_render as QR
+import flight as F, flight_loops as FL, flight_chain as FC, qa_render as QR
 argv = sys.argv[sys.argv.index("--") + 1:]
 out, view, first, count = argv[0], argv[1], int(argv[2]), int(argv[3])
 res = (int(argv[4]), int(argv[5])) if len(argv) > 5 else (960, 540)
@@ -14,13 +14,32 @@ sc = bpy.context.scene
 rig = bpy.data.objects["ToothlessRig"]
 QR.setup_clay(sc)
 sc.display.shading.show_shadows = True
-CLIP = os.environ.get("CLIP", "takeoff")       # takeoff | flap | glide (loops: env CYCLES of them back to back)
+CLIP = os.environ.get("CLIP", "takeoff")       # takeoff | flap | glide, each also _chain (the shoulder-hung physics
+CHAIN = CLIP.endswith("_chain")                 # chain body); loops: env CYCLES of them back to back
+CLIP = CLIP.replace("_chain", "")
 if CLIP == "takeoff":
     frames = F.takeoff_frames()
     folded = F.folded_wing_basis(rig)
+    if CHAIN:
+        chain = FC.takeoff_chain(rig, frames)
+        span = int(F.TAKEOFF["period"] * F.FPS)
+        head_rest = rig.data.bones["head"].head_local.z
+
+        def body_fn(rig_, fr):
+            got = chain[fr["i"]]
+            if got is None or fr["lineW"] <= 0:
+                return
+            win = [frames[k]["chestZ"] for k in range(max(0, fr["i"] - span), fr["i"] + 1)]
+            steady = sum(win) / len(win)
+            FC.apply_chain(rig_, got[0], got[1], fr["lineW"], head_rest + (steady - F.CHEST_Z) + 0.25 * (fr["chestZ"] - steady))
 else:
     cfg = FL.FLAP if CLIP == "flap" else FL.GLIDE
     loop = FL.flap_frames() if CLIP == "flap" else FL.glide_frames()
+    if CHAIN:
+        lchain = FC.loop_chain(rig, loop, cfg)
+
+        def lbody_fn(rig_, fr, head_z):
+            FC.apply_chain(rig_, lchain[fr["i"]][0], lchain[fr["i"]][1], 1.0, head_z)
     cycles = int(os.environ.get("CYCLES", "2"))
     frames = [dict(loop[k % len(loop)], x=cfg["speed"] * k / F.FPS, _k=k % len(loop)) for k in range(cycles * len(loop))]
 
@@ -49,9 +68,9 @@ step = int(os.environ.get("STEP", "1"))
 for f in range(first, min(first + count, len(frames)), step):
     fr = frames[f]
     if CLIP == "takeoff":
-        F.apply_frame(rig, fr, folded, frames)
+        F.apply_frame(rig, fr, folded, frames, body_fn if CHAIN else None)
     else:
-        FL.apply_loop_frame(rig, loop[fr["_k"]], loop, cfg)
+        FL.apply_loop_frame(rig, loop[fr["_k"]], loop, cfg, lbody_fn if CHAIN else None)
     rig.location = (0, -fr["x"], 0)
     bpy.context.view_layer.update()
     h = fr["root"][0] - 1.02
