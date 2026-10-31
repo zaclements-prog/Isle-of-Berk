@@ -47,7 +47,8 @@ TAKEOFF = {
     # the body line: the spine and tail follow the chest's own path through the air, a point d m behind the chest
     # where the chest was d / waveSpeed s ago, so each downstroke hauls the chest up and the hips and tail answer
     # after it, the motion growing toward the tail tip like a whip
-    "waveSpeed": 6.0,         # m/s (plus half the forward speed)
+    "waveSpeed": 3.5,         # m/s (plus a fifth of the forward speed): the hips answer the shoulders ~0.35 s late
+    "trunkGain": 0.3,         # the swing grows this much from the shoulders to the hips (the trunk hangs from them)
     "whip": 0.8,              # the tail tip's swing over the line's, beyond the hips (x per tail length)
     "heave": 0.06,            # m: the chest hauled up within each downstroke, ahead of the rest of him
     "tailDroop": 0.10,        # m: the tail hung below the line through its middle in flight
@@ -79,6 +80,25 @@ TAKEOFF = {
 
 CHEST_Y, CHEST_Z = A.SPINE[4][1][1], A.SPINE[4][1][2]     # the chest joint (the wings' root) at rest
 PELVIS_Y, PELVIS_Z = A.SPINE[0][1][1], A.SPINE[0][1][2]
+# the anchor: the wing root on the shoulder blades. The wings hold him up from there, so the body's motion starts at
+# the shoulders and runs back through the spine to the hips and the tail, and forward up the neck
+ANCHOR_Y = A.MAIN_WING_L["root"][1]
+TAIL_LEN = 3.4
+
+
+def wave_height(d, past, now, c):
+    """Body-line height offset of a point d m behind the anchor (d < 0: ahead of it, toward the neck), given the
+    anchor's height when this point's delay began (`past`) and now: the point repeats the shoulders' motion late, its
+    swing growing toward the hips (the trunk hangs from the shoulders) and on along the tail (the whip); ahead of the
+    shoulders the neck base follows at half strength. c: trunkGain, whip, tailDroop."""
+    trunk = PELVIS_Y - ANCHOR_Y
+    if d < 0:
+        gain = 0.5
+    else:
+        gain = 1.0 + c.get("trunkGain", 0.0) * min(1.0, d / trunk) + c["whip"] * min(1.0, max(0.0, d - trunk) / TAIL_LEN)
+    beyond = max(0.0, d - trunk)
+    droop = c["tailDroop"] * math.sin(math.pi * min(1.0, beyond / (1.2 * TAIL_LEN)))
+    return (past - now) * gain - droop
 ARM_LIMITS = {"humerus": (-1.1, 0.9), "radius": (-0.5, 1.9), "metacarpal": (-1.5, 1.5), "toes": (-1.3, 1.3)}  # rad, inside anatomy.LIMBS
 LEG_LEVEL = {"scapula": 0, "humerus": 0, "femur": 0, "radius": 1, "tibia": 1, "metacarpal": 2, "metatarsal": 2, "toes": 2}
 
@@ -343,7 +363,7 @@ def takeoff_frames(c=TAKEOFF):
             lever = (PELVIS_Y - CHEST_Y) * math.sin(pitch)
         chest_z = CHEST_Z + h + lever + heave
         frames.append({"t": t, "x": x, "root": (rest_h + h, pitch), "bones": bones, "wing": ch, "unfold": unfold,
-                       "chestZ": chest_z, "lineW": line_w, "wave": c["waveSpeed"] + 0.5 * sp, "i": f, "tOff": t_off if off else t})
+                       "chestZ": chest_z, "lineW": line_w, "wave": c["waveSpeed"] + 0.2 * sp, "i": f, "tOff": t_off if off else t})
     # the airborne chest height carries on from the ground's: once off, chestZ is the body height plus the chest's
     # rest height (the pitch now comes out of the line), so join the two smoothly over the line's blend-in
     for fr in frames:
@@ -353,25 +373,21 @@ def takeoff_frames(c=TAKEOFF):
 
 
 def line_z(frames, i, y, z, c=TAKEOFF):
-    """Height of the body line at rest point (y, z) (armature space, +Y behind) in frame i: the chest's height
-    (y - CHEST_Y) / wave s ago, its swing amplified beyond the hips toward the tail tip, the tail hung below it."""
+    """Height of the body line at rest point (y, z) (armature space, +Y behind) in frame i: the anchor's (shoulders')
+    height |y - ANCHOR_Y| / wave s ago, shaped by wave_height. chestZ is the anchor's height track."""
     fr = frames[i]
-    d = max(0.0, y - CHEST_Y)
-    td = max(fr["t"] - d / fr["wave"], fr.get("tOff", 0.0))   # the line starts at lift-off: no history before it
+    d = y - ANCHOR_Y
+    td = max(fr["t"] - abs(d) / fr["wave"], fr.get("tOff", 0.0))   # the line starts at lift-off: no history before it
     k = max(0.0, td * FPS)
     k0 = min(int(k), len(frames) - 1)
     k1 = min(k0 + 1, len(frames) - 1)
     a = k - k0
     past = frames[k0]["chestZ"] * (1 - a) + frames[k1]["chestZ"] * a
     now = fr["chestZ"]
-    tail_len = 3.4
-    beyond = max(0.0, y - PELVIS_Y)
-    whip = 1.0 + c["whip"] * min(1.0, beyond / tail_len)
-    droop = c["tailDroop"] * math.sin(math.pi * min(1.0, beyond / (1.2 * tail_len)))
-    return now + (past - now) * whip + (z - CHEST_Z) - droop
+    return now + wave_height(d, past, now, c) + (z - CHEST_Z)
 
 
-def _apply_line(rig, fr, frames, line_fn=None):
+def _apply_line(rig, fr, frames, line_fn=None, head_z=None):
     """Lay the pelvis, spine and tail along the body line (blended in by lineW from the library's ground pose; line_fn:
     (rest y, rest z) -> height, in place of the takeoff's line_z): the
     pelvis takes its height and pitch from the line, every later bone hinges about local X to aim at its tail
@@ -412,6 +428,11 @@ def _apply_line(rig, fr, frames, line_fn=None):
     e = pbs["head"].rotation_euler
     pbs["head"].rotation_euler = (e[0] - w * 0.1 * chest, e[1], e[2])
     bpy.context.view_layer.update()
+    if head_z is not None:
+        # the head rides a steady line: the neck soaks up the shoulders' rise and fall (the run cycles' leveller)
+        bones = {n: tuple(pbs[n].rotation_euler) for n in ("neck_01", "neck_02", "head")}
+        cur = pbs["head"].head.z
+        L._level_head(rig, bones, cur + (head_z - cur) * w)
 
 
 def apply_frame(rig, fr, folded_basis=None, frames=None):
@@ -420,7 +441,12 @@ def apply_frame(rig, fr, folded_basis=None, frames=None):
     slerped from the folded wings by `unfold` (folded_basis: bone -> quaternion, the library's folded pose)."""
     LIB.apply_pose(rig, {"root": fr["root"], "wings": (0.0, 0.0, 0.0), "bones": fr["bones"]})
     if frames is not None:
-        _apply_line(rig, fr, frames)
+        i = fr["i"]
+        span = int(TAKEOFF["period"] * FPS)
+        win = [frames[k]["chestZ"] for k in range(max(0, i - span), i + 1)]
+        steady = sum(win) / len(win)
+        head_rest = rig.data.bones["head"].head_local.z
+        _apply_line(rig, fr, frames, head_z=head_rest + (steady - CHEST_Z) + 0.25 * (fr["chestZ"] - steady))
     apply_wings(rig, fr["wing"])
     if folded_basis is not None and fr["unfold"] < 1.0:
         k = fr["unfold"]

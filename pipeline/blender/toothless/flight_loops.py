@@ -3,7 +3,9 @@
 Both reuse the takeoff's machinery (flight.py): the wings posed by direction from per-segment beat channels with the
 outboard segments lagging (the whip), the body line (the spine and tail follow the chest's path through the air, a point
 d m behind the chest where the chest was d / wave s ago, the swing growing toward the tail tip), and the fore arms hung
-on chained springs answering the forces at the shoulder.
+on chained springs answering the forces at the shoulder. The body line is anchored at the wing root on the shoulder
+blades: the wings hold him up there, so every motion starts at the shoulders and runs back along the spine to the
+hips and the tail (and forward up the neck), slowly enough that the hips answer about half a beat late.
 
 Loops: every channel is periodic in the cycle phase. The chest's height comes from the wing's lift over one cycle
 (zero-mean, integrated twice, so the body rises on the downstroke and sags on the upstroke and returns exactly), the
@@ -33,7 +35,9 @@ FLAP = {
     "bob": 0.09,              # m: the chest's rise and sag over a beat (peak to peak about twice this)
     "heave": 0.03,            # m: the chest's extra lift inside the downstroke, ahead of the body
     "pitch": 0.06,            # rad: cruise attitude, nose a little up
-    "whip": 0.9, "tailDroop": 0.06,
+    "wave": 3.0,              # m/s: the motion runs from the shoulders back along the body (hips ~0.45 s, half a beat, late)
+    "trunkGain": 0.35, "whip": 0.9, "tailDroop": 0.06,
+    "headFollow": 0.25,       # share of the shoulders' rise and fall the head rides (the neck soaks up the rest)
     "hindTrail": 0.85,        # share of jump_launch's trailing hind legs (streamlined)
     "altitude": 3.0,          # m: pelvis height in the preview
 }
@@ -45,7 +49,7 @@ GLIDE = {
     "flutter": (3.0, 3, 0.15),  # deg, harmonic, lag per segment: the tips and membrane flexing in the air
     "speed": 15.0, "bob": 0.04, "pitch": 0.03,
     "tailSway": 0.05,         # rad per tail bone: a slow rudder S
-    "whip": 0.6, "tailDroop": 0.03,
+    "wave": 2.2, "trunkGain": 0.3, "whip": 0.6, "tailDroop": 0.03, "headFollow": 0.3,
     "hindTrail": 1.0,
     "altitude": 3.5,
 }
@@ -129,7 +133,7 @@ def _frames(c, n, chest, wings, pitch_osc, tail_yaw):
     for k in range(n):
         u = k / n
         frames.append({"t": k / FPS, "u": u, "x": c["speed"] * k / FPS, "root": (c["altitude"], c["pitch"] + pitch_osc[k]),
-                       "wing": wings[k], "unfold": 1.0, "chestZ": chest[k], "lineW": 1.0, "wave": c["speed"],
+                       "wing": wings[k], "unfold": 1.0, "chestZ": chest[k], "lineW": 1.0, "wave": c["wave"],
                        "tailYaw": tail_yaw[k], "loop": n, "i": k})
     return frames
 
@@ -200,22 +204,19 @@ def glide_frames(c=GLIDE):
 
 
 def loop_line(frames, fr, c):
-    """The body line for a loop: the chest's height (y - CHEST_Y) / wave s ago, wrapping around the cycle."""
+    """The body line for a loop, anchored at the shoulders (flight.wave_height): a point repeats the anchor's height
+    |y - ANCHOR_Y| / wave s late, wrapping around the cycle; the cruise attitude tilts it nose up."""
     n = fr["loop"]
 
     def line(y, z):
-        d = max(0.0, y - F.CHEST_Y)
-        k = (fr["i"] - d / fr["wave"] * FPS) % n
+        d = y - F.ANCHOR_Y
+        k = (fr["i"] - abs(d) / fr["wave"] * FPS) % n
         k0 = int(k)
         a = k - k0
         past = frames[k0 % n]["chestZ"] * (1 - a) + frames[(k0 + 1) % n]["chestZ"] * a
         now = fr["chestZ"]
-        beyond = max(0.0, y - F.PELVIS_Y)
-        tail_len = 3.4
-        whip = 1.0 + c["whip"] * min(1.0, beyond / tail_len)
-        droop = c["tailDroop"] * math.sin(math.pi * min(1.0, beyond / (1.2 * tail_len)))
-        lean = c["pitch"] * (F.CHEST_Y - y)          # the cruise attitude: points behind the chest sit lower
-        return now + (past - now) * whip + (z - F.CHEST_Z) - droop + lean
+        lean = c["pitch"] * (F.ANCHOR_Y - y)          # the cruise attitude: points behind the shoulders sit lower
+        return now + F.wave_height(d, past, now, c) + (z - F.CHEST_Z) + lean
     return line
 
 
@@ -223,7 +224,9 @@ def apply_loop_frame(rig, fr, frames, c):
     """Pose a loop frame: the body from the library pose, laid along the looping body line, the tail's rudder sway,
     then the wings."""
     LIB.apply_pose(rig, {"root": fr["root"], "wings": (0.0, 0.0, 0.0), "bones": fr["bones"]})
-    F._apply_line(rig, fr, frames, loop_line(frames, fr, c))
+    mean = sum(f["chestZ"] for f in frames) / len(frames)
+    head_z = rig.data.bones["head"].head_local.z + (mean - F.CHEST_Z) + c["headFollow"] * (fr["chestZ"] - mean)
+    F._apply_line(rig, fr, frames, loop_line(frames, fr, c), head_z=head_z)
     sway = c.get("tailSway", 0.0)
     if sway:
         n = fr["loop"]
