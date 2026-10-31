@@ -14,7 +14,7 @@ hud.textContent = 'Loading Toothless…';
 
 createToothless({ app, world, spawn: { x: 0, z: 6, heading: Math.PI } })
   .then(() => {
-    hud.textContent = `Isle of Berk · click to control · WASD move · Shift gallop · C prowl · Space jump · F / left click plasma · mouse look · wheel zoom · quality: ${app.preset.name}`;
+    hud.textContent = `Isle of Berk · click to control · WASD move · Shift gallop · C prowl · Space jump · hold Space (standing) or Space at a gallop: take off · flying: mouse steers, W flap, S brake, Space land · F / left click plasma · mouse look · wheel zoom · quality: ${app.preset.name}`;
   })
   .catch((e) => {
     console.error('[game] Toothless failed to load', e);

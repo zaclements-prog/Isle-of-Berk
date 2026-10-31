@@ -85,7 +85,7 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
     prevCam.copy(cam.position);
     cam.update(inp, cameraFollow(dragon, hold), dt);
     curCam.copy(cam.position);
-    dragon.update({ input: inp, cameraYaw: cam.yaw, cameraPos: cam.position }, dt);
+    dragon.update({ input: inp, cameraYaw: cam.yaw, cameraPitch: cam.pitch, cameraPos: cam.position }, dt);
     while (tb.plasma.shots.length) fx.fire(tb.plasma.shots.shift()!);
   });
   app.loop.addRender((alpha, frameDt) => {
@@ -112,6 +112,7 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
       pos: dragon.kin.pos.toArray().map((v) => +v.toFixed(3)), heading: +dragon.kin.heading.toFixed(3),
       speed: +dragon.kin.speed.toFixed(2), prowl: dragon.controller.prowl, climb: dragon.climb.mode,
       posture: tb.brain.behaviours.posture.current, jump: tb.jump.phase, plasma: tb.plasma.phase, fade: +cam.fade.toFixed(2),
+      flight: tb.flight.phase, altitude: +tb.flight.pos.y.toFixed(2),
     }),
   });
   /** A key tap through the real input path (the controller reads it next step). */
@@ -134,6 +135,11 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
       cam.pitch = THREE.MathUtils.degToRad(p[1]);
       cam.distance = p[2];
       return name;
+    },
+    /** Aim the camera (deg): yaw relative to his heading, pitch (+ from above); the flight steers by it. */
+    aim(yawDeg: number, pitchDeg?: number) {
+      cam.yaw = dragon.kin.heading + THREE.MathUtils.degToRad(yawDeg);
+      if (pitchDeg !== undefined) cam.pitch = THREE.MathUtils.degToRad(pitchDeg);
     },
   });
   return { ...tb, asset, dragon, cam, fx, tp };

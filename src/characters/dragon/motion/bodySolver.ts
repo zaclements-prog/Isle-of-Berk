@@ -77,9 +77,9 @@ export class BodySolver {
    * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
    * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
    * speed, so a landing's fall speed becomes its absorb. With `snap` (M6 jump), only the height jumps to its target,
-   * with no speed: the pitch still springs.
+   * with no speed: the pitch still springs. `roll` (rad, + lifts the left side) is the target roll: a flight's bank.
    */
-  readonly override = { active: false, height: 0, pitch: 0, exact: false, snap: false };
+  readonly override = { active: false, height: 0, pitch: 0, roll: 0, exact: false, snap: false };
   /**
    * Library-pose placement (M6): the height (world, pelvis head) and pitch targets blend toward these by `weight`
    * (roll levels out with it). Scripted `override`s still replace everything.
@@ -221,7 +221,7 @@ export class BodySolver {
     if (this.override.active) {
       heightT = this.override.height;
       pitchT = this.override.pitch;
-      rollT = 0;
+      rollT = this.override.roll;                 // a flight's bank (0 for every other scripted move)
       if (this.override.snap) {
         this.height.x = heightT;          // a ballistic flight (M6 jump) follows its arc exactly: no spring lag
         this.height.v = 0;

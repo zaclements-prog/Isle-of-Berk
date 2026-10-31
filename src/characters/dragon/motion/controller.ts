@@ -21,17 +21,27 @@ export interface MoveIntent {
   /** Edge-triggered action requests for M6 (jump, plasma). */
   jump: boolean;
   plasma: boolean;
+  /** Edge: Space held from a stand for controller.flyHold s (a standing takeoff; a tap is still the jump). */
+  fly: boolean;
+  /** Forward / back keys, camera-independent: +1 W, −1 S (in flight: flap, brake; neither: glide). */
+  throttle: number;
 }
 
 export function createIntent(): MoveIntent {
-  return { dirX: 0, dirZ: 0, hasDir: false, speed: 0, gallop: false, prowl: false, jump: false, plasma: false };
+  return { dirX: 0, dirZ: 0, hasDir: false, speed: 0, gallop: false, prowl: false, jump: false, plasma: false, fly: false, throttle: 0 };
 }
 
-/** Input → intent (spec §6.2). Camera-relative WASD; C toggles prowl; Shift gallops. Ctrl is deliberately unbound. */
+/**
+ * Input → intent (spec §6.2). Camera-relative WASD; C toggles prowl; Shift gallops. Ctrl is deliberately unbound.
+ * Space: moving, a jump at once (at a gallop the flight takes it as a running takeoff); from a stand, held for
+ * flyHold s it is a standing takeoff (`fly`), released sooner it is the jump (a tap inside one step jumps at once).
+ */
 export class DragonController {
   prowl = false;
+  /** Seconds Space has been held from a stand, or −1 when no hold is pending. */
+  private spaceHeld = -1;
 
-  read(input: InputState, cameraYaw: number, t: ControllerTuning, out: MoveIntent): MoveIntent {
+  read(input: InputState, cameraYaw: number, t: ControllerTuning, out: MoveIntent, dt = 0, speed = 0): MoveIntent {
     if (input.pressed.has('KeyC')) this.prowl = !this.prowl;
     const held = (codes: string[]) => codes.some((c) => input.keys.has(c));
     const f = (held(FORWARD) ? 1 : 0) - (held(BACK) ? 1 : 0);
@@ -46,7 +56,22 @@ export class DragonController {
     out.gallop = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
     out.prowl = this.prowl && !out.gallop;
     out.speed = !out.hasDir ? 0 : out.gallop ? t.gallopSpeed : out.prowl ? t.prowlSpeed : t.trotSpeed;
-    out.jump = input.pressed.has('Space');
+    out.jump = false;
+    out.fly = false;
+    out.throttle = f;
+    const space = input.keys.has('Space');
+    if (input.pressed.has('Space')) {
+      if (speed > t.flyStandSpeed || !space) out.jump = true;        // moving, or a tap inside one step
+      else this.spaceHeld = 0;
+    } else if (this.spaceHeld >= 0) {
+      if (!space) {
+        out.jump = true;                                            // released before the hold: the jump
+        this.spaceHeld = -1;
+      } else if ((this.spaceHeld += dt) >= t.flyHold) {
+        out.fly = true;
+        this.spaceHeld = -1;
+      }
+    }
     out.plasma = input.pressed.has('KeyF') || (input.buttonsPressed & 1) !== 0;
     return out;
   }

@@ -38,6 +38,8 @@ export interface DragonFrameInput {
   /** Yaw of the camera's forward direction (camera-relative controls). */
   readonly cameraYaw: number;
   readonly cameraPos: THREE.Vector3;
+  /** Camera pitch (rad, + looking down from above): the flight climbs or dives with it. */
+  readonly cameraPitch?: number;
 }
 
 export type DragonHook = (dragon: DragonCharacter, dt: number) => void;
@@ -90,6 +92,10 @@ export class DragonCharacter {
   nanResets = 0;
   /** The camera position of the current step (hooks read it: glance at the camera). */
   readonly cameraPos = new THREE.Vector3();
+  /** The camera pitch of the current step (rad, + looking down; the flight steers by it). */
+  cameraPitch = 0.2;
+  /** The camera yaw of the current step (rad; the flight turns toward it). */
+  cameraYaw = 0;
   verticalAccel = 0;
   private readonly head: number;
   private readonly chest: number;
@@ -253,7 +259,9 @@ export class DragonCharacter {
     s.snapshot();
     this.cameraPos.copy(frame.cameraPos);
     // 1) input → intent (hooks may adjust mods first: climbing, actions)
-    this.controller.read(frame.input, frame.cameraYaw, t.controller, this.intent);
+    this.cameraPitch = frame.cameraPitch ?? this.cameraPitch;
+    this.cameraYaw = frame.cameraYaw;
+    this.controller.read(frame.input, frame.cameraYaw, t.controller, this.intent, dt, this.kin.speed);
     for (const h of this.hooks.beforeMove) h(this, dt);
     // pose layers set by behaviours/actions decide which legs they drive; the planner leaves those paws alone
     this.layers.legOwnership(this.own);
@@ -424,6 +432,18 @@ export class DragonCharacter {
   private resetPose(): void {
     this.skeleton.resetToBind();
     if (this.jawRest) this.skeleton.localQuat[this.jawRest.bone].copy(this.jawRest.quat);
+  }
+
+  /**
+   * Re-seat every paw on the ground at its neutral spot under the body (planner.reset), e.g. as a flight lands: the
+   * planner's paws are wherever he left the ground, and the leg IK takes them back as the flight lets go of the legs.
+   */
+  resetFeet(): void {
+    this.planner.reset(this.plannerBody());
+    // the last leg solve reached for the old paws (wherever he took off): its shortfall would sink the body
+    this.legs.shortfall.fill(0);
+    this.legs.stretch.fill(0);
+    this.prevStretch.fill(0);
   }
 
   chestPos(out: THREE.Vector3): THREE.Vector3 {
