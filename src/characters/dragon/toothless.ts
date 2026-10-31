@@ -78,14 +78,23 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
   const canvas = app.renderer.domElement;
   const input = new KeyboardMouseInput(window, () => document.pointerLockElement === canvas);
   canvas.addEventListener('click', () => void canvas.requestPointerLock());
+  /**
+   * A review camera (berk.cam.review): the camera recentres review.yaw off his heading and the controls read its yaw
+   * less that offset, so it can watch him from the side while he flies (or walks) as if it were behind him.
+   */
+  const review = { yaw: 0 };
+  const follow = () => {
+    const f = cameraFollow(dragon, hold);
+    return { ...f, heading: f.heading + review.yaw, flying: tb.flight.airborne };
+  };
   const prevCam = new THREE.Vector3().copy(cam.position);
   const curCam = new THREE.Vector3().copy(cam.position);
   app.loop.addSim((dt) => {
     const inp = input.sample();
     prevCam.copy(cam.position);
-    cam.update(inp, cameraFollow(dragon, hold), dt);
+    cam.update(inp, follow(), dt);
     curCam.copy(cam.position);
-    dragon.update({ input: inp, cameraYaw: cam.yaw, cameraPitch: cam.pitch, cameraPos: cam.position }, dt);
+    dragon.update({ input: inp, cameraYaw: cam.yaw - review.yaw, cameraPitch: cam.pitch, cameraPos: cam.position }, dt);
     while (tb.plasma.shots.length) fx.fire(tb.plasma.shots.shift()!);
   });
   app.loop.addRender((alpha, frameDt) => {
@@ -135,6 +144,11 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
       cam.pitch = THREE.MathUtils.degToRad(p[1]);
       cam.distance = p[2];
       return name;
+    },
+    /** Review camera (deg): it sits this far round from behind him; the controls still steer as if from behind. */
+    review(yawDeg: number) {
+      review.yaw = THREE.MathUtils.degToRad(yawDeg);
+      cam.yaw = dragon.kin.heading + review.yaw;
     },
     /** Aim the camera (deg): yaw relative to his heading, pitch (+ from above); the flight steers by it. */
     aim(yawDeg: number, pitchDeg?: number) {

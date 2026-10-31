@@ -13,6 +13,8 @@ export interface CameraFollow {
   readonly heading: number;
   readonly moving: boolean;
   readonly climbing: boolean;
+  /** Flying (Phase 2): the camera backs off by camera.flightExtra to take in the 13.6 m wingspan. */
+  readonly flying?: boolean;
   /** Body spheres (world) for the proximity fade. */
   readonly bodySpheres: ReadonlyArray<{ center: THREE.Vector3; radius: number }>;
 }
@@ -50,6 +52,7 @@ export class OrbitCamera {
   private readonly follow = new Vec3Spring();
   private readonly climbPitch: SpringState = { x: 0, v: 0 };
   private readonly dist: SpringState = { x: 0, v: 0 };
+  private readonly flightBack: SpringState = { x: 0, v: 0 };
   private sinceMouse = 0;
   private shakeT = 0;
   private shakeDur = 1;
@@ -70,6 +73,7 @@ export class OrbitCamera {
     this.dist.x = this.distance;
     this.dist.v = 0;
     this.climbPitch.x = this.climbPitch.v = 0;
+    this.flightBack.x = this.flightBack.v = 0;
     this.sinceMouse = 0;
     this.follow.reset(f.chest);
     this.target.copy(f.chest);
@@ -86,6 +90,8 @@ export class OrbitCamera {
       this.yaw = wrapAngle(this.yaw + angleDiff(this.yaw, f.heading) * dampFactor(1 / t.recentreOmega, dt));
     }
     stepSpring(this.climbPitch, f.climbing ? deg(t.climbPitchDeg) : 0, t.climbPitchOmega, 1, dt);
+    stepSpring(this.flightBack, f.flying ? t.flightExtra : 0, t.flightOmega, 1, dt);
+    const distance = this.distance + this.flightBack.x;
 
     _goal.copy(f.chest).addScaledVector(f.velocity, t.lookAhead);
     this.follow.step(_goal, t.followOmega, 1, dt);
@@ -93,8 +99,8 @@ export class OrbitCamera {
 
     const pitch = clamp(this.pitch + this.climbPitch.x, deg(t.minPitchDeg), deg(t.maxPitchDeg));
     _dir.set(-Math.sin(this.yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(this.yaw) * Math.cos(pitch));
-    _want.copy(this.target).addScaledVector(_dir, this.distance);
-    const free = this.world.sphereCast(this.target, _want, t.radius) * this.distance;
+    _want.copy(this.target).addScaledVector(_dir, distance);
+    const free = this.world.sphereCast(this.target, _want, t.radius) * distance;
     if (free < this.dist.x) {
       this.dist.x = free; // pull in at once
       this.dist.v = 0;
