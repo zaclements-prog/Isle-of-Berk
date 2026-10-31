@@ -97,5 +97,55 @@ export function buildCourse(seed = 7): Course {
   add('cornerB', new THREE.BoxGeometry(0.8, 3, 8), mats.wall, [-33.6, 1.5, 26.4]);
   add('pillar', new THREE.BoxGeometry(3, 3, 3), mats.wall, [-18, 1.5, 34]);
 
+  addRoughLanes(add, mats, mulberry32(seed + 1000));
   return { root, surfaces };
+}
+
+type AddFn = (name: string, geo: THREE.BufferGeometry, mat: THREE.Material, pos: [number, number, number], rot?: [number, number, number]) => THREE.Mesh;
+
+/** Lane centres (x) of the rough-terrain lanes; each runs along −Z from z = −8 to −38 (spawn at z = −4 heading −Z). */
+export const ROUGH_LANES = { rubble: 46, logs: 52, broken: 58, mounds: 64, ditch: 70, angled: 76 } as const;
+
+/**
+ * Rough-terrain lanes (task #11: obstacle interactions on uneven ground), east of the steps, clear of every other
+ * script: rubble underfoot, logs to step over, broken ground of uneven blocks, rolling mounds, a ditch between two
+ * raised platforms, and ledges met at an angle (up onto one, down off its far edge). Seeded apart from the boulders.
+ */
+function addRoughLanes(add: AddFn, mats: Record<string, THREE.Material>, rnd: () => number): void {
+  const L = ROUGH_LANES;
+  // rubble: flattened rocks 0.08–0.25 m across the lane
+  for (let i = 0; i < 140; i++) {
+    const r = 0.08 + rnd() * 0.17;
+    const geo = new THREE.IcosahedronGeometry(r, 1);
+    geo.scale(1, 0.55, 1);
+    add(`rubble${i}`, geo, mats.rock, [L.rubble - 2.2 + rnd() * 4.4, r * 0.15, -8 - rnd() * 30], [rnd(), rnd() * 6, rnd()]);
+  }
+  // logs across the lane, radius 0.18–0.32 m, a little skewed
+  for (let i = 0; i < 7; i++) {
+    const r = 0.18 + rnd() * 0.14;
+    const geo = new THREE.CylinderGeometry(r, r * 0.9, 5.5, 12);
+    add(`log${i}`, geo, mats.wall, [L.logs + (rnd() - 0.5) * 0.6, r, -10 - i * 4 - rnd()], [0, (rnd() - 0.5) * 0.7, Math.PI / 2]);
+  }
+  // broken ground: 0.6 m blocks, tops 0–0.35 m high
+  for (let ix = 0; ix < 7; ix++) {
+    for (let iz = 0; iz < 50; iz++) {
+      const h = 0.02 + rnd() * 0.33;
+      add(`broken${ix}_${iz}`, new THREE.BoxGeometry(0.6, h, 0.6), mats.step, [L.broken - 1.8 + ix * 0.6, h / 2, -8 - iz * 0.6]);
+    }
+  }
+  // rolling mounds: flattened spheres sunk into the floor, crests 0.2–0.5 m
+  for (let i = 0; i < 12; i++) {
+    const rad = 1.4 + rnd() * 1.2;
+    const crest = 0.2 + rnd() * 0.3;
+    const geo = new THREE.SphereGeometry(rad, 24, 12);
+    const sy = 0.35;
+    geo.scale(1, sy, 1);
+    add(`mound${i}`, geo, mats.rock, [L.mounds + (rnd() - 0.5) * 3, crest - rad * sy, -9 - i * 2.6], [0, rnd() * 6, 0]);
+  }
+  // ditch: two 0.6 m platforms (0.3 m entry step) with a 1.2 m gap between them
+  add('ditchStep', new THREE.BoxGeometry(5, 0.3, 1), mats.step, [L.ditch, 0.15, -8.5]);
+  add('ditchA', new THREE.BoxGeometry(5, 0.6, 10), mats.step, [L.ditch, 0.3, -14]);
+  add('ditchB', new THREE.BoxGeometry(5, 0.6, 10), mats.step, [L.ditch, 0.3, -25.2]);
+  // angled ledges: a 0.5 m platform skewed 35° to the lane: up onto one edge, down off the far one
+  add('angledLedge', new THREE.BoxGeometry(9, 0.5, 9), mats.wall, [L.angled, 0.25, -21], [0, 0.61, 0]);
 }

@@ -136,6 +136,9 @@ export class DragonCharacter {
   };
   private readonly guardDepth = [0, 0, 0, 0];
   private readonly backProbe = new THREE.Vector3();
+  private readonly roughPts: [number, number, number][] = Array.from({ length: 16 }, () => [0, 0, 0]);
+  /** The last roughCap reading (m off the plane of the ground ahead). */
+  roughness = 0;
   /** Per leg, the tucked-leg locals (null without the clip: plain slerp). */
   private readonly legTuck: THREE.Quaternion[][] | null;
   private prevPelvisY = 0;
@@ -255,7 +258,7 @@ export class DragonCharacter {
     this.secondary.breathGain = 1 - (1 - t.pose.breathGainPosed) * Math.max(this.own[1], this.own[3]);
     // 2) kinematics; the body proxies slide along steep geometry (skipped while a scripted action owns the body)
     if (!this.mods.scripted) {
-      this.kin.plan(this.intent, dt, t.controller, this.mods.speedCap);
+      this.kin.plan(this.intent, dt, t.controller, Math.min(this.mods.speedCap, this.climb.climbWeight > 0 ? Infinity : this.roughCap()));
       this.proxies.update(s);
       this.proxies.resolveMove(this.world, this.kin.delta, this.mods.wallNormalY, this.kin.pos, this.kin.yawRate * dt, t.body.proxySkin);
       this.kin.commit(this.kin.delta, dt);
@@ -341,6 +344,48 @@ export class DragonCharacter {
   /** Copy the pose onto the loaded three.js bones, interpolated by the loop's alpha (spec §3.4). */
   writeTo(bones: ReadonlyMap<string, THREE.Object3D>, alpha: number): void {
     this.skeleton.writeTo(bones, alpha);
+  }
+
+  /**
+   * Speed cap (m/s) from the ground ahead (tuning.rough): rows of probes ahead along his heading, a little farther the
+   * faster he goes, three across; the roughness is the largest height off their least-squares plane, so a ramp or a
+   * side slope reads as smooth and broken ground, rubble, logs or a ditch as rough. He slows to a trot over it, as an
+   * animal picks its way, instead of galloping onto footholds his legs cannot keep.
+   */
+  roughCap(): number {
+    const r = this.tuning.rough;
+    const fx = Math.sin(this.kin.heading);
+    const fz = Math.cos(this.kin.heading);
+    const lead = r.roughLead * this.kin.speed;
+    const top = this.kin.pos.y + this.tuning.climb.ledgeMax;
+    const pts = this.roughPts;
+    let n = 0;
+    for (const a of r.roughAhead) {
+      for (const l of [-1, 0, 1]) {
+        const x = this.kin.pos.x + fx * (a + lead) + fz * l * r.roughSpan;
+        const z = this.kin.pos.z + fz * (a + lead) - fx * l * r.roughSpan;
+        if (this.world.isInside(this.groundOrigin.set(x, top, z))) continue;
+        if (!this.world.groundAt(x, z, top, 2 * this.tuning.climb.ledgeMax, this.groundHit)) continue;
+        pts[n++] = [a, l * r.roughSpan, this.groundHit.point.y];
+      }
+    }
+    if (n < 4) return Infinity;
+    // least-squares plane h = c0 + c1·a + c2·l over the probes, then the largest residual
+    let sa = 0, sl = 0, sh = 0, saa = 0, sll = 0, sal = 0, sah = 0, slh = 0;
+    for (let k = 0; k < n; k++) {
+      const [a, l, h] = pts[k];
+      sa += a; sl += l; sh += h; saa += a * a; sll += l * l; sal += a * l; sah += a * h; slh += l * h;
+    }
+    const m = [[n, sa, sl], [sa, saa, sal], [sl, sal, sll]];
+    const v = [sh, sah, slh];
+    const c = solve3(m, v);
+    let rough = 0;
+    for (let k = 0; k < n; k++) {
+      const [a, l, h] = pts[k];
+      rough = Math.max(rough, Math.abs(h - (c[0] + c[1] * a + c[2] * l)));
+    }
+    this.roughness = rough;
+    return rough >= r.roughTrot ? r.trotCap : Infinity;
   }
 
   /** Hand the locomotion cycles' weight, pelvis bob and wing lift to the body, tail and wings. */
@@ -597,4 +642,13 @@ export class DragonCharacter {
       this.targets.s[i] = paw.planted ? 1 : paw.s;
     }
   }
+}
+
+/** Solve the 3×3 system m · x = v (Cramer's rule); a singular system gives a flat plane at the mean height. */
+function solve3(m: number[][], v: number[]): number[] {
+  const det = (a: number[][]) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  const d = det(m);
+  if (Math.abs(d) < 1e-9) return [v[0] / m[0][0], 0, 0];
+  return [0, 1, 2].map((k) => det(m.map((row, i) => row.map((x, j) => (j === k ? v[i] : x)))) / d);
 }

@@ -16,7 +16,7 @@ import { loadTuning, type MotionTuning } from '../../characters/dragon/motion/tu
 import { OrbitCamera } from '../../camera/orbitCamera';
 import { applyDitherFade, dragonFade } from '../../characters/dragon/fade';
 import { MotionOverlays, OVERLAY_NAMES, type OverlayName } from './overlays';
-import { LAB_SCRIPTS, scriptByName } from './scripts';
+import { LAB_SCRIPTS, ROUGH_SCRIPTS, scriptByName } from './scripts';
 import { cameraFollow, runLabScript } from './labRunner';
 import { createToothlessBrain } from '../../characters/dragon/toothlessBrain';
 import { applyExpression } from '../../characters/dragon/face/expression';
@@ -223,7 +223,7 @@ async function startToothless(): Promise<void> {
       yawPx = s.cameraYawRate ? -(s.cameraYawRate / 120) / tuning.camera.sensitivity : 0;
       return s.description;
     },
-    scripts: () => [...LAB_SCRIPTS, ...M6_SCRIPTS].map((s) => `${s.name}: ${s.description}`),
+    scripts: () => [...LAB_SCRIPTS, ...M6_SCRIPTS, ...ROUGH_SCRIPTS].map((s) => `${s.name}: ${s.description}`),
     /** Where he is and what he is doing, for checking a play against the headless run. */
     state: () => ({
       pos: dragon.kin.pos.toArray().map((v) => +v.toFixed(3)), heading: +dragon.kin.heading.toFixed(3),
