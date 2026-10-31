@@ -563,13 +563,33 @@ def _group_bones(group, sfx):
     return [f"wing_rib{i}_{part}_{sfx}" for i in range(1, RIBS + 1)]
 
 
-def _fold_frames(rig, amount, names):
-    """Armature-space bone frames (quaternions) of `names` at rig.fold_wings(amount), from the spread bind."""
+def _fold_frames(rig, arm, hinges, names):
+    """Armature-space bone frames (quaternions) along the fan-fold (rig.fold_wings' geometry) with the arm's fold
+    `arm` (0 spread .. 1 folded: the humerus, forearm and every rib's inner half swinging back) and each doubled rib's
+    outer-half hinge separate (hinges[i]: 0 straight .. 1 doubled forward over the bundle), so the tips can open at
+    their own, slower pace. Left side; the right is mirrored. Poses the wing bones as a side effect."""
     pbs = rig.pose.bones
     for n in names:
         pbs[n].matrix_basis = Matrix.Identity(4)
     bpy.context.view_layer.update()
-    R.fold_wings(rig, amount)
+    up = Vector((0, 0, 1))
+    for s, sfx in ((1, "L"), (-1, "R")):
+        side = lambda v: Vector((s * v[0], v[1], v[2]))
+
+        def mix(bone, target):
+            return R.rest_dir(rig, bone).lerp(side(target).normalized(), arm)
+        R.aim(rig, f"wing_humerus_{sfx}", mix(f"wing_humerus_{sfx}", R.FOLD_HUMERUS))
+        R.aim(rig, f"wing_forearm_{sfx}", mix(f"wing_forearm_{sfx}", R.FOLD_FOREARM))
+        for i in range(RIBS):
+            inner, outer = f"wing_rib{i + 1}_a_{sfx}", f"wing_rib{i + 1}_b_{sfx}"
+            back = mix(inner, R._rib_back(i))
+            R.aim(rig, inner, back)
+            if i < R.DOUBLED_RIBS:
+                straight = R._frame(back, up).to_quaternion()
+                q = straight.slerp(R._frame(side(R._rib_forward(i)), -up).to_quaternion(), hinges[i])
+                R.aim(rig, outer, q @ Vector((0, 1, 0)), up=q @ Vector((0, 0, 1)))
+            else:
+                R.aim(rig, outer, back)
     return {n: pbs[n].matrix.to_quaternion() for n in names}
 
 
@@ -586,27 +606,27 @@ def pose_unfold(rig, k, ch, folded_basis):
     target = {n: pbs[n].matrix.to_quaternion() for n in names}
     hip_target = {n: pbs[n].matrix_basis.to_quaternion() for n in folded_basis if n.startswith("hipwing_")}
     span = 1.0 - UNFOLD_GROUPS[-1][1]
+    # the doubled rib tips unhinge over most of the unfold, shortest rib first and the long leading rib last (a
+    # ripple), instead of flipping over as a block in a sixth of a second
+    hinges = []
+    for i in range(RIBS):
+        lag = 0.06 * (R.DOUBLED_RIBS - 1 - i) if i < R.DOUBLED_RIBS else 0.0
+        hinges.append(1.0 - _ease(max(0.0, min(1.0, (k - lag) / 0.8))))
     plan = {}
     cache = {}
     for g, delay in UNFOLD_GROUPS:
         kg = max(0.0, min(1.0, (k - delay) / span))
-        # the fan-fold opening, eased per stage: fold_wings unhinges the outer rib halves over amount 1 -> 0.5 and opens
-        # the arm over 0.5 -> 0, so each stage gets its own ease (no velocity jump between them)
-        if kg < 0.45:
-            amount = 1.0 - 0.5 * _ease(kg / 0.45)
-        else:
-            amount = 0.5 - 0.5 * _ease(min(1.0, (kg - 0.45) / 0.3))
-        amount = round(amount, 4)
+        arm = round(1.0 - _ease(min(1.0, kg / 0.75)), 4)               # the arm swinging out of its tuck
         rise = _ease(max(0.0, min(1.0, (kg - 0.55) / 0.45)))            # then settle into the exact stroke pose
-        if amount not in cache:
-            cache[amount] = _fold_frames(rig, amount, names)
+        if arm not in cache:
+            cache[arm] = _fold_frames(rig, arm, hinges, names)
         # the fold path is carried up about the shoulder as it opens (toward the stroke's top elevation), so the wing
         # opens straight into a raised spread instead of out to the flat bind spread and back up again
         lift = math.radians(TAKEOFF["top"]) * _ease(min(1.0, kg / 0.75))
         for sfx, sgn in (("L", -1.0), ("R", 1.0)):
             q_up = Quaternion((0.0, 1.0, 0.0), sgn * lift)
             for n in _group_bones(g, sfx):
-                plan[n] = (q_up @ cache[amount][n], rise)
+                plan[n] = (q_up @ cache[arm][n], rise)
     order = [n for sfx in ("L", "R") for g in ("humerus", "forearm", "ribs_a", "ribs_b") for n in _group_bones(g, sfx)]
     for n in order:
         q0, rise = plan[n]
