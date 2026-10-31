@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 
+/** What every baked heightfield's header carries (the Cove's terrain.json, the Test Isle's). */
+export interface GridHeader {
+  size: number;
+  spacing: number;
+  origin: number;
+  heightMin: number;
+  heightMax: number;
+}
+
 /** `public/assets/world/cove/terrain.json` (written by pipeline/terrain/bake.mjs). */
-export interface TerrainHeader {
+export interface TerrainHeader extends GridHeader {
   version: 1;
   size: number;
   spacing: number;
@@ -35,7 +44,7 @@ export class Heightfield {
   readonly origin: number;
 
   constructor(
-    readonly header: TerrainHeader,
+    readonly header: GridHeader,
     readonly heights: Float32Array,
   ) {
     this.size = header.size;
@@ -45,7 +54,7 @@ export class Heightfield {
   }
 
   /** Decodes the bake's uint16 little-endian grid over [heightMin, heightMax]. */
-  static fromUint16LE(header: TerrainHeader, bytes: ArrayBuffer | Uint8Array): Heightfield {
+  static fromUint16LE(header: GridHeader, bytes: ArrayBuffer | Uint8Array): Heightfield {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (u8.byteLength !== header.size * header.size * 2) throw new Error(`heightfield: ${u8.byteLength} bytes for a ${header.size}² grid`);
     const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
