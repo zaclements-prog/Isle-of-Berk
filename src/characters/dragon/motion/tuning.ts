@@ -175,6 +175,22 @@ export interface MotionTuning {
   /** Library-pose legs (M6): breathGainPosed = breathing depth while the front legs are posed (lying: shallower); a
    *  posed paw below the ground hands its leg to the IK in full by groundGuard metres of depth. */
   pose: { breathGainPosed: number; groundGuard: number };
+  /**
+   * Authored locomotion cycles (Plan 5): played additively on the body over the procedural pose. Their weight fades
+   * in from fadeSpeedLo to fadeSpeedHi (m/s) and follows changes over blendTime (s); bobGain scales their pelvis bob;
+   * gains = how much of each gait's authored body (walk, trot, gallop) plays over the real ground's legs; a gait whose
+   * authored duty differs from gait.ts's by more than adoptDutyOver takes the authored duty. The cycles are straight
+   * runs: they fade out as the turn tightens from turnCurveLo to turnCurveHi (yaw rate / speed, 1/m). They are flat-
+   * ground runs: they fade out as the ground under the paws twists from roughLo to roughHi (m; see DragonCharacter),
+   * and as the head and neck meet ground ahead (the front raise reaching raiseFade m): the low carriage lifts. Contact
+   * comes first: they fade as any planted leg's reach ratio climbs from strainLo to strainHi. Any fade falls within
+   * fallTime (s); the weight comes back over blendTime.
+   */
+  loco: {
+    fadeSpeedLo: number; fadeSpeedHi: number; blendTime: number; bobGain: number; gains: number[]; adoptDutyOver: number;
+    turnCurveLo: number; turnCurveHi: number; roughLo: number; roughHi: number; raiseFade: number;
+    strainLo: number; strainHi: number; fallTime: number;
+  };
   /** Face and mood (M6, spec §6.12). pupilByMood / earsByMood follow MOODS: calm, curious, excited, tired, aggressive. */
   face: {
     blinkMin: number; blinkMax: number; doubleBlink: number; doubleGap: number; blinkClose: number; blinkHold: number; blinkOpen: number;
@@ -269,6 +285,8 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   wings: { omega: 8, climbFlare: 0.8 },
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
+  loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
+    strainLo: 0.93, strainHi: 0.99, fallTime: 0.08 },
   face: {
     blinkMin: 2, blinkMax: 6, doubleBlink: 0.18, doubleGap: 0.12, blinkClose: 0.07, blinkHold: 0.04, blinkOpen: 0.12,
     turnBlinkRate: 2.5, turnBlinkGap: 0.8, moodOmega: 1.2, pupilOmega: 6, earOmega: 5,

@@ -32,6 +32,25 @@ export interface PoseClipMeta {
   exit?: string;
   /** Face channel curves over the layer's time (jaw, blink, squint, smile, snarl, teeth_out, nostril_flare, pupil, ears, plasmaGlow). */
   face?: Record<string, FaceCurve>;
+  /** An authored locomotion cycle (Plan 5): the LocomotionDriver plays it additively, synced to the gait phase. */
+  locomotion?: LocoCycleMeta;
+}
+
+/** How a locomotion cycle was authored; its curves hold one value per frame over one loop (frame k at phase k / n). */
+export interface LocoCycleMeta {
+  /** The gait.ts gait it plays for. */
+  gait: string;
+  /** Nominal speed (m/s) and stride (m). */
+  speed: number;
+  stride: number;
+  duty: number;
+  offsets: [number, number, number, number];
+  /** Mean pelvis height (m). */
+  height: number;
+  /** Pelvis height about its mean (m): the clip's rotations go through the additive layer, this through the body. */
+  rootBob: number[];
+  /** Lift (rad) of the folded wings that keeps them lying on the flexing back. */
+  wingLift: number[];
 }
 
 export interface PosesMeta {
@@ -60,6 +79,13 @@ export function parsePosesMeta(raw: unknown): PosesMeta {
     }
     if (m!.interrupt !== undefined && !INTERRUPTS.includes(m!.interrupt)) {
       throw new Error(`poses.json: clip '${name}' interrupt must be one of ${INTERRUPTS.join(', ')}`);
+    }
+    const loco = m!.locomotion;
+    if (loco !== undefined) {
+      const curves = [loco.rootBob, loco.wingLift];
+      if (typeof loco.gait !== 'string' || !(loco.stride > 0) || !curves.every((c) => Array.isArray(c) && c.length > 0 && c.every(Number.isFinite))) {
+        throw new Error(`poses.json: clip '${name}' locomotion needs gait, stride > 0 and rootBob / wingLift curves`);
+      }
     }
     for (const [channel, curve] of Object.entries(m!.face ?? {})) {
       if (!Array.isArray(curve) || !curve.every((k) => Array.isArray(k) && k.length === 2 && k.every(Number.isFinite))) {

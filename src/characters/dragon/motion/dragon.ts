@@ -6,8 +6,9 @@ import { BodyKinematics, DragonController, createIntent, type MoveIntent } from 
 import { BodySolver, type ClimbRide } from './bodySolver';
 import { ClimbController } from './climbing';
 import { FootPlanner, type PlannerBody } from './footPlanner';
-import { GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
+import { GAITS, GaitEngine, NO_GAIT_MODS, type GaitMods } from './gait';
 import { LegRig } from './legs';
+import { LocomotionDriver } from './locomotion';
 import { LookController } from './look';
 import { ClipPose, PoseLayerStack, withFoldClip, type PosesMeta } from './poseLayers';
 import { BodyProxies } from './proxies';
@@ -16,7 +17,7 @@ import { SecondaryMotion } from './secondary';
 import { WingController } from './wings';
 import { RigSkeleton } from './skeleton';
 import { DEFAULT_TUNING, mergeTuning, type MotionTuning } from './tuning';
-import { dampFactor, deg, rotY } from './math';
+import { clamp, dampFactor, deg, rotY } from './math';
 
 const _ik = new THREE.Quaternion();
 
@@ -74,6 +75,8 @@ export class DragonCharacter {
   readonly legs: LegRig;
   readonly layers: PoseLayerStack;
   readonly wings: WingController;
+  /** Authored locomotion cycles (Plan 5), additive on the body, synced to the gait. */
+  readonly loco: LocomotionDriver;
   /** Per leg (LEG_KEYS order): how strongly pose layers drive it instead of the leg IK (0…1). */
   readonly own = [0, 0, 0, 0];
   readonly look: LookController;
@@ -120,6 +123,8 @@ export class DragonCharacter {
   private readonly legBones: number[][];
   private readonly legSave: THREE.Quaternion[][];
   private readonly legPosed: THREE.Quaternion[][];
+  /** Every leg's locals as the layers left them, before the leg IK (a guard re-solve starts from these). */
+  private readonly legPre: THREE.Quaternion[][];
   private readonly guardSole = new THREE.Vector3();
   private readonly guardHit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
   private readonly guardKeep = { stretch: [0, 0, 0, 0], shortfall: [0, 0, 0, 0], margin: [0, 0, 0, 0] };
@@ -130,6 +135,7 @@ export class DragonCharacter {
     s: [1, 1, 1, 1],
   };
   private readonly guardDepth = [0, 0, 0, 0];
+  private readonly backProbe = new THREE.Vector3();
   /** Per leg, the tucked-leg locals (null without the clip: plain slerp). */
   private readonly legTuck: THREE.Quaternion[][] | null;
   private prevPelvisY = 0;
@@ -162,6 +168,9 @@ export class DragonCharacter {
     if (this.layers.has('wingFold')) this.layers.set('wingFold', 1, 1);
     else if (this.layers.has('wings_folded')) this.layers.set('wings_folded', 1);
     this.wings = new WingController(opts.rig, this.skeleton, this.layers, opts.posesMeta ?? { clips: {} }, t.wings);
+    this.loco = new LocomotionDriver(this.layers, fold.meta, t.loco);
+    // footfalls where the cycles expect them, for gaits whose authored duty is far from the table's (the gallop)
+    for (const c of this.loco.cycles) if (Math.abs(c.meta.duty - GAITS[c.gait].duty) > t.loco.adoptDutyOver) this.gait.setTiming(c.gait, { duty: c.meta.duty });
     const rng = mulberry32(opts.seed ?? 1);
     this.look = new LookController(opts.rig, this.skeleton, t.look, rng);
     this.secondary = new SecondaryMotion(opts.rig, this.skeleton, opts.world, t, rng);
@@ -173,6 +182,7 @@ export class DragonCharacter {
     this.legBones = this.legs.legs.map((l) => l.bones);
     this.legSave = this.legBones.map((b) => b.map(() => new THREE.Quaternion()));
     this.legPosed = this.legBones.map((b) => b.map(() => new THREE.Quaternion()));
+    this.legPre = this.legBones.map((b) => b.map(() => new THREE.Quaternion()));
     const tuckClip = opts.clips?.get(opts.legTuckClip ?? 'jump_tuck');
     if (tuckClip) {
       const pose = new ClipPose(tuckClip, this.skeleton, ['front_', 'hind_']);
@@ -205,6 +215,8 @@ export class DragonCharacter {
     this.climb.reset(this); // a respawn mid-scramble or mid-hop must not resume it
     this.kin.spawn(x, y, z, heading);
     this.gait.reset();
+    this.loco.reset();
+    this.applyLoco();
     this.planner.reset(this.plannerBody());
     this.body.reset(this.kin.pos, heading, y, this.planner);
     const s = this.skeleton;
@@ -250,6 +262,21 @@ export class DragonCharacter {
     }
     // 3) gait — turning on the spot drives the phase too, so the feet step around
     this.gait.update(Math.max(this.kin.speed, Math.abs(this.kin.yawRate) * t.gait.turnStepRadius), dt, this.mods.gait);
+    // the authored cycles ride the gait (held back while climbing, scripted, a pose owning the legs, or on rough ground:
+    // they are flat-ground runs). Roughness = how far the paws' supports are from one plane: on any plane, ramps, side
+    // slopes and stair treads included, the diagonal pairs' heights sum alike (LH + RF = LF + RH)
+    const sp = this.planner;
+    const twist = Math.abs(sp.support(0) + sp.support(3) - sp.support(1) - sp.support(2)) / 2;
+    const rough = clamp((twist - t.loco.roughLo) / Math.max(t.loco.roughHi - t.loco.roughLo, 1e-6), 0, 1);
+    const raise = this.frontRaise();
+    let reach = 0;
+    for (let i = 0; i < 4; i++) if (sp.paws[i].planted) reach = Math.max(reach, this.legs.stretch[i]);
+    // (not the gallop's: its stance legs run near full reach by design, and the fade would flicker its body)
+    const strain = clamp((reach - t.loco.strainLo) / Math.max(t.loco.strainHi - t.loco.strainLo, 1e-6), 0, 1) * (1 - this.gait.gallopWeight);
+    const suppress = Math.max(this.climb.climbWeight, this.own[0], this.own[1], this.own[2], this.own[3], this.mods.scripted ? 1 : 0,
+      rough, clamp(raise / t.loco.raiseFade, 0, 1), strain);
+    this.loco.update(this.gait, this.kin.speed, this.kin.yawRate, suppress, dt);
+    this.applyLoco();
     // 4) feet: lift a paw early when its leg is predicted to over-stretch within planner.strainLookahead steps
     for (let i = 0; i < 4; i++) {
       // extrapolate reach and joint-limit margin separately (either can race toward its limit while the other is calm)
@@ -271,7 +298,7 @@ export class DragonCharacter {
     // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
     for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
     const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
-      this.groundUnder(1, 3), this.groundUnder(0, 2), this.frontRaise(), this.climbRide());
+      this.groundUnder(1, 3), this.groundUnder(0, 2), raise, this.climbRide());
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
     this.resetPose();
@@ -290,11 +317,12 @@ export class DragonCharacter {
     this.look.apply(s);
     s.fk();
     this.saveOwnedLegs();
+    for (let i = 0; i < 4; i++) this.legBones[i].forEach((b, k) => this.legPre[i][k].copy(s.localQuat[b]));
     this.fillTargets();
     this.legs.solve(s, this.targets, pose.bodyQuat);
     this.blendOwnedLegs();
     s.fk();
-    this.guardOwnedLegs(pose.bodyQuat);
+    this.guardLegs(pose.bodyQuat);
     this.secondary.applyAppendages(s);
     // 8) face (M6)
     for (const h of this.hooks.face) h(this, dt);
@@ -313,6 +341,14 @@ export class DragonCharacter {
   /** Copy the pose onto the loaded three.js bones, interpolated by the loop's alpha (spec §3.4). */
   writeTo(bones: ReadonlyMap<string, THREE.Object3D>, alpha: number): void {
     this.skeleton.writeTo(bones, alpha);
+  }
+
+  /** Hand the locomotion cycles' weight, pelvis bob and wing lift to the body, tail and wings. */
+  private applyLoco(): void {
+    this.body.authored = this.loco.weight;
+    this.body.bobOffset = this.loco.bob;
+    this.secondary.authored = this.loco.weight;
+    this.wings.extraLift = this.loco.wingLift;
   }
 
   /** Bind pose with the jaw at its closed rest. */
@@ -475,22 +511,29 @@ export class DragonCharacter {
   }
 
   /**
-   * A posed paw must not sink: wherever an owned sole ends below the ground (a pose held while the body moves, a blend
-   * path), that leg is re-solved by the IK onto the ground and blended in by depth / pose.groundGuard (full at 2 cm), so
-   * no posed paw goes more than a few millimetres under. The IK's bookkeeping (stretch, shortfall, margin) is kept.
+   * A posed or swinging paw must not sink: wherever an owned sole (a pose held while the body moves, a blend path) or
+   * a swinging sole (a leg at a joint limit cannot follow its swing arc, e.g. a gallop's fore paw just after lift-off
+   * under a dipping chest) ends below the ground, that leg is re-solved by the IK onto the ground and blended in by
+   * depth / pose.groundGuard (full at 2 cm), so no such paw goes more than a few millimetres under. The IK's
+   * bookkeeping (stretch, shortfall, margin) is kept. Planted paws are the planner's.
    */
-  private guardOwnedLegs(bodyQuat: THREE.Quaternion): void {
+  private guardLegs(bodyQuat: THREE.Quaternion): void {
     const s = this.skeleton;
     let any = false;
     for (let i = 0; i < 4; i++) {
       this.guardDepth[i] = 0;
-      if (this.own[i] <= 0) continue;
+      if (this.own[i] <= 0 && this.planner.paws[i].planted) continue;
       this.legs.soleWorld(i, s, this.guardSole);
       const g = this.world.groundAt(this.guardSole.x, this.guardSole.z, this.guardSole.y + 1, 3, this.guardHit);
       if (!g || g.point.y <= this.guardSole.y) continue;
       this.guardDepth[i] = g.point.y - this.guardSole.y;
       this.guardTargets.sole[i].set(this.guardSole.x, g.point.y + 0.002, this.guardSole.z);
       this.guardTargets.normal[i].copy(g.normal);
+      // a swinging paw inside a solid (into a boulder's flank) backs out toward its hip, to the first free spot, rather
+      // than reaching for the top of the rock
+      if (this.own[i] <= 0 && this.world.isInside(this.guardSole) && this.backOut(i, this.guardTargets.sole[i])) {
+        this.guardTargets.normal[i].set(0, 1, 0);
+      }
       any = true;
     }
     if (!any) return;
@@ -502,6 +545,9 @@ export class DragonCharacter {
       this.legBones[i].forEach((b, n) => this.legPosed[i][n].copy(s.localQuat[b]));
       if (this.guardDepth[i] === 0) this.legs.soleWorld(i, s, this.guardTargets.sole[i]);
     }
+    // re-solve from the layered pose: the front solve turns the shoulder blade relative to what it finds
+    for (let i = 0; i < 4; i++) this.legBones[i].forEach((b, n) => s.localQuat[b].copy(this.legPre[i][n]));
+    s.fk();
     this.legs.solve(s, this.guardTargets, bodyQuat);
     for (let i = 0; i < 4; i++) {
       const c = Math.min(1, this.guardDepth[i] / this.tuning.pose.groundGuard);
@@ -514,6 +560,25 @@ export class DragonCharacter {
       this.legs.margin[i] = k.margin[i];
     }
     s.fk();
+  }
+
+  /**
+   * From guardSole, back along the straight line to where swinging paw i lifted off (a spot it just stood on, so the
+   * line leaves the rock) to the first point outside every solid with no ground above it; that point → out (false:
+   * none). guardHit is clobbered.
+   */
+  private backOut(i: number, out: THREE.Vector3): boolean {
+    const from = this.planner.paws[i].from;
+    const p = this.backProbe;
+    for (let k = 1; k <= 10; k++) {
+      p.lerpVectors(this.guardSole, from, k / 10);
+      if (this.world.isInside(p)) continue;
+      const g = this.world.groundAt(p.x, p.z, p.y + 1, 3, this.guardHit);
+      if (g && g.point.y > p.y) continue;                   // free of the rock but still under some ground: not out
+      out.copy(p).setY(p.y + 0.002);
+      return true;
+    }
+    return false;
   }
 
   private plannerBody(): PlannerBody {

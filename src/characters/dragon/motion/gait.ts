@@ -48,6 +48,8 @@ export class GaitEngine {
   speed = 0;
 
   private maxTravel = Infinity;
+  /** This engine's gait table: GAITS, with any timing an authored locomotion cycle brings (setDuty). */
+  private readonly table: GaitParams[] = GAITS.map((g) => ({ ...g }));
 
   constructor(private readonly opts: { hysteresis: number; blendTime: number; stopSpeed: number; maxCadence?: number }) {}
 
@@ -60,50 +62,60 @@ export class GaitEngine {
     this.maxTravel = maxTravel;
   }
 
+  /**
+   * Gait g's timing from its authored locomotion cycle (Plan 5): the planner then plants and lifts the paws when the
+   * cycle's body expects them to, and swings them as high as it does.
+   */
+  setTiming(g: number, timing: { duty?: number; swingHeight?: number }): void {
+    const cur = this.table[g];
+    this.table[g] = { ...cur, duty: clamp(timing.duty ?? cur.duty, 0.05, 0.95), swingHeight: timing.swingHeight ?? cur.swingHeight };
+    if (g === this.active) this.duty = this.table[g].duty;
+  }
+
   reset(): void {
     this.phase = 0;
     this.active = 0;
     this.weights.splice(0, 3, 1, 0, 0);
-    this.offsets.splice(0, 4, ...GAITS[0].offsets);
+    this.offsets.splice(0, 4, ...this.table[0].offsets);
     this.cadence = 0;
-    this.duty = GAITS[0].duty;
-    this.swingHeight = GAITS[0].swingHeight;
+    this.duty = this.table[0].duty;
+    this.swingHeight = this.table[0].swingHeight;
     this.speed = 0;
   }
 
   update(speed: number, dt: number, mods: GaitMods = NO_GAIT_MODS): void {
     this.speed = speed;
     const a = this.active;
-    if (a < GAITS.length - 1 && speed > GAITS[a].speedMax + this.opts.hysteresis) this.active = a + 1;
-    else if (a > 0 && speed < GAITS[a].speedMin - this.opts.hysteresis) this.active = a - 1;
+    if (a < this.table.length - 1 && speed > this.table[a].speedMax + this.opts.hysteresis) this.active = a + 1;
+    else if (a > 0 && speed < this.table[a].speedMin - this.opts.hysteresis) this.active = a - 1;
 
     const rate = dt / this.opts.blendTime;
     let sum = 0;
-    for (let g = 0; g < GAITS.length; g++) {
+    for (let g = 0; g < this.table.length; g++) {
       const target = g === this.active ? 1 : 0;
       this.weights[g] += clamp(target - this.weights[g], -rate, rate);
       sum += this.weights[g];
     }
-    for (let g = 0; g < GAITS.length; g++) this.weights[g] /= sum;
+    for (let g = 0; g < this.table.length; g++) this.weights[g] /= sum;
 
     let cadence = 0;
     let duty = 0;
     let swing = 0;
-    for (let g = 0; g < GAITS.length; g++) {
+    for (let g = 0; g < this.table.length; g++) {
       const w = this.weights[g];
       if (w === 0) continue;
-      const p = GAITS[g];
+      const p = this.table[g];
       const k = clamp((speed - p.speedMin) / (p.speedMax - p.speedMin), 0, 1);
       cadence += w * lerp(p.cadenceMin, p.cadenceMax, k);
       duty += w * p.duty;
       swing += w * p.swingHeight;
     }
     let ref = 0;
-    for (let g = 1; g < GAITS.length; g++) if (this.weights[g] > this.weights[ref]) ref = g;
+    for (let g = 1; g < this.table.length; g++) if (this.weights[g] > this.weights[ref]) ref = g;
     for (let leg = 0; leg < 4; leg++) {
-      const base = GAITS[ref].offsets[leg];
+      const base = this.table[ref].offsets[leg];
       let o = base;
-      for (let g = 0; g < GAITS.length; g++) if (g !== ref) o += this.weights[g] * phaseDiff(base, GAITS[g].offsets[leg]);
+      for (let g = 0; g < this.table.length; g++) if (g !== ref) o += this.weights[g] * phaseDiff(base, this.table[g].offsets[leg]);
       this.offsets[leg] = fract(o);
     }
     this.duty = duty;
@@ -141,6 +153,6 @@ export class GaitEngine {
   }
 
   get name(): GaitName {
-    return GAITS[this.active].name;
+    return this.table[this.active].name;
   }
 }

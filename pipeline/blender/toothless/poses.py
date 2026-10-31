@@ -1,6 +1,7 @@
 """Pose clips: every bone keyed on frames 1-2 (so the glTF exporter keeps full tracks), one NLA track per clip."""
 import bpy
 import library as LIB
+import locomotion as LOCO
 import rig as R
 
 CLIPS = {   # fold samples 0 / .25 / .5 / .75 / 1: the engine blends piecewise between neighbours (Ruling 13)
@@ -38,6 +39,8 @@ def keyframe_pose(rig, name, setter):
 
 
 def make_clips(rig):
-    """Plan 2's clips, then the pose library (spec §5.11); every clip is sampled at LIB.FPS."""
+    """Plan 2's clips, the pose library (spec §5.11), then the authored locomotion cycles (Plan 5); every clip is
+    sampled at LIB.FPS."""
     bpy.context.scene.render.fps = LIB.FPS
-    return [keyframe_pose(rig, name, setter) for name, setter in CLIPS.items()] + LIB.make_library_clips(rig)
+    return ([keyframe_pose(rig, name, setter) for name, setter in CLIPS.items()] + LIB.make_library_clips(rig)
+            + LOCO.make_clips(rig))

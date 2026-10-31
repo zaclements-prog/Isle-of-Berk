@@ -494,3 +494,56 @@ def limit_report(report):
             out.append(f"{key:8s} {base:18s} {lo:7.1f} .. {hi:6.1f}  (limit {a} .. {b}){flag}")
         out.append(f"{key:8s} worst stance toe miss {r['miss'] * 100:.2f} cm")
     return out
+
+
+# ---- export (toothless.poses.glb / poses.json) ----------------------------------------------------------------------
+
+LOCO_CLIPS = {"walk": "loco_walk", "trot": "loco_trot", "gallop": "loco_gallop"}
+# the engine plays these additively over its body pose: the legs stay the planner's and the leg IK's
+LOCO_MASK = ["pelvis", "spine_", "chest", "neck_", "head", "tail_"]
+
+
+def _solved(rig, name):
+    """cycle_frames with NLA playback muted (earlier clips' tracks would override the posed bones mid-solve)."""
+    ad = rig.animation_data
+    use_nla = ad.use_nla if ad else None
+    if ad:
+        ad.use_nla = False
+    try:
+        return cycle_frames(rig, name)[0]
+    finally:
+        if ad:
+            ad.use_nla = use_nla
+
+
+def make_clips(rig):
+    """Bake every cycle as a looping clip (frames + 1 keys, the last equal to the first)."""
+    import library as LIB
+    solved = {name: _solved(rig, name) for name in LOCO_CLIPS}
+    return [LIB.keyframe_frames(rig, clip, solved[name]) for name, clip in LOCO_CLIPS.items()]
+
+
+def meta_entries(rig):
+    """poses.json entries: mask, loop, blends and a `locomotion` block — the gait (gait.ts name), nominal speed (m/s),
+    stride (m), duty and leg offsets the cycle was authored with, and per-frame curves over one loop (frame k at
+    phase k / frames): rootBob = the pelvis height about its mean (m; the glTF carries rotations only for the engine's
+    additive layer), wingLift = the folded wings' lift (rad) that keeps them on the flexing back."""
+    out = {}
+    for name, clip in LOCO_CLIPS.items():
+        cyc = CYCLES[name]
+        frames = _solved(rig, name)
+        n = cyc["frames"]
+        period = n / FPS
+        heights = [f["root"][0] for f in frames[:n]]
+        mean = sum(heights) / n
+        out[clip] = {
+            "mask": LOCO_MASK, "loop": True, "blendIn": 0.3, "blendOut": 0.3, "interrupt": "exit",
+            "duration": round(period, 4),
+            "locomotion": {
+                "gait": name, "speed": cyc["speed"], "stride": round(cyc["speed"] * period, 4), "duty": cyc["duty"],
+                "offsets": list(cyc["offsets"]), "height": round(mean, 4),
+                "rootBob": [round(h - mean, 4) for h in heights],
+                "wingLift": [round(f["wings"][1], 4) for f in frames[:n]],
+            },
+        }
+    return out

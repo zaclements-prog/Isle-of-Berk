@@ -89,6 +89,8 @@ const _target = new THREE.Vector3();
 const _hit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
 const _probe: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
 const _foot: Foothold = { point: new THREE.Vector3(), normal: new THREE.Vector3(), ok: false };
+const _full = new THREE.Vector3();
+const _fullN = new THREE.Vector3();
 const OFFSETS_FULL: ReadonlyArray<[number, number]> = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
 const OFFSETS_ONE: ReadonlyArray<[number, number]> = [[0, 0]];
 const EDGE_DIRS: ReadonlyArray<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -468,6 +470,37 @@ export class FootPlanner {
     p.targetFound = f.found !== false;
     p.settled = false;
     p.lift = this.swingLift(p, forced ? t.forcedLift : gait.swingHeight);
+    // an arc that cannot clear what lies on its path (a boulder taller than maxLift) steps short of it instead
+    if (this.swingLift(p, 0, 0, p.to, p.toNormal, false, false) > t.maxLift) this.stepShort(i, body, forced ? t.forcedLift : gait.swingHeight);
+  }
+
+  /**
+   * Swinging paw i cannot clear its path to `to` within planner.maxLift: land at 3/4, 1/2 or 1/4 of the way instead
+   * (projected onto the ground there), the first whose arc clears; if none does, the paw stays planted this beat.
+   */
+  private stepShort(i: number, body: PlannerBody, minLift: number): void {
+    const p = this.paws[i];
+    const t = this.t;
+    _full.copy(p.to);
+    _fullN.copy(p.toNormal);
+    for (const u of [0.75, 0.5, 0.25]) {
+      _target.lerpVectors(p.from, _full, u);
+      const f = this.project(_target, body, true, p.from.y, _foot, this.stepContext(i));
+      if (f.found === false) continue;
+      p.to.copy(f.point);
+      p.toNormal.copy(f.normal);
+      if (this.swingLift(p, 0, 0, p.to, p.toNormal, false, false) > t.maxLift) continue;
+      p.targetOk = f.ok;
+      p.targetFound = true;
+      p.lift = this.swingLift(p, minLift);
+      return;
+    }
+    p.to.copy(_full);
+    p.toNormal.copy(_fullN);
+    p.planted = true;
+    p.justLifted = false;
+    p.s = 0;
+    p.lift = 0;
   }
 
   /**
@@ -477,7 +510,7 @@ export class FootPlanner {
    * two samples is bisected so its lip is cleared too. With `settling`, the target is the one blending from `to` (at
    * fromS) onto p.settle (at touchdown), as update() moves it.
    */
-  private swingLift(p: PawState, minLift: number, fromS = 0, to = p.to, toNormal = p.toNormal, settling = false): number {
+  private swingLift(p: PawState, minLift: number, fromS = 0, to = p.to, toNormal = p.toNormal, settling = false, cap = true): number {
     const t = this.t;
     const end = settling ? p.settle : to;
     const top = Math.max(p.from.y, to.y, end.y) + t.castUp + t.maxStepUp;
@@ -506,7 +539,7 @@ export class FootPlanner {
       prevS = s;
       prevG = g;
     }
-    return Math.min(lift, t.maxLift);
+    return cap ? Math.min(lift, t.maxLift) : lift;
   }
 
   /**

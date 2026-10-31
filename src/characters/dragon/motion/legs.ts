@@ -249,6 +249,20 @@ export class LegRig {
     s.setWorldQuat(tibia, r.tibia);
     s.setWorldQuat(meta, r.meta);
     this.clampLimits(s, L, 0, 3);
+    // a femur held at its limit moves the knee off the solve's: swing the tibia (and the metatarsal with it) so the paw
+    // heads for its target from where the knee really is (a no-op when nothing clamped)
+    _a.set(0, s.length[femur], 0).applyQuaternion(s.worldQuat[femur]).add(s.worldPos[femur]);
+    _fz.set(0, s.length[tibia], 0).applyQuaternion(s.worldQuat[tibia]);
+    _b.set(0, s.length[meta], 0).applyQuaternion(s.worldQuat[meta]).add(_fz);       // knee → paw
+    _fz.subVectors(_target, _a);                                                       // knee → target
+    _c.set(1, 0, 0).applyQuaternion(s.worldQuat[tibia]);
+    _b.addScaledVector(_c, -_b.dot(_c));
+    _fz.addScaledVector(_c, -_fz.dot(_c));
+    if (_b.lengthSq() > 1e-10 && _fz.lengthSq() > 1e-10) {
+      const turn = Math.atan2(_fx.crossVectors(_b, _fz).dot(_c), _b.dot(_fz));
+      s.localQuat[tibia].multiply(_qx.setFromAxisAngle(AX, turn));
+      this.clampLimits(s, L, 1, 3);
+    }
     this.placeToes(s, L, i, tg);
     return r.shortfall;
   }
@@ -282,6 +296,19 @@ export class LegRig {
     s.setWorldQuat(hum, r.upper);
     s.setWorldQuat(rad, r.lower);
     this.clampLimits(s, L, 1, 3);
+    // a humerus held at its limit moves the elbow off the solve's: re-aim the radius at the wrist from where the elbow
+    // really is (a no-op when nothing clamped), so a pinned shoulder folds the elbow instead of driving the paw down
+    _a.set(0, s.length[hum], 0).applyQuaternion(s.worldQuat[hum]).add(s.worldPos[hum]);
+    _b.subVectors(_wrist, _a);
+    _c.set(1, 0, 0).applyQuaternion(s.worldQuat[rad]);
+    _b.addScaledVector(_c, -_b.dot(_c));
+    _fy.set(0, 1, 0).applyQuaternion(s.worldQuat[rad]);
+    _fy.addScaledVector(_c, -_fy.dot(_c));
+    if (_b.lengthSq() > 1e-10 && _fy.lengthSq() > 1e-10) {
+      const turn = Math.atan2(_fx.crossVectors(_fy, _b).dot(_c), _fy.dot(_b));
+      s.localQuat[rad].multiply(_qx.setFromAxisAngle(AX, turn));
+      this.clampLimits(s, L, 2, 3);
+    }
     s.setWorldQuat(mc, _qmc);
     this.clampLimits(s, L, 3, 4);
     this.placeToes(s, L, i, tg);

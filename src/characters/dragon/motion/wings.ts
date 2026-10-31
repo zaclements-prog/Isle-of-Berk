@@ -94,9 +94,13 @@ export class WingController {
     this.driveFold();
   }
 
+  /** Unsprung extra lift (rad) set each step: the locomotion cycles keep the folded wings on the flexing back. */
+  extraLift = 0;
+
   /** Flare and lift on the humerus (post-multiplied on its local axes) — call after PoseLayerStack.apply. */
   apply(s: RigSkeleton): void {
-    const { flare, lift } = this.state;
+    const { flare } = this.state;
+    const lift = this.state.lift + this.extraLift;
     if (flare === 0 && lift === 0) return;
     for (const h of this.humerus) {
       s.localQuat[h.bone]

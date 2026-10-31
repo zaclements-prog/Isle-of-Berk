@@ -6,10 +6,10 @@ import type { MotionRig } from '../../src/characters/dragon/motion/rigTypes';
 
 const DIR = 'public/assets/characters/toothless/';
 
-/** The exported asset with the M6 pose library (poses.json v2) is present. */
+/** The exported asset with the M6 pose library (poses.json v2+) is present. */
 export const HAS_LIBRARY = existsSync(`${DIR}toothless.rig.json`) && existsSync(`${DIR}toothless.poses.glb`)
   && existsSync(`${DIR}toothless.poses.json`)
-  && (JSON.parse(readFileSync(`${DIR}toothless.poses.json`, 'utf8')) as { version?: number }).version === 2;
+  && ((JSON.parse(readFileSync(`${DIR}toothless.poses.json`, 'utf8')) as { version?: number }).version ?? 0) >= 2;
 
 export interface ToothlessMotionAsset {
   rig: MotionRig;
