@@ -32,7 +32,8 @@ VIEWS = {"side": (Vector((17.0, -1.0, 2.5)), Vector((0, -1.0, 1.6)), 30),
          "front": (Vector((-5.0, -15.0, 0.8)), Vector((0, -0.5, 2.2)), 26),
          "head": (Vector((0.0, -18.0, 2.0)), Vector((0, -0.5, 2.0)), 26),
          "tq": (Vector((-11.0, -10.0, 4.0)), Vector((0, 0.0, 1.6)), 28),
-         "back": (Vector((3.0, 14.0, 3.0)), Vector((0, -1.0, 1.8)), 30)}
+         "back": (Vector((3.0, 14.0, 3.0)), Vector((0, -1.0, 1.8)), 30),
+         "close": (Vector((7.0, -1.2, 2.2)), Vector((0, -0.8, 1.9)), 45)}
 loc, tgt, lens = VIEWS[view]
 os.makedirs(out, exist_ok=True)
 t0 = time.time()

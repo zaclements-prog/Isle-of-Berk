@@ -53,12 +53,18 @@ TAKEOFF = {
     "tailDroop": 0.10,        # m: the tail hung below the line through its middle in flight
     # the legs hang loose: a half tuck they ease into, swung by the body's vertical acceleration through chained
     # springs (upper leg, then the lower leg, then the paw, each lagging the one above)
-    "tuck": 0.42,             # 0 = trailing as at lift-off (jump_launch) .. 1 = jump_tuck
+    "tuck": (0.3, 0.42),      # front, hind: 0 = trailing as at lift-off (jump_launch) .. 1 = jump_tuck
     "tuckTime": 1.1,          # s to ease into it after lift-off
-    "swing": 0.022,           # tuck fraction per m/s^2 of vertical acceleration (+ = hauled up: the legs drag down)
+    "swing": 0.006,           # tuck fraction per m/s^2 of vertical acceleration (+ = hauled up: the legs drag down)
     "legHz": (2.2, 1.7),      # spring frequency (front, hind): the hind legs are heavier and swing slower
-    "legDamp": 0.35,
+    "legDamp": 0.7,
     "sideLag": 2,             # frames the right legs trail the left: not mirror-locked
+    # the fore paws hang relaxed: the wrist flexed so the paw drops toward the palm, the toes loosely curled (not the
+    # launch's extended wrist, which reads as a paw pressed flat on a floor); the paw spring swings the wrist a little
+    "frontHang": {"scapula": 0.0, "humerus": -0.2, "radius": 0.5, "metacarpal": -1.3, "toes": 0.5},
+                              # rad: the fore legs hanging relaxed in the air (upper arm a little back, elbow softly
+                              # bent, wrist dropped toward the palm (- on this rig: + bends the paw back), toes curled)
+    "frontSwing": (1.2, 1.4, 1.6),   # rad per unit of spring swing: upper arm, forearm, wrist (they trail each other)
 }
 
 CHEST_Y, CHEST_Z = A.SPINE[4][1][1], A.SPINE[4][1][2]     # the chest joint (the wings' root) at rest
@@ -256,16 +262,16 @@ def takeoff_frames(c=TAKEOFF):
                 pitch = 0.2 + 0.18 * climb + 0.08 * math.sin(2 * math.pi * (u - 0.15))
                 # the legs: ease into a loose half tuck; the body's vertical acceleration swings them through the
                 # chained springs (a downstroke hauls him up and the legs drag down and back, then float up after)
-                base = c["tuck"] * _ease(min(1.0, (t - t_off) / c["tuckTime"]))
+                ease_in = _ease(min(1.0, (t - t_off) / c["tuckTime"]))
                 ks = {}
                 for gi, g in enumerate(("front", "hind")):
                     hz = c["legHz"][gi]
-                    drive = -c["swing"] * (accel + G)          # relative to hanging under 1 g
+                    drive = -c["swing"] * accel                # about the steady climb (the base tuck hangs under it)
                     s0 = _spring(springs[g][0], drive, hz, c["legDamp"], dt)
                     s1 = _spring(springs[g][1], s0, hz * 1.3, c["legDamp"], dt)
                     s2 = _spring(springs[g][2], s1, hz * 1.6, c["legDamp"], dt)
                     swing_hist[g].append((s0, s1, s2))
-                    ks[g] = (base, s0, s1, s2)
+                    ks[g] = (c["tuck"][gi] * ease_in, s0, s1, s2)
                 legs = {}
                 for g, prefix in (("front", "front_"), ("hind", "hind_")):
                     b0, s0, s1, s2 = ks[g]
@@ -277,6 +283,18 @@ def takeoff_frames(c=TAKEOFF):
                         part = _leg_mix({n: e for n, e in launch.items() if n.startswith(prefix) and n.endswith(side)},
                                         {n: e for n, e in tuck.items() if n.startswith(prefix) and n.endswith(side)}, levels)
                         legs.update(part)
+                        if g == "front":
+                            # the fore legs: from the launch reach into the relaxed hang, swung about it by the springs
+                            # (the upper arm swings back as the body is hauled up, the forearm and wrist trail it)
+                            hang = c["frontHang"]
+                            sw = c["frontSwing"]
+                            off_ = {"scapula": 0.0, "humerus": -sw[0] * r0, "radius": sw[1] * r1, "metacarpal": -sw[2] * r2,
+                                    "toes": 0.5 * sw[2] * r2}
+                            for part_name, val in hang.items():
+                                bone = f"front_{part_name}_{side}"
+                                a = launch.get(bone, (0.0, 0.0, 0.0))
+                                tgt = val + off_[part_name]
+                                legs[bone] = (a[0] + (tgt - a[0]) * ease_in, 0.0, 0.0)
         sp = c["forward"][0] + (c["forward"][1] - c["forward"][0]) * _ease((t - t_launch) / max(total - t_launch, 1e-6))
         x += sp * dt if t >= t_launch else 0.0
         ch = segment_channels(c, u)
