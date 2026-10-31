@@ -148,6 +148,19 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
     expect(r.d.mods.scripted).toBe(false);
   });
 
+  it('a slow landing from altitude stays a standing landing through its descent', { timeout: 60_000 }, async () => {
+    const r = await fly((t) => {
+      if (t >= 1 && t < 1.5) return { keys: ['Space'], press: at(t, 1) ? ['Space'] : [] };
+      if (t > 4 && t < 9) return { keys: ['KeyW'] };
+      if (t > 9 && t < 12) return { keys: ['KeyS'] };
+      if (at(t, 12)) return { keys: [], press: ['Space'] };
+      return { keys: [] };
+    }, 20, () => 0);
+    expect(r.phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'settle', 'idle']);
+    expect(r.d.nanResets).toBe(0);
+    expect(r.accH).toBeLessThan(0.035);
+  });
+
   it('turns toward the camera and banks into the turn', { timeout: 60_000 }, async () => {
     let bank = 0;
     const r = await fly((t) => {

@@ -101,6 +101,7 @@ export class FlightAction implements DragonAction {
   private outVP = 0;
   private prevPhase = 0;
   private prepLeft = 0;
+  private landRun = true;
   private fedFeet = false;
   private fading: string | null = null;
   private fadeW = 0;
@@ -301,6 +302,8 @@ export class FlightAction implements DragonAction {
     const k = lerp(kGlide, kFlap, this.flapW);
     let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) - k * this.speed * this.speed;
     if (throttle < 0) a -= c.brakeDrag * this.speed;
+    // a slow (standing) landing's descent keeps braking: diving would win the speed back
+    if (this.phase === 'descend' && !this.landRun) a = Math.min(a, -c.brakeDrag * Math.max(0, this.speed - 0.8 * c.runLandSpeed));
     this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.maxSpeed);
     const h = Math.cos(this.gamma) * this.speed;
     this.pos.x += Math.sin(this.heading) * h * dt;
@@ -342,6 +345,7 @@ export class FlightAction implements DragonAction {
     if (d.intent.jump) {
       d.intent.jump = false;
       this.phase = 'descend';
+      this.landRun = this.speed >= c.runLandSpeed;               // the kind of landing is chosen at the press
     }
     if (this.phase === 'descend' && agl <= this.cfg.maxLandHeight + 0.3) this.startLanding(d);
   }
@@ -372,7 +376,7 @@ export class FlightAction implements DragonAction {
 
   private startLanding(d: DragonCharacter): void {
     const c = this.cfg;
-    this.run = this.speed >= c.runLandSpeed;
+    this.run = this.landRun;
     const name = this.run ? 'fly_runland' : 'fly_land';
     const m = this.meta(d, name)!;
     const td = m.touchdown ?? 1;
