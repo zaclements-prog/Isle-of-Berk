@@ -70,7 +70,7 @@ TROT = {
 GALLOP = {
     "frames": 16, "speed": 7.0, "duty": 0.26, "offsets": (0.0, 0.65, 0.1, 0.55),
     "front": {"centre": -0.95, "lift": 0.2, "land": 0.35, "peel": 0.2,
-              "distal": _keys(0.26, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, -15), (0.6, 18), (0.85, 44)]),
+              "distal": _keys(0.26, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, -8), (0.6, 18), (0.85, 44)]),
               "toes": _keys(0.26, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
               "scapula": _keys(0.26, [(0, 18), (0.5, 2)], [(0, -18), (0.5, 8), (0.85, 20)])},
     "hind": {"centre": 0.39, "lift": 0.24, "land": 0.3, "peel": 0.3,
@@ -80,7 +80,7 @@ GALLOP = {
              "bob": [(0.0, -0.02), (0.17, -0.09), (0.3, -0.02), (0.45, 0.13), (0.58, 0.04), (0.72, -0.05),
                      (0.85, -0.01), (0.94, 0.05)],
              "pitch": [(0.0, 0.0), (0.2, 0.07), (0.38, 0.08), (0.55, 0.02), (0.72, -0.05), (0.9, -0.04)],
-             "arch": [(0.0, 0.13), (0.2, -0.04), (0.42, -0.2), (0.6, -0.1), (0.78, 0.08), (0.93, 0.21)],
+             "spine": [(0.0, 0.55), (0.2, 0.1), (0.42, -0.35), (0.55, -0.25), (0.72, 0.15), (0.93, 0.8)],
              "roll": 0.012, "flex": 0.012, "tail": 0.04, "tailLift": 0.035},
 }
 CYCLES = {"walk": WALK, "trot": TROT, "gallop": GALLOP}
@@ -163,7 +163,7 @@ def body_bones(cyc, t):
     rotations. bob = (amplitude m, harmonic, phase) on a cosine, pitch = (rad, harmonic, phase) on a sine about the
     lean, or either (and arch) keyed as [(cycle phase, value)]; the hips roll toward the swinging hind leg, the spine flexes laterally against the stride, the chest
     counter-rolls; arch = (rad per spine bone, phase of the most gathered moment) bows the back up and stretches it
-    flat; the neck soaks up the body's pitch and the arch so the head stays level; the tail wave trails the hips."""
+    flat, or spine = keyed total flexion for a cat's back (hips tucking, a wave running forward); the neck soaks up the body's pitch and the arch so the head stays level; the tail wave trails the hips."""
     b = cyc["body"]
     w = 2 * math.pi * t
     if isinstance(b["bob"], list):                     # keyed over the cycle (the gallop's bound)
@@ -183,20 +183,39 @@ def body_bones(cyc, t):
     else:
         aa, at = b.get("arch", (0.0, 0.0))
         arch = aa * math.cos(w - 2 * math.pi * at)      # + = gathered (back bowed up), - = stretched
-    bones = {"pelvis": (pitch, roll, 0.6 * b["flex"] * math.sin(w + 0.4))}
-    for k, n in enumerate(("spine_01", "spine_02", "spine_03", "chest")):
-        bend = arch if k == 0 else -0.667 * arch        # slopes +1, +1/3, -1/3, -1 x arch along the back
-        bones[n] = (bend, -0.35 * roll if n == "chest" else 0.0, -b["flex"] * math.sin(w + 0.4 - 0.5 * k))
-    steady = -(pitch - b["lean"]) - b["lean"] * 0.3 + arch    # the chest ends tipped -arch: lift the neck by as much
+    yaw0 = 0.6 * b["flex"] * math.sin(w + 0.4)
+    if "spine" in b:
+        # a cat's back: the flex lives in the loins and runs forward as a wave. Total flexion F (rad, + = rounded) tilts
+        # the hips under (pelvis front up by F / 2) and curls the back evenly back down (-F / 4 per joint), so the
+        # pelvis -> chest chord keeps the body pitch while the hips rock through the full range.
+        flex = lambda k: _pchip(b["spine"], t - 0.03 * k)       # joint k lags the loins by 3 % of the stride per bone
+        pelvis = pitch + 0.5 * flex(-1)
+        bones = {"pelvis": (pelvis, roll, yaw0)}
+        chest = pelvis
+        for k, n in enumerate(("spine_01", "spine_02", "spine_03", "chest")):
+            bend = -0.25 * flex(k)
+            chest += bend
+            bones[n] = (bend, -0.35 * roll if n == "chest" else 0.0, -b["flex"] * math.sin(w + 0.4 - 0.5 * k))
+        steady = -(chest - b["lean"]) - b["lean"] * 0.3          # level the head against the chest's own tilt
+        tail_base = pelvis - pitch          # tail bones point back (local X flipped): + lifts the tip, undoing the hip tilt
+        wing_lift = 0.8 * (chest - pitch)                       # the folded wings stay down on the back as the chest tips
+    else:
+        bones = {"pelvis": (pitch, roll, yaw0)}
+        for k, n in enumerate(("spine_01", "spine_02", "spine_03", "chest")):
+            bend = arch if k == 0 else -0.667 * arch        # slopes +1, +1/3, -1/3, -1 x arch along the back
+            bones[n] = (bend, -0.35 * roll if n == "chest" else 0.0, -b["flex"] * math.sin(w + 0.4 - 0.5 * k))
+        steady = -(pitch - b["lean"]) - b["lean"] * 0.3 + arch    # the chest ends tipped -arch: lift the neck as much
+        tail_base = 0.0
+        wing_lift = 0.0
     for k, n in enumerate(("neck_01", "neck_02", "neck_03", "neck_04")):
         bones[n] = (0.25 * steady + 0.008 * math.sin(h * w - 1.0 - 0.3 * k), 0.0, 0.5 * b["flex"] * math.sin(w - 0.2 * k))
     bones["head"] = (0.1 * steady - 0.01 * math.sin(h * w - 1.6), 0.0, 0.6 * b["flex"] * math.sin(w - 0.9))
     lift = b.get("tailLift", 0.02)
     for k in range(12):
         lag = 0.9 + 0.35 * k
-        bones[f"tail_{k + 1:02d}"] = (lift * math.sin(h * w - lag) + (0.03 if k < 4 else -0.02),
+        bones[f"tail_{k + 1:02d}"] = (lift * math.sin(h * w - lag) + (0.03 if k < 4 else -0.02) + (tail_base if k == 0 else 0.0),
                                       0.0, b["tail"] * (0.4 + 0.05 * k) * math.sin(w - lag))
-    return (height, pitch), bones
+    return (height, pitch), bones, wing_lift
 
 
 def _hinge(rig, name, d2):
@@ -284,7 +303,7 @@ def cycle_frames(rig, name):
     frames, report = [], {}
     for f in range(n + 1):
         t = (f % n) / n
-        root, bones = body_bones(cyc, t)
+        root, bones, wing_lift = body_bones(cyc, t)
         R.reset_pose(rig)
         _place(rig, root, bones)
         for key, off in zip(LEGS, cyc["offsets"]):
@@ -300,7 +319,7 @@ def cycle_frames(rig, name):
             for bn, e in leg.items():
                 lo, hi = r["range"].get(bn, (1e9, -1e9))
                 r["range"][bn] = (min(lo, math.degrees(e[0])), max(hi, math.degrees(e[0])))
-        frames.append({"root": root, "wings": (1.0, 0.0, 0.0), "bones": bones})
+        frames.append({"root": root, "wings": (1.0, wing_lift, 0.0), "bones": bones})
     return frames, report
 
 
