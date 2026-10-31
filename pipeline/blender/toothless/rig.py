@@ -69,9 +69,11 @@ def _rib_back(i):
 
 
 def _rib_forward(i):
-    """Outer half of a doubled rib: forward over the bundle. It rises more steeply than its inner half falls, so the
-    hinge turns < 180 deg over the top (a clip blend's shortest path goes over, never down through the legs)."""
-    return (0.03 + 0.01 * i, -0.99, 0.14 + 0.03 * i)
+    """Outer half of a doubled rib: tucked forward UNDER the wing, against the flank, like a bat's finger tips (the
+    membrane carried beneath the forearm against the body), not forward over the top of the bundle. It points a little
+    below the reverse of its inner half (which falls back at -0.10 - 0.025 i) and inward of it, so the hinge turns
+    < 180 deg and its shortest path (a clip blend's slerp) swings the tip down and under, never over the top."""
+    return (0.0, -0.99, 0.02 + 0.005 * i)
 
 
 def fold_wings(rig, amount):
@@ -79,7 +81,8 @@ def fold_wings(rig, amount):
 
     0 -> 0.5: the arm folds (humerus back along the flank, forearm forward over it) while every rib swings back with
     its joint straight, so the membrane closes like a hand fan. 0.5 -> 1: the outer halves of the four long leading
-    ribs hinge forward over the top of the bundle, keeping the fold between shoulder and tail base. The hinge keeps
+    ribs hinge forward UNDER the wing (bat-like: the finger tips tuck beneath, against the flank), keeping the fold
+    between shoulder and tail base. The hinge keeps
     each rib's lateral axis (a yaw would flip it), so the membrane between a doubled rib and a straight one lies along
     the flank instead of flipping out as a sail; the short rear ribs fold straight back so the inner membrane
     (body -> last rib) collapses instead of being dragged forward into a skirt.
