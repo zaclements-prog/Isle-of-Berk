@@ -126,7 +126,10 @@ def run_takeoff(rig, folded, gal, strides=RUN_TAKEOFF_STRIDES):
         if k < G:
             return GALLOP["speed"] * k / FPS
         return GALLOP["speed"] * G / FPS + tk[min(len(tk) - 1, i0 + k - G)]["x"]
-    return Run(n, pose, x, gallop=lambda k: k % per)
+    run = Run(n, pose, x, gallop=lambda k: k % per)
+    # the pieces the game export bakes separately (flight_export): the wings' prep over the gallop and the push onward
+    run.parts = {"c": c, "tk": tk, "i0": i0, "G": G, "prep": RZ + U, "air": n - G, "gallop_pose": gallop_pose}
+    return run
 
 
 def run_landing(rig, folded, gal, c=RUN_LAND):
@@ -179,4 +182,6 @@ def run_landing(rig, folded, gal, c=RUN_LAND):
         if i < len(allf):
             return allf[i]["x"] - base
         return allf[-1]["x"] - base + GALLOP["speed"] * (i - len(allf) + 1) / FPS
-    return Run(n, pose, x, gallop=lambda k: (s0 + k - i_td) % per, fade=max(1, k_td - int(round(0.15 * FPS))))
+    run = Run(n, pose, x, gallop=lambda k: (s0 + k - i_td) % per, fade=max(1, k_td - int(round(0.15 * FPS))))
+    run.parts = {"allf": allf, "hook": hook, "s0": s0, "i_td": i_td, "blend": B}
+    return run

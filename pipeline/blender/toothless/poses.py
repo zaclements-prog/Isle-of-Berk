@@ -2,6 +2,7 @@
 import bpy
 import library as LIB
 import locomotion as LOCO
+import flight_export as FX
 import rig as R
 
 CLIPS = {   # fold samples 0 / .25 / .5 / .75 / 1: the engine blends piecewise between neighbours (Ruling 13)
@@ -39,8 +40,10 @@ def keyframe_pose(rig, name, setter):
 
 
 def make_clips(rig):
-    """Plan 2's clips, the pose library (spec §5.11), then the authored locomotion cycles (Plan 5); every clip is
-    sampled at LIB.FPS."""
+    """Plan 2's clips, the pose library (spec §5.11), the authored locomotion cycles (Plan 5), then the flight clips
+    (Phase 2); every clip is sampled at LIB.FPS. The flight clips are posed before anything is keyed (keying leaves
+    the bones in quaternion mode, and the flight's posing code sets Euler rotations)."""
     bpy.context.scene.render.fps = LIB.FPS
+    FX.record_all(rig)
     return ([keyframe_pose(rig, name, setter) for name, setter in CLIPS.items()] + LIB.make_library_clips(rig)
-            + LOCO.make_clips(rig))
+            + LOCO.make_clips(rig) + FX.make_clips(rig))
