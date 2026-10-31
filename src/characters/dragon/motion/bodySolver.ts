@@ -85,13 +85,28 @@ export class BodySolver {
    * (roll levels out with it). Scripted `override`s still replace everything.
    */
   readonly posture = { weight: 0, height: 0, pitch: 0 };
+  /**
+   * Authored locomotion (Plan 5): how strongly the cycles drive the body this step (0…1). The procedural walk/trot
+   * bob, gallop rock and gallop spine flex fade out by it; bobOffset (m) is the cycles' pelvis bob, added after the
+   * height spring so it keeps their timing.
+   */
+  authored = 0;
+  bobOffset = 0;
+  /** How much lower (m) the authored cycles carry the shoulders (a chest-low prowl): through the pitch spring. */
+  authoredCrouch = 0;
+  /**
+   * How far (m) a planted paw of each pair (hind, front) ended under its contact last step because its leg could not
+   * fold any further (a joint at its limit as the body comes down onto it): the body rises by that at once, the
+   * counterpart of lowering for a leg that falls short. Set by the character after the leg solve.
+   */
+  readonly pinch = [0, 0];
   private readonly height: SpringState = { x: 0, v: 0 };
   private readonly pitch: SpringState = { x: 0, v: 0 };
   private readonly roll: SpringState = { x: 0, v: 0 };
   private readonly bend: SpringState = { x: 0, v: 0 };
   /** The gait crouch (m) as applied: it follows deeper crouches at once and releases at body.crouchRelease. */
   private crouch = 0;
-  private readonly pelvis: number;
+  readonly pelvis: number;
   private readonly spine: number[];
   /** The pelvis head's horizontal offset from the character origin at bind (body frame). */
   readonly pelvisOffset: THREE.Vector3;
@@ -139,6 +154,7 @@ export class BodySolver {
     }
     this.bend.x = this.bend.v = 0;
     this.crouch = 0;
+    this.pinch[0] = this.pinch[1] = 0;
     this.pose.spinePitch.fill(0);
     this.pose.spineYaw.fill(0);
     this.compose(pos, heading);
@@ -184,12 +200,13 @@ export class BodySolver {
     this.crouch = crouchT >= this.crouch ? crouchT : this.crouch + (crouchT - this.crouch) * dampFactor(t.crouchRelease, dt);
     const crouch = this.crouch;
     const ph = gait.phase;
-    const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph));
+    const proc = 1 - clamp(this.authored, 0, 1);
+    const bob = -(w[0] * t.bobWalk + w[1] * t.bobTrot) * moving * 0.5 * (1 - Math.cos(2 * TAU * ph)) * proc;
     const maxTilt = deg(maxTiltDeg);
 
-    let pitchT = Math.atan2(hF - lowerFront - (hH - lowerHind), span);
+    let pitchT = Math.atan2(hF - lowerFront - this.authoredCrouch - (hH - lowerHind), span);
     pitchT += clamp(deg(t.accelPitchDeg) * kin.accel, -deg(t.maxAccelPitchDeg), deg(t.maxAccelPitchDeg));
-    pitchT += deg(t.rockGallopDeg) * w[2] * Math.sin(TAU * ph);
+    pitchT += deg(t.rockGallopDeg) * w[2] * Math.sin(TAU * ph) * proc;
     let rollT = Math.atan2(hL - hR, this.feetWidth) * t.rollFollow;
     rollT -= clamp(Math.atan((kin.speed * kin.yawRate) / 9.81) * t.leanGain, -deg(t.maxLeanDeg), deg(t.maxLeanDeg));
     pitchT = clamp(pitchT, -maxTilt, maxTilt);
@@ -222,12 +239,21 @@ export class BodySolver {
     } else {
       stepSpring(this.height, heightT, t.heightOmega, 1, dt);
       stepSpring(this.pitch, pitchT, tiltOmega, 1, dt);
+      const [ph0, pf0] = this.pinch;
+      if (ph0 > 0 || pf0 > 0) {
+        const k = t.pinchRaise;
+        this.height.x += k * ph0;
+        if (ph0 > 0) this.height.v = Math.max(this.height.v, 0);
+        const dp = Math.atan2(k * Math.max(0, pf0 - ph0), span);
+        this.pitch.x += dp;
+        if (dp > 0) this.pitch.v = Math.max(this.pitch.v, 0);
+      }
     }
     stepSpring(this.roll, rollT, tiltOmega, 1, dt);
 
     stepSpring(this.bend, clamp(t.bendGain * kin.yawRate, -deg(t.maxBendDeg), deg(t.maxBendDeg)), t.tiltOmega, 1, dt);
     const bend = this.bend.x;
-    const flex = deg(t.flexGallopDeg) * w[2] * Math.sin(TAU * ph + Math.PI / 2);
+    const flex = deg(t.flexGallopDeg) * w[2] * Math.sin(TAU * ph + Math.PI / 2) * proc;
     for (let k = 0; k < this.spine.length; k++) {
       this.pose.spineYaw[k] = clamp(bend * (t.bendShare[k] ?? 1 / this.spine.length), -this.spineYawLimit, this.spineYawLimit);
       this.pose.spinePitch[k] = clamp(flex / this.spine.length, -this.spinePitchLimit, this.spinePitchLimit);
@@ -272,6 +298,6 @@ export class BodySolver {
     rotY(this.pelvisOffset, heading, p.pelvisPos).add(pos);
     p.pelvisPos.x += up.x * this.hipHeight;
     p.pelvisPos.z += up.z * this.hipHeight;
-    p.pelvisPos.y = p.height;
+    p.pelvisPos.y = p.height + this.bobOffset * up.y;
   }
 }

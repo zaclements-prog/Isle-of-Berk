@@ -1,5 +1,6 @@
 import type { InputEvent } from '../../core/input';
 import { DEFAULT_TUNING } from '../../characters/dragon/motion/tuning';
+import { ROUGH_LANES } from './course';
 
 /**
  * What a script must achieve, so a dragon that stands still (perfect metrics) cannot pass it. Checked by
@@ -68,7 +69,21 @@ export const LAB_SCRIPTS: LabScript[] = [
 ];
 
 export function scriptByName(name: string): LabScript {
-  const s = LAB_SCRIPTS.find((x) => x.name === name);
+  const s = LAB_SCRIPTS.find((x) => x.name === name) ?? ROUGH_SCRIPTS.find((x) => x.name === name);
   if (!s) throw new Error(`unknown lab script '${name}' (have: ${LAB_SCRIPTS.map((x) => x.name).join(', ')})`);
   return s;
 }
+
+/**
+ * Rough-terrain scripts (task #11): walk (prowl), trot and gallop down each rough lane toward −Z. Over rough ground he
+ * slows to pick his way (tuning.rough), so each must cover 14 m (the lanes' obstacles span 30 m) whatever he was asked.
+ */
+export const ROUGH_SCRIPTS: LabScript[] = Object.entries(ROUGH_LANES).flatMap(([lane, x]): LabScript[] => [
+  { name: `rough-${lane}-walk`, description: `prowl down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 16,
+    events: [...prowl(), ...hold(['KeyW'], 0.1, 15)], goal: { minTravel: 14 } },
+  { name: `rough-${lane}-trot`, description: `trot down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 14,
+    events: hold(['KeyW'], 0.1, 13), goal: { minTravel: 14 } },
+  // the gallop run ends inside the lane: past its end he would burst into a gallop and brake on flat ground
+  { name: `rough-${lane}-gallop`, description: `gallop down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 9,
+    events: hold(['KeyW', 'ShiftLeft'], 0.1, 8.5), goal: { minTravel: 14 } },
+]);

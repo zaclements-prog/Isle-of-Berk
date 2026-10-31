@@ -43,6 +43,8 @@ export class SecondaryMotion {
   earBias = 0;
   /** Breathing depth scale (M6: shallower while the front legs are posed on the ground). */
   breathGain = 1;
+  /** Authored locomotion weight (Plan 5): the cycles carry the tail, so its static droop and gallop raise fade out. */
+  authored = 0;
   private breathPhase = 0;
   private time = 0;
   private nextEarTwitch: number;
@@ -103,7 +105,8 @@ export class SecondaryMotion {
       const f = (k + 1) / n;
       const omega = lerp(t.tail.omegaBase, t.tail.omegaTip, k / Math.max(n - 1, 1));
       const yawT = clamp((t.tail.turnGain * inp.yawRate + t.tail.latAccelGain * latAccel) * f, -this.tailYawLimit, this.tailYawLimit);
-      const pitchT = clamp(-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight - t.tail.vertAccelGain * vertAccel * f,
+      const carry = (-deg(t.tail.droopDeg) + deg(t.tail.gallopRaiseDeg) * inp.gallopWeight) * (1 - clamp(this.authored, 0, 1));
+      const pitchT = clamp(carry - t.tail.vertAccelGain * vertAccel * f,
         -this.tailPitchLimit, this.tailPitchLimit);
       stepSpring(this.tailYaw[k], yawT, omega, t.tail.zeta, dt);
       stepSpring(this.tailPitch[k], pitchT, omega, t.tail.zeta, dt);

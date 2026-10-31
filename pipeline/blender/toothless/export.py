@@ -4,6 +4,7 @@ import os
 import bpy
 import anatomy as A
 import library as LIB
+import locomotion as LOCO
 
 REQUIRED_OPTS = {
     "export_format": "GLB", "use_selection": True, "export_yup": True, "export_apply": False,
@@ -81,7 +82,8 @@ def rig_json(rig, mesh):
                   for side in ("L", "R")},
         "ears": {side: [f"ear_{i}_{side}" for i in range(1, 4)] for side in ("L", "R")},
         "morphs": keys,
-        "clips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded", "jaw_open", *LIB.LIBRARY],
+        "clips": ["bind", "wings_fold_25", "wings_half", "wings_fold_75", "wings_folded", "jaw_open", *LIB.LIBRARY,
+                  *LOCO.LOCO_CLIPS.values()],
         "proportions": {k: round(v, 4) for k, v in A.proportions().items()},
     }
 
@@ -92,10 +94,11 @@ POSES = {"clips": {"bind": {"mask": "all"}, "wings_fold_25": WING_MASK, "wings_h
 
 
 def poses_json(rig):
-    """toothless.poses.json v2: Plan 2's clip masks plus the library metadata (masks, ownsLegs, root, wings, soles,
-    loop, blends, interrupt, duration, face curves), and the wing flare the engine's WingController applies."""
-    return {"version": 2, "wingFlare": {"deg": LIB.FLARE_DEG, "liftDeg": LIB.FLARE_LIFT_DEG},
-            "clips": {**POSES["clips"], **LIB.meta_entries(rig)}}
+    """toothless.poses.json v3: Plan 2's clip masks plus the library metadata (masks, ownsLegs, root, wings, soles,
+    loop, blends, interrupt, duration, face curves), the locomotion cycles' metadata (Plan 5) and the wing flare the
+    engine's WingController applies."""
+    return {"version": 3, "wingFlare": {"deg": LIB.FLARE_DEG, "liftDeg": LIB.FLARE_LIFT_DEG},
+            "clips": {**POSES["clips"], **LIB.meta_entries(rig), **LOCO.meta_entries(rig)}}
 
 
 def write_all(rig, mesh, out_dir):

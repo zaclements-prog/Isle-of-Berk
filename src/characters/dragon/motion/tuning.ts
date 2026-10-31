@@ -30,7 +30,7 @@ export interface MotionTuning {
     crouchWalk: number; crouchTrot: number; crouchGallop: number;
     footfallImpulse: number; bobWalk: number; bobTrot: number; rockGallopDeg: number; flexGallopDeg: number;
     leanGain: number; maxLeanDeg: number; accelPitchDeg: number; maxAccelPitchDeg: number;
-    bendGain: number; maxBendDeg: number; shortfallLower: number; terrainLookahead: number;
+    bendGain: number; maxBendDeg: number; shortfallLower: number; pinchRaise: number; terrainLookahead: number;
     /** Contacts with |normal.y| below this (steeper than ~50°) push the body sideways; flatter ones belong to the body solver. */
     wallNormalY: number;
     /** Lateral-bend share for spine_01, spine_02, spine_03, chest (should sum near 1). */
@@ -62,7 +62,7 @@ export interface MotionTuning {
      */
     terrainDrop: number;
   };
-  legs: { scapulaFollow: number; swingCurlDeg: number; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
+  legs: { scapulaFollow: number; swingCurlDeg: number; swingReach: boolean; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
   look: {
     yawLimitDeg: number; pitchLimitDeg: number; headOmega: number; eyeOmega: number; eyeLimitDeg: number;
     leadGain: number; aheadDist: number; idleCameraDelay: number; glanceMin: number; glanceMax: number; glanceHold: number;
@@ -175,6 +175,33 @@ export interface MotionTuning {
   /** Library-pose legs (M6): breathGainPosed = breathing depth while the front legs are posed (lying: shallower); a
    *  posed paw below the ground hands its leg to the IK in full by groundGuard metres of depth. */
   pose: { breathGainPosed: number; groundGuard: number };
+  /**
+   * Authored locomotion cycles (Plan 5): played additively on the body over the procedural pose. Their weight fades
+   * in from fadeSpeedLo to fadeSpeedHi (m/s) and follows changes over blendTime (s); bobGain scales their pelvis bob;
+   * gains = how much of each gait's authored body (walk, trot, gallop) plays over the real ground's legs; a gait whose
+   * authored duty differs from gait.ts's by more than adoptDutyOver takes the authored duty. The cycles are straight
+   * runs: they fade out as the turn tightens from turnCurveLo to turnCurveHi (yaw rate / speed, 1/m). They are flat-
+   * ground runs: they fade out as the ground under the paws twists from roughLo to roughHi (m; see DragonCharacter),
+   * and as the head and neck meet ground ahead (the front raise reaching raiseFade m): the low carriage lifts. Contact
+   * comes first: they fade as any planted leg's reach ratio climbs from strainLo to strainHi. Any fade falls within
+   * fallTime (s); the weight comes back over blendTime.
+   */
+  /**
+   * Picking his way (task #11): the ground ahead is sampled on a grid (rows at roughAhead m + roughLead × speed s
+   * ahead, ±roughSpan m across) and its roughness is the largest height off the grid's best-fit plane (ramps and side
+   * slopes are not rough). From roughTrot m he is held to trotCap m/s, and for roughHold s after the last rough
+   * reading: he trots over rough ground rather than
+   * gallop onto footholds his legs cannot keep. (One level only: a plane fit also reads a ramp's foot or a step's
+   * edge as rough, which a trot takes in its stride.)
+   */
+  rough: { roughAhead: number[]; roughLead: number; roughSpan: number; roughTrot: number; trotCap: number; roughHold: number };
+  loco: {
+    fadeSpeedLo: number; fadeSpeedHi: number; blendTime: number; bobGain: number; gains: number[]; adoptDutyOver: number;
+    turnCurveLo: number; turnCurveHi: number; roughLo: number; roughHi: number; raiseFade: number;
+    strainLo: number; strainHi: number; fallTime: number;
+    /** Per gait (walk, trot, gallop): how much lower (m) the authored carriage holds the shoulders, by cycle weight. */
+    crouch: number[];
+  };
   /** Face and mood (M6, spec §6.12). pupilByMood / earsByMood follow MOODS: calm, curious, excited, tired, aggressive. */
   face: {
     blinkMin: number; blinkMax: number; doubleBlink: number; doubleGap: number; blinkClose: number; blinkHold: number; blinkOpen: number;
@@ -238,11 +265,11 @@ export const DEFAULT_TUNING: MotionTuning = {
   body: {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
-    leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1,
+    leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1, pinchRaise: 1,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
     crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
-  legs: { scapulaFollow: 0.35, swingCurlDeg: 35, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
+  legs: { scapulaFollow: 0.35, swingCurlDeg: 35, swingReach: true, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
   look: {
     yawLimitDeg: 100, pitchLimitDeg: 40, headOmega: 5, eyeOmega: 28, eyeLimitDeg: 25, leadGain: 0.35, aheadDist: 6,
     idleCameraDelay: 1.5, glanceMin: 3, glanceMax: 7, glanceHold: 1.2, weights: [0.12, 0.18, 0.22, 0.23, 0.25],
@@ -269,6 +296,9 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   wings: { omega: 8, climbFlare: 0.8 },
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
+  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2, roughHold: 2 },
+  loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
+    strainLo: 0.93, strainHi: 0.99, fallTime: 0.08, crouch: [0.08, 0.08, 0] },
   face: {
     blinkMin: 2, blinkMax: 6, doubleBlink: 0.18, doubleGap: 0.12, blinkClose: 0.07, blinkHold: 0.04, blinkOpen: 0.12,
     turnBlinkRate: 2.5, turnBlinkGap: 0.8, moodOmega: 1.2, pupilOmega: 6, earOmega: 5,

@@ -249,8 +249,48 @@ export class LegRig {
     s.setWorldQuat(tibia, r.tibia);
     s.setWorldQuat(meta, r.meta);
     this.clampLimits(s, L, 0, 3);
+    // a femur held at its limit moves the knee off the solve's: swing the tibia (and the metatarsal with it) so the paw
+    // heads for its target from where the knee really is (a no-op when nothing clamped)
+    _a.set(0, s.length[femur], 0).applyQuaternion(s.worldQuat[femur]).add(s.worldPos[femur]);
+    _fz.set(0, s.length[tibia], 0).applyQuaternion(s.worldQuat[tibia]);
+    _b.set(0, s.length[meta], 0).applyQuaternion(s.worldQuat[meta]).add(_fz);       // knee → paw
+    _fz.subVectors(_target, _a);                                                       // knee → target
+    _c.set(1, 0, 0).applyQuaternion(s.worldQuat[tibia]);
+    _b.addScaledVector(_c, -_b.dot(_c));
+    _fz.addScaledVector(_c, -_fz.dot(_c));
+    if (_b.lengthSq() > 1e-10 && _fz.lengthSq() > 1e-10) {
+      const turn = Math.atan2(_fx.crossVectors(_b, _fz).dot(_c), _b.dot(_fz));
+      s.localQuat[tibia].multiply(_qx.setFromAxisAngle(AX, turn));
+      this.clampLimits(s, L, 1, 3);
+    }
+    // a swinging paw that still falls short aims the metatarsal at its target from where the hock really is
+    if (!tg.planted[i] && this.t.swingReach) {
+      _a.set(0, s.length[femur], 0).applyQuaternion(s.worldQuat[femur]).add(s.worldPos[femur]);
+      _b.set(0, s.length[tibia], 0).applyQuaternion(s.worldQuat[tibia]).add(_a);
+      _fz.set(0, s.length[meta], 0).applyQuaternion(s.worldQuat[meta]).add(_b);
+      this.aimBone(s, L, 2, _b, _target, _fz.distanceTo(_target));
+    }
     this.placeToes(s, L, i, tg);
     return r.shortfall;
+  }
+
+  /**
+   * Turn leg bone k (index into L.limits) about its local X so its +Y from `from` points at `to`, then clamp it; by
+   * how far the chain fell short (`miss`): nothing under 1 cm, fully from 3 cm.
+   */
+  private aimBone(s: RigSkeleton, L: LegInfo, k: number, from: THREE.Vector3, to: THREE.Vector3, miss: number): void {
+    const w = clamp((miss - 0.01) / 0.02, 0, 1);
+    if (w <= 0) return;
+    const b = L.limits[k].bone;
+    _c.set(1, 0, 0).applyQuaternion(s.worldQuat[b]);
+    _fz.subVectors(to, from);
+    _fz.addScaledVector(_c, -_fz.dot(_c));
+    _fy.set(0, 1, 0).applyQuaternion(s.worldQuat[b]);
+    _fy.addScaledVector(_c, -_fy.dot(_c));
+    if (_fz.lengthSq() < 1e-10 || _fy.lengthSq() < 1e-10) return;
+    const turn = Math.atan2(_fx.crossVectors(_fy, _fz).dot(_c), _fy.dot(_fz));
+    s.localQuat[b].multiply(_qx.setFromAxisAngle(AX, turn * w));
+    this.clampLimits(s, L, k, k + 1);
   }
 
   private solveFront(i: number, s: RigSkeleton, tg: LegTargets, bodyQuat: THREE.Quaternion): number {
@@ -282,8 +322,27 @@ export class LegRig {
     s.setWorldQuat(hum, r.upper);
     s.setWorldQuat(rad, r.lower);
     this.clampLimits(s, L, 1, 3);
+    // a humerus held at its limit moves the elbow off the solve's: re-aim the radius at the wrist from where the elbow
+    // really is (a no-op when nothing clamped), so a pinned shoulder folds the elbow instead of driving the paw down
+    _a.set(0, s.length[hum], 0).applyQuaternion(s.worldQuat[hum]).add(s.worldPos[hum]);
+    _b.subVectors(_wrist, _a);
+    _c.set(1, 0, 0).applyQuaternion(s.worldQuat[rad]);
+    _b.addScaledVector(_c, -_b.dot(_c));
+    _fy.set(0, 1, 0).applyQuaternion(s.worldQuat[rad]);
+    _fy.addScaledVector(_c, -_fy.dot(_c));
+    if (_b.lengthSq() > 1e-10 && _fy.lengthSq() > 1e-10) {
+      const turn = Math.atan2(_fx.crossVectors(_fy, _b).dot(_c), _fy.dot(_b));
+      s.localQuat[rad].multiply(_qx.setFromAxisAngle(AX, turn));
+      this.clampLimits(s, L, 2, 3);
+    }
     s.setWorldQuat(mc, _qmc);
     this.clampLimits(s, L, 3, 4);
+    // a swinging paw whose wrist still fell short (a trailing paw at the shoulder's limit just after lift-off) flicks
+    // the metacarpal at its target from where the wrist really is, instead of hanging it straight down into the ground
+    if (!tg.planted[i] && this.t.swingReach) {
+      _b.set(0, s.length[rad], 0).applyQuaternion(s.worldQuat[rad]).add(_a);
+      this.aimBone(s, L, 3, _b, _target, _b.distanceTo(_wrist));
+    }
     this.placeToes(s, L, i, tg);
     return r.shortfall;
   }
