@@ -5,7 +5,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(os.path.dirname(HERE), "lib"), HERE]
 import bpy
 from mathutils import Vector
-import flight as F, qa_render as QR
+import flight as F, flight_loops as FL, qa_render as QR
 argv = sys.argv[sys.argv.index("--") + 1:]
 out, view, first, count = argv[0], argv[1], int(argv[2]), int(argv[3])
 res = (int(argv[4]), int(argv[5])) if len(argv) > 5 else (960, 540)
@@ -14,8 +14,15 @@ sc = bpy.context.scene
 rig = bpy.data.objects["ToothlessRig"]
 QR.setup_clay(sc)
 sc.display.shading.show_shadows = True
-frames = F.takeoff_frames()
-folded = F.folded_wing_basis(rig)
+CLIP = os.environ.get("CLIP", "takeoff")       # takeoff | flap | glide (loops: env CYCLES of them back to back)
+if CLIP == "takeoff":
+    frames = F.takeoff_frames()
+    folded = F.folded_wing_basis(rig)
+else:
+    cfg = FL.FLAP if CLIP == "flap" else FL.GLIDE
+    loop = FL.flap_frames() if CLIP == "flap" else FL.glide_frames()
+    cycles = int(os.environ.get("CYCLES", "2"))
+    frames = [dict(loop[k % len(loop)], x=cfg["speed"] * k / F.FPS, _k=k % len(loop)) for k in range(cycles * len(loop))]
 
 
 def mat(nm, rgb):
@@ -41,11 +48,14 @@ cam_h = None
 step = int(os.environ.get("STEP", "1"))
 for f in range(first, min(first + count, len(frames)), step):
     fr = frames[f]
-    F.apply_frame(rig, fr, folded, frames)
+    if CLIP == "takeoff":
+        F.apply_frame(rig, fr, folded, frames)
+    else:
+        FL.apply_loop_frame(rig, loop[fr["_k"]], loop, cfg)
     rig.location = (0, -fr["x"], 0)
     bpy.context.view_layer.update()
     h = fr["root"][0] - 1.02
     cam_h = h if cam_h is None else cam_h + (h - cam_h) * 0.15     # the camera follows him up, a little behind
-    off = Vector((0, -fr["x"], 0.85 * cam_h))
+    off = Vector((0, -fr["x"], (0.85 if CLIP == "takeoff" else 0.95) * cam_h))
     QR.shoot(sc, out, f"f{f:04d}", tuple(loc + off), tuple(tgt + off), lens=lens, res=res)
 print("RENDER s/frame", round((time.time() - t0) / max(1, count // step), 2))

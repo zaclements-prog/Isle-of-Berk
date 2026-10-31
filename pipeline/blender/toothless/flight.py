@@ -371,8 +371,9 @@ def line_z(frames, i, y, z, c=TAKEOFF):
     return now + (past - now) * whip + (z - CHEST_Z) - droop
 
 
-def _apply_line(rig, fr, frames):
-    """Lay the pelvis, spine and tail along the body line (blended in by lineW from the library's ground pose): the
+def _apply_line(rig, fr, frames, line_fn=None):
+    """Lay the pelvis, spine and tail along the body line (blended in by lineW from the library's ground pose; line_fn:
+    (rest y, rest z) -> height, in place of the takeoff's line_z): the
     pelvis takes its height and pitch from the line, every later bone hinges about local X to aim at its tail
     joint's target. The neck counters the chest's tilt so the head keeps near level."""
     import locomotion as L
@@ -384,7 +385,8 @@ def _apply_line(rig, fr, frames):
     frames_ = frames
 
     def target(rest, cur_z):
-        return cur_z + (line_z(frames_, fr["i"], rest.y, rest.z) - cur_z) * w
+        z = line_fn(rest.y, rest.z) if line_fn else line_z(frames_, fr["i"], rest.y, rest.z)
+        return cur_z + (z - cur_z) * w
 
     pr = data["pelvis"].head_local
     nxt = data["pelvis"].tail_local
