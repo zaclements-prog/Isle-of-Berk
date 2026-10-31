@@ -66,7 +66,8 @@ VIEWS = {"side": (Vector((17.0, -1.0, 2.5)), Vector((0, -1.0, 1.6)), 30),
          "tq": (Vector((-11.0, -10.0, 4.0)), Vector((0, 0.0, 1.6)), 28),
          "back": (Vector((3.0, 14.0, 3.0)), Vector((0, -1.0, 1.8)), 30),
          "close": (Vector((7.0, -1.2, 2.2)), Vector((0, -0.8, 1.9)), 45),
-         "ground": (Vector((8.0, -0.4, 1.1)), Vector((0, -0.4, 0.95)), 38)}
+         "ground": (Vector((8.0, -0.4, 1.1)), Vector((0, -0.4, 0.95)), 38),
+         "wingtop": (Vector((-5.0, -3.5, 6.5)), Vector((0, 0.3, 1.5)), 30)}
 loc, tgt, lens = VIEWS[view]
 os.makedirs(out, exist_ok=True)
 t0 = time.time()

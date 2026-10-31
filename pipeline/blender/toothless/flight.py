@@ -597,12 +597,16 @@ def pose_unfold(rig, k, ch, folded_basis):
         else:
             amount = 0.5 - 0.5 * _ease(min(1.0, (kg - 0.45) / 0.3))
         amount = round(amount, 4)
-        rise = _ease(max(0.0, min(1.0, (kg - 0.5) / 0.5)))             # then into the stroke
+        rise = _ease(max(0.0, min(1.0, (kg - 0.55) / 0.45)))            # then settle into the exact stroke pose
         if amount not in cache:
             cache[amount] = _fold_frames(rig, amount, names)
-        for sfx in ("L", "R"):
+        # the fold path is carried up about the shoulder as it opens (toward the stroke's top elevation), so the wing
+        # opens straight into a raised spread instead of out to the flat bind spread and back up again
+        lift = math.radians(TAKEOFF["top"]) * _ease(min(1.0, kg / 0.75))
+        for sfx, sgn in (("L", -1.0), ("R", 1.0)):
+            q_up = Quaternion((0.0, 1.0, 0.0), sgn * lift)
             for n in _group_bones(g, sfx):
-                plan[n] = (cache[amount][n], rise)
+                plan[n] = (q_up @ cache[amount][n], rise)
     order = [n for sfx in ("L", "R") for g in ("humerus", "forearm", "ribs_a", "ribs_b") for n in _group_bones(g, sfx)]
     for n in order:
         q0, rise = plan[n]
