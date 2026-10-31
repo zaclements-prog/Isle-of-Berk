@@ -68,19 +68,19 @@ TROT = {
 # hinds swing forward through a lower, gathered flight. Height, pitch and arch are keyed over the cycle; the tail
 # counterbalances.
 GALLOP = {
-    "frames": 20, "speed": 6.0, "duty": 0.24, "offsets": (0.0, 0.65, 0.1, 0.55),
-    "front": {"centre": -1.04, "lift": 0.2, "skew": 1.5, "land": 0.35, "peel": 0.2,
-              "distal": _keys(0.24, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, 6), (0.6, 30), (0.85, 46)]),
-              "toes": _keys(0.24, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
-              "scapula": _keys(0.24, [(0, 20), (0.5, 0)], [(0, -12), (0.4, 10), (0.85, 21)])},
-    "hind": {"centre": 0.43, "lift": 0.22, "land": 0.3, "peel": 0.3,
-             "distal": _keys(0.24, [(0, 48), (0.5, 38), (0.88, 44)], [(0, 52), (0.3, 10), (0.62, 34), (0.875, 50)]),
-             "toes": _keys(0.24, [(0, 79), (0.68, 79)], [(0, 36), (0.3, 18), (0.69, 66), (0.875, 85)])},
+    "frames": 20, "speed": 6.0, "duty": 0.21, "offsets": (0.0, 0.65, 0.1, 0.55),
+    "front": {"centre": -1.17, "lift": 0.2, "skew": 1.5, "land": 0.35, "peel": 0.2,
+              "distal": _keys(0.21, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, 6), (0.6, 30), (0.85, 46)]),
+              "toes": _keys(0.21, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
+              "scapula": _keys(0.21, [(0, 20), (0.5, 0)], [(0, -12), (0.4, 10), (0.85, 21)])},
+    "hind": {"centre": 0.45, "lift": 0.22, "land": 0.3, "peel": 0.3,
+             "distal": _keys(0.21, [(0, 48), (0.5, 38), (0.88, 44)], [(0, 52), (0.3, 10), (0.62, 34), (0.875, 50)]),
+             "toes": _keys(0.21, [(0, 79), (0.68, 79)], [(0, 36), (0.3, 18), (0.69, 66), (0.875, 85)])},
     "body": {"height": 0.91, "lean": -0.045, "smooth": 2, "bob": (0.0, 1, 0.0), "pitch": (0.0, 1, 0.0),
              # the line through the sky: its height offset (m) under the neck base over the stride. Every spine and
              # tail joint passes through the same heights later, delayed by its distance behind / the stride length.
-             "path": [(0.0, 0.06), (0.22, 0.12), (0.47, 0.02), (0.72, -0.1), (0.9, -0.02)],
-             "roll": 0.012, "flex": 0.02, "tail": 0.06, "tailLift": 0.0, "neckDrop": 0.07, "headLevel": 0.3, "follow": 0.5},
+             "path": [(0.0, 0.06), (0.22, 0.12), (0.47, 0.02), (0.72, -0.1), (0.9, -0.02)], "pathGain": 1.8,
+             "roll": 0.012, "flex": 0.02, "tail": 0.06, "tailLift": 0.0, "neckDrop": 0.07, "headLevel": 0.3, "follow": 0.3},
 }
 CYCLES = {"walk": WALK, "trot": TROT, "gallop": GALLOP}
 
@@ -163,7 +163,7 @@ def _line(cyc, t, y):
     """The travelling line's height offset at rest-y `y` (m, +Y behind) and cycle phase t: what the neck base had
     (y - LEAD_Y) / stride of a cycle earlier. The wave stands still in the world while the body runs through it."""
     stride = cyc["speed"] * cyc["frames"] / FPS
-    return _chan(cyc["body"], "path", t - (y - LEAD_Y) / stride)
+    return cyc["body"].get("pathGain", 1.0) * _chan(cyc["body"], "path", t - (y - LEAD_Y) / stride)
 
 
 def leg_targets(cyc, kind, p, off=0.0):
@@ -425,38 +425,12 @@ def _path_body(rig, cyc, t, bones):
     for n in ("neck_01", "neck_02", "neck_03", "neck_04", "head"):
         rig.pose.bones[n].rotation_euler = bones[n]
     bpy.context.view_layer.update()
-    lift = _wing_lift(rig)
-    return (zp, pitch), lift
-
-
-_WING_REST = []
-
-
-def _wing_elev(rig):
-    """Folded wing humerus elevation going back (degrees) on the current pose, and the loins -> chest line's."""
-    import library as LIB
-    LIB.apply_wings(rig, 1.0, 0.0, 0.0)
-    bpy.context.view_layer.update()
-    w = rig.pose.bones["wing_humerus_L"]
-    a, c = rig.pose.bones["spine_01"].head, rig.pose.bones["chest"].head
-    d = w.tail - w.head
-    return math.degrees(math.atan2(d.z, d.y)), math.degrees(math.atan2(a.z - c.z, a.y - c.y))
-
-
-def _wing_lift(rig):
-    """The lift (rad) that holds the folded wings at their bind angle to the horizon however the chest tips: the
-    travelling line keeps the body's mean line level, so the bundle rides flat while the back flows under it
-    (measured on the posed rig, not estimated)."""
-    if not _WING_REST:
-        saved = {pb.name: pb.matrix_basis.copy() for pb in rig.pose.bones}
-        import rig as R
-        R.reset_pose(rig)
-        _WING_REST.append(_wing_elev(rig)[0])
-        for pb in rig.pose.bones:
-            pb.matrix_basis = saved[pb.name]
-        bpy.context.view_layer.update()
-    w = _wing_elev(rig)[0]
-    return max(-0.25, min(0.25, math.radians(_WING_REST[0] - w)))
+    # the folded wings ride with the chest (a nose-up tilt lowers their tips by as much); lift them so their angle
+    # follows 80 % of the chest -> loins line's turn from bind, laying the bundle along the back
+    lo, ch = rig.pose.bones["spine_01"].head, rig.pose.bones["chest"].head
+    rlo, rch = data["spine_01"].head_local, data["chest"].head_local
+    back = math.atan2(lo.z - ch.z, lo.y - ch.y) - math.atan2(rlo.z - rch.z, rlo.y - rch.y)   # + = loins higher
+    return (zp, pitch), max(-0.4, min(0.4, 0.8 * back + chest))
 
 
 def _level_head(rig, bones, target):
