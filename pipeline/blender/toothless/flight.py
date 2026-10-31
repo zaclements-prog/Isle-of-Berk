@@ -592,13 +592,14 @@ def _fold_frames(rig, arm, hinges, names):
     return {n: pbs[n].matrix.to_quaternion() for n in names}
 
 
-def pose_unfold(rig, k, ch, folded_basis):
+def pose_unfold(rig, k, ch, folded_basis, top=None):
     """Wings between folded (k = 0) and their stroke pose for channels ch (k = 1) along the fold's own path: the
     fan-fold (rig.fold_wings) run backwards, the arm swinging out of its tuck and the ribs fanning open, then a rise
     into the stroke; each group outboard from the shoulder starts a little later, so the shoulder leads and the fan
     follows, and folding (k falling) runs it back with the fan closing first and the arm tucking last. Bone frames are
     interpolated in armature space (direction and membrane normal together) and aimed parent first. The hip wings
-    take the plain slerp from their folded pose."""
+    take the plain slerp from their folded pose. top: the elevation (deg) the fold path is carried up toward (default
+    the takeoff stroke's top)."""
     pbs = rig.pose.bones
     names = [n for g, _ in UNFOLD_GROUPS for sfx in ("L", "R") for n in _group_bones(g, sfx)]
     apply_wings(rig, ch)
@@ -621,7 +622,7 @@ def pose_unfold(rig, k, ch, folded_basis):
             cache[arm] = _fold_frames(rig, arm, hinges, names)
         # the fold path is carried up about the shoulder as it opens (toward the stroke's top elevation), so the wing
         # opens straight into a raised spread instead of out to the flat bind spread and back up again
-        lift = math.radians(TAKEOFF["top"]) * _ease(min(1.0, kg / 0.75))
+        lift = math.radians(TAKEOFF["top"] if top is None else top) * _ease(min(1.0, kg / 0.75))
         for sfx, sgn in (("L", -1.0), ("R", 1.0)):
             q_up = Quaternion((0.0, 1.0, 0.0), sgn * lift)
             for n in _group_bones(g, sfx):

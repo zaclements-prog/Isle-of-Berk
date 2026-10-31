@@ -28,6 +28,11 @@ RUN_TAKEOFF = dict(F.TAKEOFF,
                    forward=(GALLOP["speed"], 10.0))      # lift-off at the gallop's speed, accelerating into the climb
 RUN_TAKEOFF_AIR = 2.1                                    # s of climb kept after the push (the cruise flap follows)
 RUN_TAKEOFF_STRIDES = 2                                  # gallop strides in the clip before the push (wings opening)
+# the wings open low over the gallop, half spread and swept back (held for balance, out of the stride's way), and only
+# rise to the stroke's top in the last moment before the hind plant, so the raise winds straight into the first
+# downstroke with the push
+RUN_LOW = {"elev": 12.0, "sweep": -22.0, "fold": 38.0, "fan": 0.25, "twist": 0.0, "bend": 0.0}
+RUN_RAISE = 0.3                                          # s: low spread -> the stroke's top, ending at the hind plant
 RUN_TAKEOFF_BLEND = 0.45                                 # s: gallop -> takeoff pose from the hind plant
 
 RUN_LAND = dict(FS.LAND,
@@ -89,19 +94,23 @@ def run_takeoff(rig, folded, gal, strides=RUN_TAKEOFF_STRIDES):
         fr["legIK"] = {k: (v[0], (v[1][0] + shift, tz)) + tuple(v[2:]) for k, v in fr["legIK"].items()
                        if k.startswith("hind")}
     G = strides * per
-    U = int(round(0.78 * FPS))                                  # the wings open over the last strides
+    U = int(round(0.78 * FPS))                                  # the wings open (low) over the last strides
+    RZ = int(round(RUN_RAISE * FPS))
+    ch_low = {seg: dict(RUN_LOW) for seg in ch_top}
     B = int(round(RUN_TAKEOFF_BLEND * FPS))
     n = G + int(round(RUN_TAKEOFF_AIR * FPS))
     names = [pb.name for pb in rig.pose.bones if not _is_wing(pb.name)]
 
-    def gallop_pose(k, unfold):
+    def gallop_pose(k, unfold, raise_=1.0):
         LIB.apply_pose(rig, gal[k % per])
-        if unfold > 0:
-            F.pose_unfold(rig, unfold, ch_top, folded)
+        if unfold >= 1.0:
+            F.apply_wings(rig, FS._blend_ch(ch_low, ch_top, F._ease(raise_)))
+        elif unfold > 0:
+            F.pose_unfold(rig, unfold, ch_low, folded, top=RUN_LOW["elev"])
 
     def pose(k):
         if k < G:
-            gallop_pose(k, max(0.0, min(1.0, (k - (G - U)) / U)))
+            gallop_pose(k, max(0.0, min(1.0, (k - (G - RZ - U)) / U)), max(0.0, min(1.0, (k - (G - RZ)) / RZ)))
             return
         j = k - G
         w = F._ease(min(1.0, (j + 1) / (B + 1)))
