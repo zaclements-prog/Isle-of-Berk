@@ -1,5 +1,5 @@
-"""Showreel: one continuous take through the authored motion: walk -> trot -> gallop -> takeoff -> cruise flap ->
-flap-to-glide -> glide -> landing, to judge how the clips blend.
+"""Showreel: one continuous take through the authored motion: walk -> trot -> gallop -> running takeoff ->
+cruise flap -> flap-to-glide -> glide -> running landing -> gallop -> trot -> walk, to judge how the clips blend.
 
 Every clip is posed by its own code (locomotion cycles, the takeoff, the flap loop, flight_seq's transitions and
 landing) at its own time; between clips every pose bone is blended from the outgoing clip to the incoming one over a
@@ -17,50 +17,63 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(os.path.dirname(HERE), "lib"), HERE]
 import bpy
 from mathutils import Vector, Matrix
-import flight as F, flight_loops as FL, flight_seq as FS, locomotion as L, library as LIB, qa_render as QR
+import flight as F, flight_loops as FL, flight_seq as FS, flight_run as FR, locomotion as L, library as LIB, qa_render as QR
 
 FPS = F.FPS
 
 
 class Clip:
-    """A posable clip: n frames, pose(k) poses frame k on the rig, x(k) its own forward travel (m), and whether its
-    root height is absolute ground height (ground clips) or flight altitude (offsettable)."""
-    def __init__(self, name, n, pose, x, airborne):
+    """A posable clip: n frames, pose(k) poses frame k on the rig, x(k) its own forward travel (m), whether its root
+    height is flight altitude (offsettable), the frames over which that offset eases out (default: the clip's length),
+    and gallop(k): the baked gallop frame it is in step with (a following gallop clip joins in phase)."""
+    def __init__(self, name, n, pose, x, airborne, fade=None, gallop=None):
         self.name, self.n, self.pose, self.x, self.airborne = name, n, pose, x, airborne
+        self.fade, self.gallop = fade or n, gallop
 
 
-def ground_clip(rig, gait, cycles):
-    frames, _ = L.cycle_frames(rig, gait)
+def ground_clip(rig, gait, n, start=0, frames=None):
+    frames = frames or L.cycle_frames(rig, gait)[0]
     per = len(frames) - 1
     speed = L.CYCLES[gait]["speed"]
-    return Clip(gait, per * cycles, lambda k: LIB.apply_pose(rig, frames[k % per]), lambda k: speed * k / FPS, False)
+    return Clip(gait, n, lambda k: LIB.apply_pose(rig, frames[(start + k) % per]), lambda k: speed * k / FPS, False,
+                gallop=(lambda k: (start + k) % per) if gait == "gallop" else None)
 
 
 def build(rig):
+    """walk -> trot -> gallop -> running takeoff -> cruise flap -> flap-to-glide -> glide -> running landing ->
+    gallop -> trot -> walk. The gallops either side of the running clips join them in step (same gallop frame)."""
     folded = F.folded_wing_basis(rig)
-    tk = F.takeoff_frames()
-    t0 = int(round(0.15 * FPS))                     # into the takeoff's load
-    t1 = int(round(2.9 * FPS))                      # two climbing beats after toe-off
-    takeoff = Clip("takeoff", t1 - t0, lambda k: F.apply_frame(rig, tk[t0 + k], folded, tk),
-                   lambda k: tk[t0 + k]["x"], True)
+    gal = L.cycle_frames(rig, "gallop")[0]
+    per = len(gal) - 1
     loop = FL.flap_frames()
     flap = Clip("flap", 2 * len(loop), lambda k: FL.apply_loop_frame(rig, loop[k % len(loop)], loop, FL.FLAP),
                 lambda k: FL.FLAP["speed"] * k / FPS, True)
     gl = FL.glide_frames()
     glide = Clip("glide", len(gl), lambda k: FL.apply_loop_frame(rig, gl[k % len(gl)], gl, FL.GLIDE),
                  lambda k: FL.GLIDE["speed"] * k / FPS, True)
+    allf = FS.CLIPS["flap2glide"]()
+    hook = FS.body_hook(allf)
+    s0 = allf[0]["clipStart"]
+    f2g = Clip("flap2glide", len(allf) - s0, lambda k: F.apply_frame(rig, allf[s0 + k], folded, None, hook),
+               lambda k: allf[s0 + k]["x"] - allf[s0]["x"], True)
+    rt = FR.run_takeoff(rig, folded, gal)
+    takeoff = Clip("runtakeoff", rt.n, rt.pose, rt.x, False, gallop=rt.gallop)
+    rl = FR.run_landing(rig, folded, gal)
+    land = Clip("runland", rl.n, rl.pose, rl.x, True, fade=rl.fade, gallop=rl.gallop)
+    win_in = int(round(BLEND["runtakeoff"] * FPS))
+    win_out = int(round(BLEND["gallop_out"] * FPS))
+    # the gallop into the takeoff ends so that the takeoff's first frame (gallop frame 0) lines up with it
+    gal_in = ground_clip(rig, "gallop", 3 * per + win_in, frames=gal)
+    gal_out = ground_clip(rig, "gallop", 2 * per, start=land.gallop(land.n - win_out), frames=gal)
+    gal_out.name = "gallop_out"
+    clips = [ground_clip(rig, "walk", 3 * 33), ground_clip(rig, "trot", 4 * 20), gal_in, takeoff, flap, f2g, glide,
+             land, gal_out, ground_clip(rig, "trot", 3 * 20), ground_clip(rig, "walk", 3 * 33)]
+    clips[-2].name, clips[-1].name = "trot_out", "walk_out"
+    return clips, folded
 
-    def seq(name):
-        allf = FS.CLIPS[name]()
-        hook = FS.body_hook(allf)
-        s0 = allf[0]["clipStart"]
-        return Clip(name, len(allf) - s0, lambda k: F.apply_frame(rig, allf[s0 + k], folded, None, hook),
-                    lambda k: allf[s0 + k]["x"] - allf[s0]["x"], True)
-    return [ground_clip(rig, "walk", 3), ground_clip(rig, "trot", 4), ground_clip(rig, "gallop", 4), takeoff, flap,
-            seq("flap2glide"), glide, seq("land")], folded
 
-
-BLEND = {"trot": 0.6, "gallop": 0.5, "takeoff": 0.5, "flap": 0.5, "flap2glide": 0.25, "glide": 0.6, "land": 0.6}
+BLEND = {"trot": 0.6, "gallop": 0.5, "runtakeoff": 0.3, "flap": 0.5, "flap2glide": 0.25, "glide": 0.6, "runland": 0.6,
+         "gallop_out": 0.3, "trot_out": 0.6, "walk_out": 0.7}
 
 
 def capture(rig):
@@ -108,12 +121,12 @@ def main():
         m = bpy.data.materials.new(nm)
         m.diffuse_color = (*rgb, 1)
         return m
-    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, -110, 0))
+    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, -230, 0))
     g = bpy.context.active_object
-    g.scale = (60, 280, 1)
+    g.scale = (60, 520, 1)
     g.data.materials.append(mat("g", (0.36, 0.38, 0.33)))
     dark = mat("s", (0.25, 0.27, 0.23))
-    for k in range(-120, 10):
+    for k in range(-240, 10):
         bpy.ops.mesh.primitive_plane_add(size=1, location=(0, k * 2.0, 0.001))
         s = bpy.context.active_object
         s.scale = (60, 0.12, 1)
@@ -180,12 +193,12 @@ def main():
 
 
 def offset_at(offsets, clips, i, k):
-    """Clip i's altitude offset at its frame k: full at its start, easing to 0 over the clip (the landing by ~1.9 s,
-    before its touchdown; flap and glide over their length)."""
+    """Clip i's altitude offset at its frame k: full at its start, easing to 0 over its fade (the landing's ends just
+    before its touchdown; the flight loops' over their length)."""
     o = offsets[i]
     if o == 0.0:
         return 0.0
-    fade = int(round(1.9 * FPS)) if clips[i].name == "land" else clips[i].n
+    fade = clips[i].fade
     return o * (1.0 - F._ease(min(1.0, k / max(1, fade))))
 
 
