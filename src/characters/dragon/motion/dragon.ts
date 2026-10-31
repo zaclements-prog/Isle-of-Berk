@@ -137,8 +137,9 @@ export class DragonCharacter {
   private readonly guardDepth = [0, 0, 0, 0];
   private readonly backProbe = new THREE.Vector3();
   private readonly roughPts: [number, number, number][] = Array.from({ length: 16 }, () => [0, 0, 0]);
-  /** The last roughCap reading (m off the plane of the ground ahead). */
+  /** The last roughCap reading (m off the plane of the ground ahead), and how long the trot cap still holds (s). */
   roughness = 0;
+  private roughHold = 0;
   /** Per leg, the tucked-leg locals (null without the clip: plain slerp). */
   private readonly legTuck: THREE.Quaternion[][] | null;
   private prevPelvisY = 0;
@@ -258,7 +259,7 @@ export class DragonCharacter {
     this.secondary.breathGain = 1 - (1 - t.pose.breathGainPosed) * Math.max(this.own[1], this.own[3]);
     // 2) kinematics; the body proxies slide along steep geometry (skipped while a scripted action owns the body)
     if (!this.mods.scripted) {
-      this.kin.plan(this.intent, dt, t.controller, Math.min(this.mods.speedCap, this.climb.climbWeight > 0 ? Infinity : this.roughCap()));
+      this.kin.plan(this.intent, dt, t.controller, Math.min(this.mods.speedCap, this.roughCap(dt)));
       this.proxies.update(s);
       this.proxies.resolveMove(this.world, this.kin.delta, this.mods.wallNormalY, this.kin.pos, this.kin.yawRate * dt, t.body.proxySkin);
       this.kin.commit(this.kin.delta, dt);
@@ -352,7 +353,7 @@ export class DragonCharacter {
    * side slope reads as smooth and broken ground, rubble, logs or a ditch as rough. He slows to a trot over it, as an
    * animal picks its way, instead of galloping onto footholds his legs cannot keep.
    */
-  roughCap(): number {
+  roughCap(dt: number): number {
     const r = this.tuning.rough;
     const fx = Math.sin(this.kin.heading);
     const fz = Math.cos(this.kin.heading);
@@ -369,7 +370,7 @@ export class DragonCharacter {
         pts[n++] = [a, l * r.roughSpan, this.groundHit.point.y];
       }
     }
-    if (n < 4) return Infinity;
+    if (n < 4) return this.roughHold > 0 ? (this.roughHold -= dt, r.trotCap) : Infinity;
     // least-squares plane h = c0 + c1·a + c2·l over the probes, then the largest residual
     let sa = 0, sl = 0, sh = 0, saa = 0, sll = 0, sal = 0, sah = 0, slh = 0;
     for (let k = 0; k < n; k++) {
@@ -385,7 +386,11 @@ export class DragonCharacter {
       rough = Math.max(rough, Math.abs(h - (c[0] + c[1] * a + c[2] * l)));
     }
     this.roughness = rough;
-    return rough >= r.roughTrot ? r.trotCap : Infinity;
+    // once over rough ground he keeps to the trot for roughHold s after the last rough reading: a flat stretch
+    // between obstacles (the top of a ledge, a gap between logs) is no place to break into a gallop
+    if (rough >= r.roughTrot) this.roughHold = r.roughHold;
+    else this.roughHold = Math.max(0, this.roughHold - dt);
+    return this.roughHold > 0 ? r.trotCap : Infinity;
   }
 
   /** Hand the locomotion cycles' weight, pelvis bob and wing lift to the body, tail and wings. */

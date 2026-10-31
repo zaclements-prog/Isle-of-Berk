@@ -189,11 +189,12 @@ export interface MotionTuning {
   /**
    * Picking his way (task #11): the ground ahead is sampled on a grid (rows at roughAhead m + roughLead × speed s
    * ahead, ±roughSpan m across) and its roughness is the largest height off the grid's best-fit plane (ramps and side
-   * slopes are not rough). From roughTrot m he is held to trotCap m/s: he trots over rough ground rather than
+   * slopes are not rough). From roughTrot m he is held to trotCap m/s, and for roughHold s after the last rough
+   * reading: he trots over rough ground rather than
    * gallop onto footholds his legs cannot keep. (One level only: a plane fit also reads a ramp's foot or a step's
    * edge as rough, which a trot takes in its stride.)
    */
-  rough: { roughAhead: number[]; roughLead: number; roughSpan: number; roughTrot: number; trotCap: number };
+  rough: { roughAhead: number[]; roughLead: number; roughSpan: number; roughTrot: number; trotCap: number; roughHold: number };
   loco: {
     fadeSpeedLo: number; fadeSpeedHi: number; blendTime: number; bobGain: number; gains: number[]; adoptDutyOver: number;
     turnCurveLo: number; turnCurveHi: number; roughLo: number; roughHi: number; raiseFade: number;
@@ -293,7 +294,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   wings: { omega: 8, climbFlare: 0.8 },
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
-  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2 },
+  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2, roughHold: 2 },
   loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
     strainLo: 0.93, strainHi: 0.99, fallTime: 0.08 },
   face: {

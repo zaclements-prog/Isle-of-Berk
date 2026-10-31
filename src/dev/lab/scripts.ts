@@ -83,6 +83,7 @@ export const ROUGH_SCRIPTS: LabScript[] = Object.entries(ROUGH_LANES).flatMap(([
     events: [...prowl(), ...hold(['KeyW'], 0.1, 15)], goal: { minTravel: 14 } },
   { name: `rough-${lane}-trot`, description: `trot down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 14,
     events: hold(['KeyW'], 0.1, 13), goal: { minTravel: 14 } },
-  { name: `rough-${lane}-gallop`, description: `gallop down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 12,
-    events: hold(['KeyW', 'ShiftLeft'], 0.1, 11), goal: { minTravel: 14 } },
+  // the gallop run ends inside the lane: past its end he would burst into a gallop and brake on flat ground
+  { name: `rough-${lane}-gallop`, description: `gallop down the ${lane} lane`, spawn: { x, z: -4, heading: PI }, duration: 9,
+    events: hold(['KeyW', 'ShiftLeft'], 0.1, 8.5), goal: { minTravel: 14 } },
 ]);

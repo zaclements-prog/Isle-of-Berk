@@ -16,7 +16,7 @@ None of the existing gates may regress.
 | Lane     | What                                                                 |
 |----------|----------------------------------------------------------------------|
 | rubble   | 140 flattened rocks, 0.08–0.25 m                                     |
-| logs     | 7 logs across the lane, r 0.18–0.32 m, skewed ±20°                   |
+| logs     | 7 logs across the lane to step over, r 0.12–0.22 m (≤ 0.44 m tall), skewed ±20° |
 | broken   | 0.6 m blocks with tops 0.02–0.35 m                                   |
 | mounds   | 12 sunk flattened spheres, crests 0.2–0.5 m                          |
 | ditch    | two 0.6 m platforms (a 0.3 m entry step) with a 1.2 m gap            |
@@ -31,11 +31,13 @@ Run with the pose library loaded:
 
 - **Before this plan:** 8 of 18 pass. With the authored cycles off it is also 8 of 18, failing on different lanes,
   so the weakness is in the planner, body and contact system, not the cycles.
-- **Now:** 10 of 18 pass. Over rough ground the gallop is held to a trot (see "Done" below).
+- **Now:** 14 of 18 pass. Over rough ground the gallop is held to a trot, the hold lasts 2 s past the last
+  rough patch, and the gallop runs end inside their lanes (see "Done" below).
 - **Still failing:**
-  - the logs and broken-ground walks;
-  - the mounds trot;
-  - the rubble, broken, mounds, ditch and angled gallops.
+  - logs trot: penetration 6.9 cm;
+  - broken-ground walk: penetration 3.1 cm, float 8.8 cm;
+  - broken-ground gallop: penetration 4.8 cm;
+  - mounds trot: float 3.4 cm.
 
 ## What the diagnosis found
 
@@ -68,7 +70,8 @@ Run with the pose library loaded:
 - **Picking his way** (`tuning.rough`, `DragonCharacter.roughCap`):
   - a 4×3 grid of ground probes ahead, reaching farther the faster he goes;
   - roughness = the largest height off their least-squares plane, so ramps and side slopes read as smooth;
-  - from 6 cm of roughness, the gallop is capped to trot speed.
+  - from 6 cm of roughness, the gallop is capped to trot speed, also while climbing (the mounds), and the cap is
+    held for `roughHold` (2 s), so a flat top between obstacles doesn't let him re-accelerate.
 - From Plan 5, still in place:
   - the ground guard for swinging paws;
   - the planner stepping short of an obstacle it can't clear;

@@ -120,9 +120,10 @@ function addRoughLanes(add: AddFn, mats: Record<string, THREE.Material>, rnd: ()
     geo.scale(1, 0.55, 1);
     add(`rubble${i}`, geo, mats.rock, [L.rubble - 2.2 + rnd() * 4.4, r * 0.15, -8 - rnd() * 30], [rnd(), rnd() * 6, rnd()]);
   }
-  // logs across the lane, radius 0.18–0.32 m, a little skewed
+  // logs across the lane to step over (radius 0.12–0.22 m: at most ~0.44 m tall, a third of his shoulder height;
+  // taller logs are a hop, not a step), a little skewed
   for (let i = 0; i < 7; i++) {
-    const r = 0.18 + rnd() * 0.14;
+    const r = 0.12 + rnd() * 0.1;
     const geo = new THREE.CylinderGeometry(r, r * 0.9, 5.5, 12);
     add(`log${i}`, geo, mats.wall, [L.logs + (rnd() - 0.5) * 0.6, r, -10 - i * 4 - rnd()], [0, (rnd() - 0.5) * 0.7, Math.PI / 2]);
   }
