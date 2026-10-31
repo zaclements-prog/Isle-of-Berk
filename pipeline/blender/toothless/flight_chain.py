@@ -1,5 +1,10 @@
 """Prototype: the flying body as a physics chain hung from the shoulder blades (position-based dynamics).
 
+STATUS: not adopted (review 2026-10-31). Side by side with the authored body line (flight.py / flight_loops.py) it
+read as worse or no different, so the authored line stays the default; this stays opt-in (CLIP=*_chain in
+flight_preview.py) as a reference. The physics-based track continues as a learned controller instead:
+docs/superpowers/plans/2026-10-31-p2-flight-rl-handoff.md.
+
 The wings hold him up at the wing root on the shoulder blades, so that is the chain's anchor: it follows the flight
 path (the lift simulation's height, the forward travel) and holds a target flight attitude. Behind it the chest, the
 spine joints, the pelvis and the tail joints are point masses. Each step:
