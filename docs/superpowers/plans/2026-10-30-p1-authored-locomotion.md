@@ -124,3 +124,21 @@ The engine reads gait timing from the clips instead of the `GAITS` table.
   - The ground guard covers swinging paws, backs a paw out of a solid along its swing, and re-solves from the layered
     pose.
   - The planner steps short of an obstacle its arc can't clear within `maxLift`.
+
+## Footfall rhythm (review note: "no natural gait or rhythm to the steps")
+
+**Measured** (a scratch probe that logs every lift-off on the flat course scripts): about 40 % of lift-offs were early,
+off the gait schedule. The fore legs ran out of length, stretched to 0.96 with the elbow nearly straight, about a
+quarter of a second before their scheduled lift. At the walk they stepped almost twice as often as the hind legs:
+every 0.58 s ± 0.17 against 0.87 s. The planner already lands each fore paw at its forward reach limit, so the fore
+stance sweep was longer than the fore leg's range at that shoulder height.
+
+**Fixes:**
+- **Chest-low carriage** (`loco.crouch`): the cycles hold the shoulders 8 cm lower at the walk and trot, through the
+  pitch spring, weighted by the cycle weight. All four legs now step every 0.87 s at the walk, and the trot stays on
+  schedule once at speed.
+- **Gallop strain:** the joint-margin extrapolation is off in the gallop. At 10 m/s it predicted limits the stride
+  never reached and cut a fore stance short every stride. Step intervals now spread ± 0.07–0.10 s, down from up to
+  ± 0.37 s.
+- **Planted-paw lift:** a planted paw left under its contact by a leg folded to its limit lifts the pelvis and the
+  nose in the same step, with a leg re-solve. This is the counterpart of lowering the body for a leg that falls short.
