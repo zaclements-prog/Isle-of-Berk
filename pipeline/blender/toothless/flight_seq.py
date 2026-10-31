@@ -24,7 +24,10 @@ FPS = F.FPS
 FLAP, GLIDE = FL.FLAP, FL.GLIDE
 ALT = 3.0                       # m: pelvis height in flight for the transitions
 
-BRAKE = dict(FLAP, period=0.38, down=0.5, top=55.0, bottom=8.0, sweepTop=12.0, sweepBottom=30.0,
+# braking strokes: short, high, cupped backstrokes. The wing stays square to the body (a little back at the top, barely
+# forward at the bottom) and brakes by its pitch (twist), not by reaching ahead of the head, which read as the wings
+# swinging out in front of him
+BRAKE = dict(FLAP, period=0.38, down=0.5, top=55.0, bottom=16.0, sweepTop=-6.0, sweepBottom=6.0,
              foldMax=20.0, fanMax=0.1, twistDown=-16.0, twistUp=-24.0, bendDown=-8.0, bendUp=-4.0, lag=0.05)
 
 NUM = ("elev", "sweep", "fold", "fan", "twist", "bend")
