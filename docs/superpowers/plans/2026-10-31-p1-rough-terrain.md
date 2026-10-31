@@ -34,7 +34,7 @@ Run with the pose library loaded:
 - **Now:** 14 of 18 pass. Over rough ground the gallop is held to a trot, the hold lasts 2 s past the last
   rough patch, and the gallop runs end inside their lanes (see "Done" below).
 - **Still failing:**
-  - logs trot: penetration 6.9 cm;
+  - logs trot: penetration 5.3 cm (a front paw lifting off a log top with the shoulder at its limit);
   - broken-ground walk: penetration 3.1 cm, float 8.8 cm;
   - broken-ground gallop: penetration 4.8 cm;
   - mounds trot: float 3.4 cm.
@@ -72,10 +72,24 @@ Run with the pose library loaded:
   - roughness = the largest height off their least-squares plane, so ramps and side slopes read as smooth;
   - from 6 cm of roughness, the gallop is capped to trot speed, also while climbing (the mounds), and the cap is
     held for `roughHold` (2 s), so a flat top between obstacles doesn't let him re-accelerate.
+- **Swing flick** (`legs.swingReach`): a swinging paw whose wrist or hock still falls short of its target (a paw
+  trailing off a log with the shoulder or hip at its limit) aims the metacarpal or metatarsal at the target, blended
+  in from 1 to 3 cm short, instead of hanging it straight down into the log.
 - From Plan 5, still in place:
   - the ground guard for swinging paws;
   - the planner stepping short of an obstacle it can't clear;
   - the IK re-aim at clamped joints.
+
+## Tried and reverted (this round)
+
+- A leaky integral on the planted legs' shortfall (closes the half the proportional lowering leaves): broken-ground
+  float 8.8 → 6.0 cm, but its penetration rose to 12 cm.
+- Over rough ground, riding the lower paw of each pair instead of the terrain probe: from 4 to 4–8 failures depending
+  on the follow share, with floats up to 30 cm on the logs.
+- Swing toe curl off: from 4 to 3 failures, but on different lanes.
+
+All three move the failures around rather than removing them: the remaining cases sit in a chaotic regime where any
+change to footfall timing reshuffles which paw meets which obstacle.
 
 ## Next
 

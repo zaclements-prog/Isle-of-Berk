@@ -62,7 +62,7 @@ export interface MotionTuning {
      */
     terrainDrop: number;
   };
-  legs: { scapulaFollow: number; swingCurlDeg: number; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
+  legs: { scapulaFollow: number; swingCurlDeg: number; swingReach: boolean; maxReach: number; limitMarginDeg: number; envelopeDrop: number };
   look: {
     yawLimitDeg: number; pitchLimitDeg: number; headOmega: number; eyeOmega: number; eyeLimitDeg: number;
     leadGain: number; aheadDist: number; idleCameraDelay: number; glanceMin: number; glanceMax: number; glanceHold: number;
@@ -267,7 +267,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
     crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
-  legs: { scapulaFollow: 0.35, swingCurlDeg: 35, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
+  legs: { scapulaFollow: 0.35, swingCurlDeg: 35, swingReach: true, maxReach: 0.995, limitMarginDeg: 4, envelopeDrop: 0.09 },
   look: {
     yawLimitDeg: 100, pitchLimitDeg: 40, headOmega: 5, eyeOmega: 28, eyeLimitDeg: 25, leadGain: 0.35, aheadDist: 6,
     idleCameraDelay: 1.5, glanceMin: 3, glanceMax: 7, glanceHold: 1.2, weights: [0.12, 0.18, 0.22, 0.23, 0.25],

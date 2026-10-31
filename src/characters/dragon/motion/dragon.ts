@@ -370,7 +370,10 @@ export class DragonCharacter {
         pts[n++] = [a, l * r.roughSpan, this.groundHit.point.y];
       }
     }
-    if (n < 4) return this.roughHold > 0 ? (this.roughHold -= dt, r.trotCap) : Infinity;
+    if (n < 4) {
+      this.roughHold = Math.max(0, this.roughHold - dt);
+      return this.roughHold > 0 ? r.trotCap : Infinity;
+    }
     // least-squares plane h = c0 + c1·a + c2·l over the probes, then the largest residual
     let sa = 0, sl = 0, sh = 0, saa = 0, sll = 0, sal = 0, sah = 0, slh = 0;
     for (let k = 0; k < n; k++) {
