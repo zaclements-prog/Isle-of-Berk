@@ -40,7 +40,7 @@ cam_h = None
 step = int(os.environ.get("STEP", "1"))
 for f in range(first, min(first + count, len(frames)), step):
     fr = frames[f]
-    F.apply_frame(rig, fr, folded)
+    F.apply_frame(rig, fr, folded, frames)
     rig.location = (0, -fr["x"], 0)
     bpy.context.view_layer.update()
     h = fr["root"][0] - 1.02
