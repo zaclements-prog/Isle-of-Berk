@@ -30,8 +30,10 @@ interface Flown {
   /** Gait phase and speed on the step the running landing handed over. */
   handGait: number;
   handSpeed: number;
-  /** Largest bank magnitude (rad). */
+  /** Largest bank magnitude (rad), and the body roll's extremes. */
   maxBank: number;
+  minRoll: number;
+  maxRoll: number;
 }
 
 async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, seconds: number, cameraYaw: (t: number) => number = () => 0): Promise<Flown> {
@@ -40,7 +42,7 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
   const d = new DragonCharacter({ rig: a.rig, world, clips: a.clips, posesMeta: a.posesMeta, seed: 1 });
   d.spawn(0, -300, 0);
   const tb = createToothlessBrain(d, a.rig, {});
-  const r: Flown = { d, tb, phases: [], accH: 0, accP: 0, minH: Infinity, maxH: -Infinity, handGait: -1, handSpeed: -1, maxBank: 0 };
+  const r: Flown = { d, tb, phases: [], accH: 0, accP: 0, minH: Infinity, maxH: -Infinity, handGait: -1, handSpeed: -1, maxBank: 0, minRoll: 0, maxRoll: 0 };
   let prevH = d.body.pose.pelvisPos.y;
   let prevP = d.body.pose.pitch;
   let dh0 = 0;
@@ -68,6 +70,10 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
     prevP = pi;
     r.minH = Math.min(r.minH, h);
     r.maxBank = Math.max(r.maxBank, Math.abs(tb.flight.bank));
+    if (tb.flight.airborne) {
+      r.minRoll = Math.min(r.minRoll, d.body.pose.roll);
+      r.maxRoll = Math.max(r.maxRoll, d.body.pose.roll);
+    }
     r.maxH = Math.max(r.maxH, h);
   }
   return r;
@@ -169,7 +175,10 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
       return { keys: ['KeyW'] };
     }, 9, (t) => (t > 5 ? Math.PI / 2 : 0));
     bank = r.d.body.override.roll;
-    expect(r.maxBank).toBeGreaterThan(0.2);                       // he leaned into the turn (+ roll lifts the left side)
+    expect(r.maxBank).toBeGreaterThan(0.2);
+    // into the turn: the camera swung to his left (+heading), so his left side goes down (+ roll lifts the left side)
+    expect(r.minRoll).toBeLessThan(-0.2);
+    expect(r.maxRoll).toBeLessThan(0.05);
     expect(r.tb.flight.phase).toBe('air');
     expect(Math.abs(r.d.kin.heading - Math.PI / 2)).toBeLessThan(0.2);
     expect(Math.abs(bank)).toBeLessThan(0.7);

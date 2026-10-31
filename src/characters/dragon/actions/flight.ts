@@ -253,7 +253,7 @@ export class FlightAction implements DragonAction {
     const hs = dx / dt;
     this.speed = Math.hypot(hs, vy);
     this.gamma = Math.atan2(vy, Math.max(hs, 0.1));
-    this.bank += (clamp(Math.atan((this.speed * this.yawRate) / G), -deg(c.maxBankDeg), deg(c.maxBankDeg)) * steer - this.bank) * (1 - Math.exp(-c.bankOmega * dt));
+    this.bank += (clamp(-Math.atan((this.speed * this.yawRate) / G), -deg(c.maxBankDeg), deg(c.maxBankDeg)) * steer - this.bank) * (1 - Math.exp(-c.bankOmega * dt));
     this.place(d, h, pitch, this.bank, dt);
     if (t + dt >= dur) {
       // into the cruise flap, on the beat the takeoff ended on (the path keeps the body's velocity: speed along it and
@@ -291,10 +291,11 @@ export class FlightAction implements DragonAction {
     const clear = c.minClearance - this.clearanceAhead(d);
     if (clear > 0 && this.phase !== 'descend') gammaT = Math.max(gammaT, Math.min(deg(c.climbDeg), clear * deg(12)));
     this.gamma += (gammaT - this.gamma) * (1 - Math.exp(-c.pathOmega * dt));
-    // heading toward the camera's yaw; the bank is the coordinated one
+    // heading toward the camera's yaw; the bank is the coordinated one, into the turn: + yaw rate turns him to his left
+    // (+X), and + roll lifts the left side, so a left turn rolls negative (as the ground lean in bodySolver)
     this.yawRate = clamp(angleDiff(this.heading, d.cameraYaw) * c.headingGain, -deg(c.maxTurnRateDeg), deg(c.maxTurnRateDeg));
     this.heading = wrapAngle(this.heading + this.yawRate * dt);
-    const bankT = clamp(Math.atan((this.speed * this.yawRate) / G), -deg(c.maxBankDeg), deg(c.maxBankDeg));
+    const bankT = clamp(-Math.atan((this.speed * this.yawRate) / G), -deg(c.maxBankDeg), deg(c.maxBankDeg));
     this.bank += (bankT - this.bank) * (1 - Math.exp(-c.bankOmega * dt));
     // speed: thrust while flapping against the flap's drag; the glide's drag balances its sink at glideSpeed
     const kFlap = c.flapThrust / (c.flapSpeed * c.flapSpeed);
