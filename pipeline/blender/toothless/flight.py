@@ -29,13 +29,16 @@ RIBS = 7
 LEG_PREFIX = ("front_", "hind_")
 
 TAKEOFF = {
-    "windup": 0.58,           # s: load (the crouch) + the pre-load dip, while the wings unfold and lift to the top
-    "load": 0.45,             # s of it: the body sinks onto the planted paws, haunches loaded
+    "windup": 0.8,            # s: load (the crouch) + the pre-load dip, while the wings unfold and lift to the top
+    "load": 0.65,             # s of it: the body sinks onto the planted paws, haunches loaded
+    "unfold": (0.0, 0.78),    # s: the wings unfold over this window of the wind-up (the fold run backwards)
     "crouchH": 0.72, "dipH": 0.66,   # pelvis height (m) at the end of the load and at the bottom of the dip
     "offH": 1.30,             # pelvis height at toe-off: the hind legs at full extension, up on the toes
     "pushTime": 0.22,         # s: the legs' extension, inside the first downstroke's power phase
-    "frontRelease": 0.55,     # fraction of the push at which the fore paws leave (the chest rises first)
-    "ikFade": 0.12,           # s: a released leg eases from the ground solve into its airborne pose
+    "frontRelease": 0.3,      # fraction of the push at which the fore paws leave (the chest rises first, before the
+                              # fore legs lock out)
+    "ikFade": 0.3,            # s: a released leg eases from the ground solve into its airborne pose
+    "lineBlend": 0.8,         # s: after toe-off the body line takes over from the launch pose
     "first": 0.55,            # s: the first downstroke (longer, the legs push off under it)
     "period": 0.78,           # s: a climbing beat (~1.3 Hz for a 13.6 m span)
     "down": 0.56,             # fraction of a beat spent on the downstroke
@@ -53,7 +56,8 @@ TAKEOFF = {
     # the body line: the spine and tail follow the chest's own path through the air, a point d m behind the chest
     # where the chest was d / waveSpeed s ago, so each downstroke hauls the chest up and the hips and tail answer
     # after it, the motion growing toward the tail tip like a whip
-    "waveSpeed": 3.5,         # m/s (plus a fifth of the forward speed): the hips answer the shoulders ~0.35 s late
+    "waveSpeed": 6.0,         # m/s (plus a fifth of the forward speed): the hips answer the shoulders ~0.2 s late
+                              # (the first downstroke yanks the chest up fast; a slower wave would leave the tail hanging)
     "trunkGain": 0.3,         # the swing grows this much from the shoulders to the hips (the trunk hangs from them)
     "whip": 0.8,              # the tail tip's swing over the line's, beyond the hips (x per tail length)
     "heave": 0.06,            # m: the chest hauled up within each downstroke, ahead of the rest of him
@@ -105,7 +109,11 @@ def wave_height(d, past, now, c):
         gain = 1.0 + c.get("trunkGain", 0.0) * min(1.0, d / trunk) + c["whip"] * min(1.0, max(0.0, d - trunk) / TAIL_LEN)
     beyond = max(0.0, d - trunk)
     droop = c["tailDroop"] * math.sin(math.pi * min(1.0, beyond / (1.2 * TAIL_LEN)))
-    return (past - now) * gain - droop
+    # a soft limit on how far a point lags the shoulders (more room toward the tail tip): a sudden haul (the takeoff's
+    # first downstroke) bends the body and swings the tail, instead of leaving them hanging straight down
+    raw = (past - now) * gain
+    room = 0.25 + 0.15 * min(1.0, max(0.0, d) / trunk) + 0.35 * min(1.0, beyond / TAIL_LEN)
+    return room * math.tanh(raw / room) - droop
 ARM_LIMITS = {"humerus": (-1.1, 0.9), "radius": (-0.5, 1.9), "metacarpal": (-1.5, 1.5), "toes": (-1.3, 1.3)}  # rad, inside anatomy.LIMBS
 LEG_LEVEL = {"scapula": 0, "humerus": 0, "femur": 0, "radius": 1, "tibia": 1, "metacarpal": 2, "metatarsal": 2, "toes": 2}
 
@@ -120,14 +128,14 @@ def stroke(c, u):
     d = c["down"]
     if u < d:                                        # downstroke: spread, pronated, sweeping forward, loaded
         k = _ease(u / d)
-        w = math.sin(math.pi * u / d)
+        w = math.sin(math.pi * u / d) ** 2          # squared: the loading eases in and out at the turnarounds
         return {"elev": c["top"] + (c["bottom"] - c["top"]) * k,
                 "sweep": c["sweepTop"] + (c["sweepBottom"] - c["sweepTop"]) * k,
                 "fold": 0.0, "fan": 0.0, "twist": c["twistDown"] * w + c["twistUp"] * (1 - w) * 0.3 * (1 - k),
                 "bend": c["bendDown"] * w}
     v = (u - d) / (1 - d)                            # upstroke: folded at the elbow, fan closed, supinated
     k = _ease(v)
-    w = math.sin(math.pi * v)
+    w = math.sin(math.pi * v) ** 2
     return {"elev": c["bottom"] + (c["top"] - c["bottom"]) * k,
             "sweep": c["sweepBottom"] + (c["sweepTop"] - c["sweepBottom"]) * k,
             "fold": c["foldMax"] * w, "fan": c["fanMax"] * w, "twist": c["twistUp"] * w, "bend": c["bendUp"] * w}
@@ -290,7 +298,8 @@ def ground_legs(c, t):
                 toes = _lerp(toes, 50, k)
                 scap = _lerp(scap, 10, k)
         t_rel = t_push + release * c["pushTime"]
-        w = 1.0 if t <= t_rel else max(0.0, 1.0 - (t - t_rel) / c["ikFade"])
+        fade = c["ikFade"] * (1.5 if kind == "front" else 1.0)     # the fore legs swing further into their air pose
+        w = 1.0 if t <= t_rel else 1.0 - _ease(min(1.0, (t - t_rel) / fade))
         for side in ("L", "R"):
             out[f"{kind}_{side}"] = (w, toe0, distal, toes, scap)
     return out
@@ -314,6 +323,7 @@ def takeoff_frames(c=TAKEOFF):
     springs = {g: [[0.0, 0.0] for _ in range(3)] for g in ("front", "hind")}
     swing_hist = {g: [] for g in ("front", "hind")}
     lever = 0.0
+    rel_state = {}
     arm_state = {side: {n: [0.0, 0.0] for n in ("humerus", "radius", "metacarpal")} for side in ("L", "R")}
     arm_in = []
     pitch_prev, pitch_off = None, 0.0
@@ -330,7 +340,8 @@ def takeoff_frames(c=TAKEOFF):
             h = _lerp(_lerp(0.0, c["crouchH"] - rest_h, load), c["dipH"] - rest_h, dip)
             legs = _mix({}, crouch, load)
             body = _mix({}, crouch_body, min(1.0, load + 0.3 * dip))
-            unfold = _ease(t / (0.8 * t_launch))
+            u0, u1 = c["unfold"]
+            unfold = max(0.0, min(1.0, (t - u0) / (u1 - u0)))
             pitch = _lerp(_lerp(0.0, -0.04, load), -0.06, dip)
         else:
             # beat phase: the first stroke is stretched over c["first"], then regular beats
@@ -357,6 +368,7 @@ def takeoff_frames(c=TAKEOFF):
                 accel = c["lift"] * (rate * c["down"]) ** 2 * spread * (0.78 / per) - G - c["drag"] * v
                 v += accel * dt
                 h += v * dt
+                body = _mix(launch_body, {}, _ease(min(1.0, (t - t_off) / c["lineBlend"])))
                 climb = _ease(min(1.0, (t - t_off) / 0.6))
                 pitch = 0.2 + 0.18 * climb + 0.08 * math.sin(2 * math.pi * (u - 0.15))
                 # the legs: ease into a loose half tuck; the body's vertical acceleration swings them through the
@@ -422,22 +434,34 @@ def takeoff_frames(c=TAKEOFF):
         for k, nme in enumerate(("neck_01", "neck_02", "neck_03", "neck_04")):
             bones[nme] = (-0.7 * pitch / 4 + neck_wave * math.sin(2 * math.pi * (u - 0.3 - 0.06 * k)), 0, 0)
         bones["head"] = (-0.25 * pitch, 0, 0)
-        line_w = _ease(min(1.0, (t - t_off) / 0.35)) if off else 0.0
+        line_w = _ease(min(1.0, (t - t_off) / c["lineBlend"])) if off else 0.0
         # the chest stands above the pelvis by the pitch's lever on the ground; in the air that lift-off offset is
         # kept and the line's delay makes the climbing pitch (the hips answer the chest's rise late)
-        if not off or t_off == t:
-            lever = (PELVIS_Y - CHEST_Y) * math.sin(pitch)
-        chest_z = CHEST_Z + h + lever + heave
-        leg_ik = {k_: v_ for k_, v_ in ground_legs(c, t).items() if v_[0] > 0}
+        # the chest track the body line follows (only its history from toe-off on is used): the body's height and the
+        # heave. The lift-off attitude rides on as a lean that hands over to the pitch the climb's own lag makes
+        if off and t_off == t:
+            lever = pitch
+        lean = lever * (1.0 - _ease(min(1.0, (t - t_off) / 0.8))) if off else 0.0
+        chest_z = CHEST_Z + h + heave
+        leg_ik = {}
+        for k_, v_ in ground_legs(c, t).items():
+            if v_[0] <= 0:
+                continue
+            kind_ = k_.split("_")[0]
+            t_rel = t_launch + (c["frontRelease"] if kind_ == "front" else 1.0) * c["pushTime"]
+            if t >= t_rel:
+                # a released paw goes with the body (its target carried by the body's travel and rise since release),
+                # so the fading solve doesn't drag the leg back toward the spot it left
+                if kind_ not in rel_state:
+                    rel_state[kind_] = (x, rest_h + h)
+                x_r, h_r = rel_state[kind_]
+                toe_ = (v_[1][0] + x_r - x, v_[1][1] + (rest_h + h) - h_r)
+                v_ = (v_[0], toe_) + tuple(v_[2:])
+            leg_ik[k_] = v_
         frames.append({"t": t, "x": x, "root": (rest_h + h, pitch), "bodyH": rest_h + h, "heave": heave, "pitch": pitch,
                        "legIK": leg_ik,
                        "bones": bones, "wing": ch, "unfold": unfold,
-                       "chestZ": chest_z, "lineW": line_w, "wave": c["waveSpeed"] + 0.2 * sp, "i": f, "tOff": t_off if off else t})
-    # the airborne chest height carries on from the ground's: once off, chestZ is the body height plus the chest's
-    # rest height (the pitch now comes out of the line), so join the two smoothly over the line's blend-in
-    for fr in frames:
-        if fr["lineW"] > 0:
-            fr["root"] = (line_z(frames, fr["i"], PELVIS_Y, PELVIS_Z, c), fr["root"][1])
+                       "chestZ": chest_z, "lineW": line_w, "wave": c["waveSpeed"] + 0.2 * sp, "i": f, "tOff": t_off if off else t, "lean": lean})
     return frames
 
 
@@ -453,7 +477,8 @@ def line_z(frames, i, y, z, c=TAKEOFF):
     a = k - k0
     past = frames[k0]["chestZ"] * (1 - a) + frames[k1]["chestZ"] * a
     now = fr["chestZ"]
-    return now + wave_height(d, past, now, c) + (z - CHEST_Z)
+    # the lean pivots at the pelvis, as the ground pose's pitch does (place_root), so the two agree as the line blends in
+    return now + wave_height(d, past, now, c) + (z - CHEST_Z) + fr.get("lean", 0.0) * (PELVIS_Y - y)
 
 
 def _apply_line(rig, fr, frames, line_fn=None, head_z=None):
@@ -520,28 +545,82 @@ def apply_frame(rig, fr, folded_basis=None, frames=None, body_fn=None):
         _apply_line(rig, fr, frames, head_z=head_rest + (steady - CHEST_Z) + 0.25 * (fr["chestZ"] - steady))
     apply_ground_legs(rig, fr)
     if folded_basis is not None and fr["unfold"] < 1.0:
-        # unfold through a raised, still folded wing (the stroke's top elevation, elbow folded, fan closed): the wings
-        # lift off the back first and then open, instead of the shortest path, which swings them down through the body
-        raised = {seg: dict(ch, fold=TAKEOFF["foldMax"], fan=0.9, twist=0.0, bend=0.0) for seg, ch in fr["wing"].items()}
-        apply_wings(rig, raised)
-        mid = {name: rig.pose.bones[name].matrix_basis.to_quaternion() for name in folded_basis}
-        apply_wings(rig, fr["wing"])
-        k = fr["unfold"]
-        for name, q0 in folded_basis.items():
-            pb = rig.pose.bones[name]
-            q1 = pb.matrix_basis.to_quaternion()
-            qm = mid[name]
-            loc = pb.matrix_basis.to_translation()
-            if q0.dot(qm) < 0:
-                qm.negate()
-            if qm.dot(q1) < 0:
-                q1.negate()
-            kb = max(0.0, (k - 0.2) / 0.8) if "_rib" in name else k      # the ribs open after the arm has lifted
-            q = q0.slerp(qm, _ease(kb / 0.5)) if kb < 0.5 else qm.slerp(q1, _ease((kb - 0.5) / 0.5))
-            pb.matrix_basis = Matrix.Translation(loc) @ q.to_matrix().to_4x4()
-        bpy.context.view_layer.update()
+        pose_unfold(rig, fr["unfold"], fr["wing"], folded_basis)
     else:
         apply_wings(rig, fr["wing"])
+
+
+# the unfold: groups outboard from the shoulder, each starting a little after the one inside it
+UNFOLD_GROUPS = (("humerus", 0.0), ("forearm", 0.05), ("ribs_a", 0.1), ("ribs_b", 0.15))
+
+
+def _group_bones(group, sfx):
+    if group == "humerus":
+        return [f"wing_humerus_{sfx}"]
+    if group == "forearm":
+        return [f"wing_forearm_{sfx}", f"wing_thumb_{sfx}"]
+    part = "a" if group == "ribs_a" else "b"
+    return [f"wing_rib{i}_{part}_{sfx}" for i in range(1, RIBS + 1)]
+
+
+def _fold_frames(rig, amount, names):
+    """Armature-space bone frames (quaternions) of `names` at rig.fold_wings(amount), from the spread bind."""
+    pbs = rig.pose.bones
+    for n in names:
+        pbs[n].matrix_basis = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    R.fold_wings(rig, amount)
+    return {n: pbs[n].matrix.to_quaternion() for n in names}
+
+
+def pose_unfold(rig, k, ch, folded_basis):
+    """Wings between folded (k = 0) and their stroke pose for channels ch (k = 1) along the fold's own path: the
+    fan-fold (rig.fold_wings) run backwards, the arm swinging out of its tuck and the ribs fanning open, then a rise
+    into the stroke; each group outboard from the shoulder starts a little later, so the shoulder leads and the fan
+    follows, and folding (k falling) runs it back with the fan closing first and the arm tucking last. Bone frames are
+    interpolated in armature space (direction and membrane normal together) and aimed parent first. The hip wings
+    take the plain slerp from their folded pose."""
+    pbs = rig.pose.bones
+    names = [n for g, _ in UNFOLD_GROUPS for sfx in ("L", "R") for n in _group_bones(g, sfx)]
+    apply_wings(rig, ch)
+    target = {n: pbs[n].matrix.to_quaternion() for n in names}
+    hip_target = {n: pbs[n].matrix_basis.to_quaternion() for n in folded_basis if n.startswith("hipwing_")}
+    span = 1.0 - UNFOLD_GROUPS[-1][1]
+    plan = {}
+    cache = {}
+    for g, delay in UNFOLD_GROUPS:
+        kg = max(0.0, min(1.0, (k - delay) / span))
+        # the fan-fold opening, eased per stage: fold_wings unhinges the outer rib halves over amount 1 -> 0.5 and opens
+        # the arm over 0.5 -> 0, so each stage gets its own ease (no velocity jump between them)
+        if kg < 0.45:
+            amount = 1.0 - 0.5 * _ease(kg / 0.45)
+        else:
+            amount = 0.5 - 0.5 * _ease(min(1.0, (kg - 0.45) / 0.3))
+        amount = round(amount, 4)
+        rise = _ease(max(0.0, min(1.0, (kg - 0.5) / 0.5)))             # then into the stroke
+        if amount not in cache:
+            cache[amount] = _fold_frames(rig, amount, names)
+        for sfx in ("L", "R"):
+            for n in _group_bones(g, sfx):
+                plan[n] = (cache[amount][n], rise)
+    order = [n for sfx in ("L", "R") for g in ("humerus", "forearm", "ribs_a", "ribs_b") for n in _group_bones(g, sfx)]
+    for n in order:
+        q0, rise = plan[n]
+        q1 = target[n].copy()
+        if q0.dot(q1) < 0:
+            q1.negate()
+        q = q0.slerp(q1, rise)
+        R.aim(rig, n, q @ Vector((0.0, 1.0, 0.0)), q @ Vector((0.0, 0.0, 1.0)))
+    for n, q0 in folded_basis.items():
+        if not n.startswith("hipwing_"):
+            continue
+        pb = pbs[n]
+        q1 = hip_target[n].copy()
+        if q0.dot(q1) < 0:
+            q1.negate()
+        loc = pb.matrix_basis.to_translation()
+        pb.matrix_basis = Matrix.Translation(loc) @ q0.slerp(q1, _ease(k)).to_matrix().to_4x4()
+    bpy.context.view_layer.update()
 
 
 def apply_ground_legs(rig, fr):

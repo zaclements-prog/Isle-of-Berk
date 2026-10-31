@@ -207,13 +207,13 @@ LAND = {
     "frontLag": 0.12,          # s: the fore paws plant after the hind
     "absorb": 0.35,            # s: down into the loaded crouch
     "rise": 0.75,              # s: back up to standing
-    "hold": 0.4,
+    "hold": 0.7,
     "startH": 3.4, "sink": 1.3,            # m, m/s: the approach
     "tdH": 1.25, "tdSink": 0.8,            # pelvis height and sink speed at hind touchdown
     "crouchH": 0.76, "standH": 1.02,
     "speed": (13.0, 10.0, 1.4),            # m/s: approach start, flare start, touchdown
     "flarePitch": 0.55, "tdPitch": 0.32,
-    "foldStart": 0.15, "foldTime": 0.8,    # s after hind touchdown, s
+    "foldStart": 0.15, "foldTime": 1.1,    # s after hind touchdown, s
 }
 
 
@@ -282,7 +282,7 @@ def landing(c=LAND):
         sig.append({"t": t, "speed": speed, "pelvisH": h, "pitch": pitch, "wing": wing, "unfold": unfold,
                     "osc": (1 - wb) * GLIDE["bob"] * math.sin(2 * math.pi * tau) * (1 - _clamp01((t - t_flare) / 0.3)),
                     "legs": legs, "reach": reach * (1 - _clamp01((t - t_ftd) / 0.1)),
-                    "lineW": 1.0 - _ease(_clamp01((t - t_td) / 0.3)), "wave": GLIDE["wave"], "wf": 0.0,
+                    "lineW": 1.0 - _ease(_clamp01((t - t_td) / 0.7)), "wave": GLIDE["wave"], "wf": 0.0,
                     "sway": GLIDE["tailSway"] * (1 - _clamp01((t - t_flare) / 0.3)), "swayPhase": tau})
     _integrate_x(sig)
     # touchdown spots (world y at the start's frame): where each paw's rest toe is under the body at its touchdown
@@ -292,7 +292,8 @@ def landing(c=LAND):
         t = s["t"]
         ik = {}
         for kind, ttd in (("hind", t_td), ("front", t_ftd)):
-            w = _ease(_clamp01((t - (ttd - 0.15)) / 0.15))
+            lead_in = 0.35 if kind == "front" else 0.2          # the paw eases onto its touchdown spot
+            w = _ease(_clamp01((t - (ttd - lead_in)) / lead_in))
             if w <= 0:
                 continue
             k_abs = _ease(_clamp01((t - ttd) / c["absorb"]))
