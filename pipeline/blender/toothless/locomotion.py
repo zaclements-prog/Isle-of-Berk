@@ -68,20 +68,21 @@ TROT = {
 # hinds swing forward through a lower, gathered flight. Height, pitch and arch are keyed over the cycle; the tail
 # counterbalances.
 GALLOP = {
-    "frames": 16, "speed": 7.0, "duty": 0.26, "offsets": (0.0, 0.65, 0.1, 0.55),
-    "front": {"centre": -0.95, "lift": 0.2, "land": 0.35, "peel": 0.2,
-              "distal": _keys(0.26, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, -8), (0.6, 18), (0.85, 44)]),
-              "toes": _keys(0.26, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
-              "scapula": _keys(0.26, [(0, 18), (0.5, 2)], [(0, -18), (0.5, 8), (0.85, 20)])},
-    "hind": {"centre": 0.39, "lift": 0.24, "land": 0.3, "peel": 0.3,
-             "distal": _keys(0.26, [(0, 48), (0.5, 38), (0.88, 44)], [(0, 52), (0.3, 10), (0.62, 34), (0.875, 50)]),
-             "toes": _keys(0.26, [(0, 79), (0.68, 79)], [(0, 36), (0.3, 18), (0.69, 66), (0.875, 85)])},
-    "body": {"height": 0.95, "lean": -0.02,
-             "bob": [(0.0, -0.02), (0.17, -0.09), (0.3, -0.02), (0.45, 0.13), (0.58, 0.04), (0.72, -0.05),
-                     (0.85, -0.01), (0.94, 0.05)],
+    "frames": 20, "speed": 6.0, "duty": 0.24, "offsets": (0.0, 0.65, 0.1, 0.55),
+    "front": {"centre": -0.93, "lift": 0.2, "land": 0.35, "peel": 0.2,
+              "distal": _keys(0.24, [(0, 40), (0.5, 50), (0.85, 52)], [(0, 25), (0.28, 2), (0.6, 20), (0.85, 44)]),
+              "toes": _keys(0.24, [(0, 79), (0.7, 79)], [(0, 40), (0.3, 10), (0.7, 62), (0.88, 86)]),
+              "scapula": _keys(0.24, [(0, 20), (0.5, 0)], [(0, -21), (0.5, 8), (0.85, 21)])},
+    "hind": {"centre": 0.39, "lift": 0.22, "land": 0.3, "peel": 0.3,
+             "distal": _keys(0.24, [(0, 48), (0.5, 38), (0.88, 44)], [(0, 52), (0.3, 10), (0.62, 34), (0.875, 50)]),
+             "toes": _keys(0.24, [(0, 79), (0.68, 79)], [(0, 36), (0.3, 18), (0.69, 66), (0.875, 85)])},
+    "body": {"height": 0.91, "lean": -0.045, "smooth": 3,
+             "bob": [(0.0, -0.02), (0.17, -0.07), (0.3, -0.01), (0.45, 0.11), (0.58, 0.04), (0.72, -0.05),
+                     (0.85, -0.01), (0.94, 0.04)],
              "pitch": [(0.0, 0.0), (0.2, 0.07), (0.38, 0.08), (0.55, 0.02), (0.72, -0.05), (0.9, -0.04)],
-             "spine": [(0.0, 0.55), (0.2, 0.1), (0.42, -0.35), (0.55, -0.25), (0.72, 0.15), (0.93, 0.8)],
-             "roll": 0.012, "flex": 0.012, "tail": 0.04, "tailLift": 0.035},
+             "spine": [(0.0, 0.6), (0.2, 0.1), (0.42, -0.4), (0.55, -0.3), (0.72, 0.15), (0.93, 0.85)],
+             "roll": 0.012, "flex": 0.02, "tail": 0.06, "tailLift": 0.02, "tailWave": 0.05,
+             "neckDrop": 0.07, "tailCarry": (-0.035, 0.06), "headLevel": 0.3},
 }
 CYCLES = {"walk": WALK, "trot": TROT, "gallop": GALLOP}
 
@@ -106,6 +107,32 @@ def _pchip(keys, p):
     return _hermite(Y[i], Y[i + 1], tangent(i) * h, tangent(i + 1) * h, t)
 
 
+_FOURIER = {}
+
+
+def _smooth(keys, t, n):
+    """The keyed cycle low-passed to its first n harmonics: the PCHIP curve sampled round the loop and refit as a
+    Fourier series, so the body flows through its keys with no corners (a panther, not a puppet)."""
+    k = (id(keys), n)
+    if k not in _FOURIER:
+        m = 96
+        ys = [_pchip(keys, i / m) for i in range(m)]
+        coef = [(sum(ys) / m, 0.0)]
+        for h in range(1, n + 1):
+            coef.append((2 / m * sum(y * math.cos(2 * math.pi * h * i / m) for i, y in enumerate(ys)),
+                         2 / m * sum(y * math.sin(2 * math.pi * h * i / m) for i, y in enumerate(ys))))
+        _FOURIER[k] = coef
+    c = _FOURIER[k]
+    return c[0][0] + sum(a * math.cos(2 * math.pi * h * t) + b * math.sin(2 * math.pi * h * t)
+                         for h, (a, b) in enumerate(c[1:], 1))
+
+
+def _chan(body, name, t):
+    """A keyed body channel at cycle phase t: smoothed when the body asks for it (body["smooth"] harmonics)."""
+    keys = body[name]
+    return _smooth(keys, t % 1.0, body["smooth"]) if body.get("smooth") else _pchip(keys, t)
+
+
 def _hermite(y0, y1, m0, m1, t):
     t2, t3 = t * t, t * t * t
     return (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * m1
@@ -125,7 +152,7 @@ def _seg(kind, a, b):
 def _rise(cyc, t):
     """Body height above its baseline at cycle phase t (keyed bobs only; a sine bob is small and left out)."""
     bob = cyc["body"]["bob"]
-    return _pchip(bob, t) if isinstance(bob, list) else 0.0
+    return _chan(cyc["body"], "bob", t) if isinstance(bob, list) else 0.0
 
 
 def leg_targets(cyc, kind, p, off=0.0):
@@ -168,18 +195,18 @@ def body_bones(cyc, t):
     w = 2 * math.pi * t
     if isinstance(b["bob"], list):                     # keyed over the cycle (the gallop's bound)
         h = 1
-        height = b["height"] + _pchip(b["bob"], t)
+        height = b["height"] + _chan(b, "bob", t)
     else:
         amp, h, ph = b["bob"]
         height = b["height"] + amp * math.cos(h * w + ph)
     if isinstance(b["pitch"], list):
-        pitch = b["lean"] + _pchip(b["pitch"], t)
+        pitch = b["lean"] + _chan(b, "pitch", t)
     else:
         pa, ph_, pph = b["pitch"]
         pitch = b["lean"] + pa * math.sin(ph_ * w + pph)
     roll = b["roll"] * math.sin(w)
     if isinstance(b.get("arch"), list):
-        arch = _pchip(b["arch"], t)
+        arch = _chan(b, "arch", t)
     else:
         aa, at = b.get("arch", (0.0, 0.0))
         arch = aa * math.cos(w - 2 * math.pi * at)      # + = gathered (back bowed up), - = stretched
@@ -188,7 +215,7 @@ def body_bones(cyc, t):
         # a cat's back: the flex lives in the loins and runs forward as a wave. Total flexion F (rad, + = rounded) tilts
         # the hips under (pelvis front up by F / 2) and curls the back evenly back down (-F / 4 per joint), so the
         # pelvis -> chest chord keeps the body pitch while the hips rock through the full range.
-        flex = lambda k: _pchip(b["spine"], t - 0.03 * k)       # joint k lags the loins by 3 % of the stride per bone
+        flex = lambda k: _chan(b, "spine", t - 0.03 * k)        # joint k lags the loins by 3 % of the stride per bone
         pelvis = pitch + 0.5 * flex(-1)
         bones = {"pelvis": (pelvis, roll, yaw0)}
         chest = pelvis
@@ -208,12 +235,19 @@ def body_bones(cyc, t):
         tail_base = 0.0
         wing_lift = 0.0
     for k, n in enumerate(("neck_01", "neck_02", "neck_03", "neck_04")):
-        bones[n] = (0.25 * steady + 0.008 * math.sin(h * w - 1.0 - 0.3 * k), 0.0, 0.5 * b["flex"] * math.sin(w - 0.2 * k))
-    bones["head"] = (0.1 * steady - 0.01 * math.sin(h * w - 1.6), 0.0, 0.6 * b["flex"] * math.sin(w - 0.9))
+        bones[n] = (0.25 * steady - b.get("neckDrop", 0.0) + 0.008 * math.sin(h * w - 1.0 - 0.3 * k), 0.0,
+                    0.5 * b["flex"] * math.sin(w - 0.2 * k))
+    bones["head"] = (0.1 * steady + 3.5 * b.get("neckDrop", 0.0) - 0.01 * math.sin(h * w - 1.6), 0.0,
+                     0.6 * b["flex"] * math.sin(w - 0.9))     # neckDrop: the neck carried long and low, the face level
     lift = b.get("tailLift", 0.02)
+    carry = b.get("tailCarry")                                 # (root droop, tip curl) per bone, else a gentle lift
+    rest = [(carry[0] if k < 5 else carry[1] if k >= 8 else 0.0) if carry else (0.03 if k < 4 else -0.02)
+            for k in range(12)]
     for k in range(12):
         lag = 0.9 + 0.35 * k
-        bones[f"tail_{k + 1:02d}"] = (lift * math.sin(h * w - lag) + (0.03 if k < 4 else -0.02) + (tail_base if k == 0 else 0.0),
+        wave = b.get("tailWave", 0.0) * _chan(b, "spine", t - 0.03 * (k + 5)) if "spine" in b else 0.0
+        bones[f"tail_{k + 1:02d}"] = (lift * math.sin(h * w - lag) + rest[k] + (tail_base if k == 0 else 0.0)
+                                      + wave,
                                       0.0, b["tail"] * (0.4 + 0.05 * k) * math.sin(w - lag))
     return (height, pitch), bones, wing_lift
 
@@ -301,11 +335,22 @@ def cycle_frames(rig, name):
     cyc = CYCLES[name]
     n = cyc["frames"]
     frames, report = [], {}
+    keep = cyc["body"].get("headLevel")
+    if keep is not None:                                      # first pass: where the uncorrected body carries the head
+        raw = []
+        for f in range(n):
+            root, bones, _ = body_bones(cyc, f / n)
+            R.reset_pose(rig)
+            _place(rig, root, bones)
+            raw.append(rig.pose.bones["head"].head.z)
+        mean = sum(raw) / n
     for f in range(n + 1):
         t = (f % n) / n
         root, bones, wing_lift = body_bones(cyc, t)
         R.reset_pose(rig)
         _place(rig, root, bones)
+        if keep is not None:
+            _level_head(rig, bones, mean + keep * (raw[f % n] - mean))
         for key, off in zip(LEGS, cyc["offsets"]):
             kind, side = key.split("_")
             p = (t - off) % 1.0
@@ -321,6 +366,25 @@ def cycle_frames(rig, name):
                 r["range"][bn] = (min(lo, math.degrees(e[0])), max(hi, math.degrees(e[0])))
         frames.append({"root": root, "wings": (1.0, wing_lift, 0.0), "bones": bones})
     return frames, report
+
+
+def _level_head(rig, bones, target):
+    """The neck carries the head toward height `target` (a panther's head rides a near-level line while its body
+    rocks): neck_01 / neck_02 pitch together, the head counter-pitches so the face keeps its angle."""
+    pbs = rig.pose.bones
+    total = 0.0
+    for _ in range(4):
+        err = target - pbs["head"].head.z
+        if abs(err) < 0.003:
+            break
+        lever = max(0.2, abs(pbs["head"].head.y - pbs["neck_01"].head.y))
+        d = max(-0.5 - total, min(0.5 - total, err / lever))
+        total += d
+        for n, share in (("neck_01", 0.5), ("neck_02", 0.5), ("head", -1.0)):
+            x, y, z = bones[n]
+            bones[n] = (x + share * d, y, z)
+            pbs[n].rotation_euler = bones[n]
+        bpy.context.view_layer.update()
 
 
 def _place(rig, root, bones):
