@@ -17,6 +17,8 @@ import { DEFAULT_DEBRIS, Debris } from '../damage/debris';
 import { Ejecta } from '../damage/ejecta';
 import { StructureDamage } from '../damage/structures';
 import { Splashes } from '../damage/splash';
+import { islandFireFuel } from '../damage/fire';
+import { Fire } from '../damage/fireFx';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
@@ -174,6 +176,8 @@ export class IslandRegion implements Region {
   /** Debris hitting the sea or the pond. */
   splashes: Splashes | null = null;
   trees: TreeDamage | null = null;
+  /** Fire: blasts light the grass and forest floor; it spreads a while, chars the ground and trees, and burns out. */
+  fire: Fire | null = null;
 
   /**
    * Let blasts damage the island (world-interaction plan §4, milestone 3): scorch the ground and burn or flatten the
@@ -239,6 +243,14 @@ export class IslandRegion implements Region {
     });
     app_prepare(this.app, this.ejecta.root);
     this.root.add(this.ejecta.root);
+    const grass = this.grass?.field;
+    this.fire = new Fire({
+      fuel: islandFireFuel({ height: (x, z) => hf.heightAt(x, z), upness: (x, z) => hf.normalAt(x, z, n).y, grass: grass && ((x, z) => grass.density(x, z)), seaLevel: sea, pond: P, burn }),
+      ground: (x, z) => hf.heightAt(x, z), start: hf.origin - hf.spacing / 2, size: hf.size * hf.spacing,
+      burn, trees: this.trees, events, force,
+    });
+    app_prepare(this.app, this.fire.root);
+    this.root.add(this.fire.root);
   }
 
   /** Set the boulders in a crater's rectangle back on the dug (or raised) ground, their collision hulls with them. */
@@ -252,6 +264,7 @@ export class IslandRegion implements Region {
     this.debris?.update(dt);
     this.splashes?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.ejecta?.update(dt, ctx.camera, this.app.renderer.domElement.height);
+    this.fire?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
     this.pond.update(dt);
@@ -264,6 +277,7 @@ export class IslandRegion implements Region {
     this.terrain.dispose();
     this.terrain.material.dispose();
     this.ejecta?.dispose();
+    this.fire?.dispose();
     this.layers?.dispose();
     this.ocean.dispose();
     this.pond.dispose();

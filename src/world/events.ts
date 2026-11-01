@@ -28,7 +28,21 @@ export interface CollapseEvent {
   readonly time: number;
 }
 
-export type WorldEvent = BlastEvent | FellEvent | CollapseEvent;
+/**
+ * Fire (damage/fire): `ignite` a new fire (from a blast, a felled or scorched tree, a thrown firebrand), `spread` a cell
+ * of ground catching from its neighbour, `tree` a tree catching (`key` its collision key), `out` the last flame on the
+ * island going out. `intensity` is the heat it caught with (0…1).
+ */
+export interface BurnEvent {
+  readonly type: 'burn';
+  readonly kind: 'ignite' | 'spread' | 'tree' | 'out';
+  readonly point: THREE.Vector3;
+  readonly intensity: number;
+  readonly key?: string;
+  readonly time: number;
+}
+
+export type WorldEvent = BlastEvent | FellEvent | CollapseEvent | BurnEvent;
 type Handler<E> = (e: E) => void;
 
 /**
