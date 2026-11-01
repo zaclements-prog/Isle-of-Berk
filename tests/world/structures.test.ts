@@ -96,7 +96,7 @@ describe('structures', () => {
     return s;
   };
 
-  it('breaks a house next to a blast into flying debris, damages one further off, and spares a far one', () => {
+  it('breaks a house next to repeated blasts into flying debris, damages one further off, and spares a far one', () => {
     const { world } = flatWorld();
     const set = world.createSet('structures');
     const box = (x: number) => new THREE.BoxGeometry(8, 3.2, 5).translate(x, 1.6, 0);
@@ -111,10 +111,16 @@ describe('structures', () => {
     events.emit(blast(-3, 0.5, 4));
     expect(dmg.health('house:0')).toBeLessThan(100);
     events.emit(blast(-2, 0.5, 3));
-    expect(dmg.health('house:0')).toBeLessThanOrEqual(0);              // two close blasts finish it
+    // two close blasts chew it open (it now breaks part by part) but it still stands
+    expect(dmg.health('house:0')).toBeGreaterThan(0);
+    expect(dmg.standing('house:0')).toBeLessThan(houses[0].parts.length);
+    expect(collapsed).toEqual([]);
+    events.emit(blast(-2, 0.5, 3));
+    expect(dmg.health('house:0')).toBeLessThanOrEqual(0);              // a third finishes it
     expect(houses[0].hidden).toBe(true);
     expect(collapsed).toEqual(['house:0']);
     expect(set.has('house:0')).toBe(false);
+    expect([...Array(houses[0].parts.length).keys()].some((i) => set.has(`house:0#${i}`))).toBe(false);
     expect(dmg.health('house:1')).toBe(100);
     expect(houses[2].scorched).toBe(0);
     // its parts fly away from the blast and come down as rubble

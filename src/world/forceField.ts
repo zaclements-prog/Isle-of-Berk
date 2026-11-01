@@ -4,6 +4,8 @@ import type { WorldEvents } from './events';
 /** Most contact spheres (paws, body) and live shockwaves the shaders take at once. */
 export const MAX_CONTACTS = 12;
 export const MAX_SHOCKS = 4;
+/** Most splash ripples on the water at once (debris entering the sea or the pond). */
+export const MAX_RIPPLES = 6;
 
 /** What the force field reads from the dragon each step (null when there is none). */
 export interface ForceSource {
@@ -58,6 +60,12 @@ export interface ForceUniforms {
   /** The burn mask (R scorch, G flattened; see damage/burnMask) and its (start x, z, 1/width, 1/depth) mapping. */
   tWorldBurn: { value: THREE.Texture };
   uWorldExtent: { value: THREE.Vector4 };
+  /**
+   * Splash ripples (water only): (centre xyz, front radius), (strength, ring width, foam at the centre, 0) each. Written
+   * by damage/splash; a ripple at another water body's level is ignored by it.
+   */
+  uForceRipple: { value: THREE.Vector4[] };
+  uForceRippleS: { value: THREE.Vector4[] };
 }
 
 /** An all-clear 1×1 burn mask, until a world sets its own. */
@@ -113,6 +121,36 @@ vec3 forceAt(vec3 p) {
 }
 `;
 
+/**
+ * GLSL for the splash ripples (water shaders only; needs FORCE_PARS first): the ring's slope (xz) and foam (0…1) at a
+ * point of water whose surface is at `level` — a bright front ring, a train of smaller rings behind it, foam where it
+ * went in.
+ */
+export const RIPPLE_PARS = /* glsl */ `
+uniform vec4 uForceRipple[${MAX_RIPPLES}];
+uniform vec4 uForceRippleS[${MAX_RIPPLES}];
+vec3 rippleAt(vec2 xz, float level) {
+  vec2 slope = vec2(0.0);
+  float foam = 0.0;
+  for (int k = 0; k < ${MAX_RIPPLES}; k++) {
+    float s = uForceRippleS[k].x;
+    if (s <= 0.0 || abs(uForceRipple[k].y - level) > 0.6) continue;
+    vec2 d = xz - uForceRipple[k].xz;
+    float dist = length(d);
+    float R = uForceRipple[k].w;
+    float w = max(uForceRippleS[k].y, 0.05);
+    vec2 dir = dist > 1e-3 ? d / dist : vec2(1.0, 0.0);
+    float front = exp(-sq((dist - R) / w));
+    // the wave train behind the front: shorter, fading towards the centre
+    float behind = step(dist, R) * exp(-(R - dist) / (0.35 * R + 0.5));
+    slope += dir * s * (front * 0.9 + behind * sin((R - dist) * 6.0 / w) * 0.45);
+    foam = max(foam, s * front * 0.75);
+    foam = max(foam, uForceRippleS[k].z * (1.0 - smoothstep(0.0, 0.5 + 0.25 * R, dist)));
+  }
+  return vec3(clamp(foam, 0.0, 1.0), slope);
+}
+`;
+
 interface Shock { x: number; y: number; z: number; t0: number; power: number }
 
 /**
@@ -134,6 +172,8 @@ export class ForceField {
     uForceTime: { value: 0 },
     tWorldBurn: { value: clearBurn() },
     uWorldExtent: { value: new THREE.Vector4(0, 0, 1, 1) },
+    uForceRipple: { value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, -1e4, 0, 0)) },
+    uForceRippleS: { value: Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4()) },
   };
   /** Spheres touching the world (paws, body), read every step. */
   readonly contacts: { center: THREE.Vector3; radius: number }[] = [];
