@@ -245,8 +245,17 @@ export interface MotionTuning {
   flight: {
     /** A Space press at or above this speed (m/s) is a running takeoff; slower, the jump. */
     runTakeoffSpeed: number;
-    /** Level cruise speed flapping, the glide's best speed, the slowest he flies (below it he noses down), the top. */
+    /**
+     * Level cruise speed flapping, the glide's best speed, the slowest he flies (below it he noses down), and the top
+     * speed with the wings out: above it (after a dive) drag pulls him back toward it rather than a hard cap.
+     */
     flapSpeed: number; glideSpeed: number; minSpeed: number; maxSpeed: number;
+    /**
+     * The tuck (Shift held in the air): the wings sweep back half folded (tuckFold) over tuckTime s, drag falls to
+     * tuckDrag of the glide's, the path may dive to tuckDiveDeg and speed build to tuckMaxSpeed. Released, the wings
+     * open again and the speed it built carries him on, or up: pulling out of a dive trades it for height.
+     */
+    tuckFold: number; tuckTime: number; tuckDrag: number; tuckDiveDeg: number; tuckMaxSpeed: number;
     /** Flapping thrust (m/s²) at rest air; drag sets the level cruise at flapSpeed. brakeDrag: extra drag (1/s) on S. */
     flapThrust: number; brakeDrag: number;
     /** The glide's sink: its path angle never rises above −glideSinkDeg unless it trades speed above glideSpeed. */
@@ -359,7 +368,8 @@ export const DEFAULT_TUNING: MotionTuning = {
     landImpulse: 1.2, recoverHold: 0.2, recoverTime: 0.35, cooldown: 0.3, rearExtent: 1.1, clearance: 0.1, landCarry: 0.8,
   },
   flight: {
-    runTakeoffSpeed: 6.5, flapSpeed: 12, glideSpeed: 15, minSpeed: 7, maxSpeed: 26,
+    runTakeoffSpeed: 6.5, flapSpeed: 18, glideSpeed: 18, minSpeed: 7, maxSpeed: 30,
+    tuckFold: 0.55, tuckTime: 0.35, tuckDrag: 0.2, tuckDiveDeg: 70, tuckMaxSpeed: 55,
     flapThrust: 6, brakeDrag: 0.6, glideSinkDeg: 4,
     neutralPitchDeg: 18, pitchGain: 1.2, climbDeg: 28, diveDeg: 40,
     pathOmega: 2.5, headingGain: 1.6, maxTurnRateDeg: 70, maxBankDeg: 40, bankOmega: 4,

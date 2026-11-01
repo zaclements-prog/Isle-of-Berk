@@ -76,6 +76,8 @@ export class FlightAction implements DragonAction {
   /** Loops: flap and glide weights, beat phases (0…1), the flap's rate (it slows to a stop into the glide). */
   flapW = 0;
   glideW = 0;
+  /** The tuck (Shift held in the air), eased in and out over tuckTime: 0 wings out, 1 swept back for a dive. */
+  tuckW = 0;
   flapU = 0;
   glideU = 0;
   private flapRate = 1;
@@ -126,6 +128,8 @@ export class FlightAction implements DragonAction {
   }
 
   reset(d: DragonCharacter): void {
+    this.tuckW = 0;
+    d.wings.tuck = 0;
     if (this.phase !== 'idle' || this.fading) {
       for (const n of FLIGHT_CLIPS) if (d.layers.has(n)) d.layers.set(n, 0);
       this.release(d);
@@ -286,10 +290,14 @@ export class FlightAction implements DragonAction {
     const glide = this.meta(d, 'fly_glide')!;
     const throttle = d.intent.throttle;
     const agl = this.pos.y - this.groundBelow(d);
+    // the tuck: Shift held (not while landing); it ends any flap and lets the dive go steeper
+    const tuck = d.intent.gallop && this.phase === 'air';
+    this.tuckW = clamp(this.tuckW + (tuck ? 1 : -1) * (dt / c.tuckTime), 0, 1);
+    const dive = lerp(c.diveDeg, c.tuckDiveDeg, this.tuckW);
     // the path angle the camera asks for, then the glide's sink, a stall's nose-down and the ground's pull-up
-    let gammaT = clamp(deg(c.neutralPitchDeg) - d.cameraPitch, -deg(c.diveDeg), deg(c.climbDeg)) * c.pitchGain;
-    gammaT = clamp(gammaT, -deg(c.diveDeg), deg(c.climbDeg));
-    const wantFlap = throttle > 0 || gammaT > deg(5) || this.speed < c.minSpeed;
+    let gammaT = clamp(deg(c.neutralPitchDeg) - d.cameraPitch, -deg(dive), deg(c.climbDeg)) * c.pitchGain;
+    gammaT = clamp(gammaT, -deg(dive), deg(c.climbDeg));
+    const wantFlap = !tuck && (throttle > 0 || gammaT > deg(5) || this.speed < c.minSpeed);
     if (this.phase === 'descend') gammaT = -deg(c.descendDeg);
     else if (!wantFlap && this.speed <= c.glideSpeed) gammaT = Math.min(gammaT, -deg(c.glideSinkDeg));
     if (this.speed < c.minSpeed) gammaT = Math.min(gammaT, -deg(4) * (c.minSpeed - this.speed));
@@ -305,16 +313,18 @@ export class FlightAction implements DragonAction {
     // speed: thrust while flapping against the flap's drag; the glide's drag balances its sink at glideSpeed
     const kFlap = c.flapThrust / (c.flapSpeed * c.flapSpeed);
     const kGlide = (G * Math.sin(deg(c.glideSinkDeg))) / (c.glideSpeed * c.glideSpeed);
-    const k = lerp(kGlide, kFlap, this.flapW);
-    let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) - k * this.speed * this.speed;
+    const k = lerp(lerp(kGlide, kFlap, this.flapW), kGlide * c.tuckDrag, this.tuckW);
+    let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) * (1 - this.tuckW) - k * this.speed * this.speed;
     if (throttle < 0) a -= c.brakeDrag * this.speed;
+    // wings out above their top speed (out of a dive), the open wings bleed it off over a few seconds
+    a -= 0.6 * Math.max(0, this.speed - c.maxSpeed) * (1 - this.tuckW);
     // the descent brakes against the dive: a slow (standing) landing holds its slow speed, a running one stays near the
     // glide's (a long dive from height would otherwise run away)
     if (this.phase === 'descend') {
       const cap = this.landRun ? c.glideSpeed : 0.8 * c.runLandSpeed;
       a = Math.min(a, -2 * c.brakeDrag * Math.max(0, this.speed - cap));
     }
-    this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.maxSpeed);
+    this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.tuckMaxSpeed);
     const h = Math.cos(this.gamma) * this.speed;
     this.pos.x += Math.sin(this.heading) * h * dt;
     this.pos.z += Math.cos(this.heading) * h * dt;
@@ -380,6 +390,8 @@ export class FlightAction implements DragonAction {
     d.layers.set('fly_flap', fw > 1e-4 ? fw : 0, this.flapU * (flap.period ?? 0.9), false, ORDER);
     d.layers.set('fly_glide', gw > 1e-4 ? gw : 0, this.glideU * (glide.period ?? 4), false, ORDER);
     d.wings.liftScale = 1 - Math.min(1, fw + gw + this.clipW);
+    d.wings.tuck = this.tuckW * w * this.airW;
+    d.wings.tuckFold = this.cfg.tuckFold;
   }
 
   // ---- landing ------------------------------------------------------------------------------------------------------

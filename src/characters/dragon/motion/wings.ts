@@ -111,8 +111,16 @@ export class WingController {
     }
   }
 
+  /**
+   * The flight's tuck (0…1, set each step): the fold layer rises over the flight clips (which own the wings in the
+   * air) at `tuckFold`, sweeping the wings back half folded for a dive.
+   */
+  tuck = 0;
+  tuckFold = 0.55;
+
   private driveFold(): void {
-    if (this.foldLayer === 'wingFold') this.layers.set('wingFold', 1, this.state.fold);
+    if (this.foldLayer === 'wingFold' && this.tuck > 1e-3) this.layers.set('wingFold', this.tuck, this.tuckFold, false, 4);
+    else if (this.foldLayer === 'wingFold') this.layers.set('wingFold', 1, this.state.fold);
     else if (this.foldLayer === 'wings_folded') this.layers.set('wings_folded', this.state.fold);
   }
 }
