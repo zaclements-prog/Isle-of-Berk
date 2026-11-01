@@ -199,6 +199,20 @@ export class Debris {
     return n;
   }
 
+  /**
+   * What held settled rubble up is gone (a wall broke, a house's box gave way to its parts): wake every resting piece
+   * whose bounds reach within `radius` of `at`, so it falls instead of hanging in the air. Returns how many woke.
+   */
+  wakeAround(at: THREE.Vector3, radius: number): number {
+    let n = 0;
+    for (const p of this.pieces) {
+      if (!p.asleep || p.afloat || p.pos.distanceTo(at) > radius + p.half.length()) continue;
+      this.wake(p);
+      n++;
+    }
+    return n;
+  }
+
   /** Back to moving: out of the collision, its rest timers reset. */
   wake(p: Piece): void {
     if (!p.asleep) return;

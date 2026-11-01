@@ -230,6 +230,10 @@ export class StructureDamage {
     L.s.hide();
     this.set?.remove(L.s.key);
     this.refresh(L);
+    // rubble resting on the whole-house box (its roof line) has only the walls under it now
+    let r = 0;
+    for (const part of L.s.parts) r = Math.max(r, part.center.length() + part.half.length());
+    this.debris?.wakeAround(L.s.base, r);
   }
 
   /** Redraw the standing parts at their damaged poses, and their collision with them. */
@@ -286,6 +290,7 @@ export class StructureDamage {
     this.pose(L, i, _p, _q);
     st.standing = false;
     this.set?.remove(partKey(L.s.key, i));
+    this.debris?.wakeAround(_p, part.half.length() + 0.3);   // whatever rested on this part
     this.mesh.setMatrixAt(st.slot, _m.makeScale(0, 0, 0));
     this.mesh.instanceMatrix.needsUpdate = true;
     const reach = e.radius * this.t.reach;

@@ -132,4 +132,18 @@ describe('structures break part by part', () => {
     expect(left.length).toBeLessThan(planks);
     expect(dmg.part('pier:0', 6)!.standing).toBe(true);          // the far end
   });
+
+  it('rubble resting on the house falls when what held it up gives way, instead of hanging in the air', () => {
+    const { debris, dmg } = scene();
+    // a plank lands on the whole-house box's top (3.2 m) and settles there
+    const plank = debris.spawn(new THREE.Vector3(1, 3.6, 0), new THREE.Quaternion(), new THREE.Vector3(1.2, 0.1, 0.3), new THREE.Color(), new THREE.Vector3(), new THREE.Vector3());
+    for (let k = 0; k < 240; k++) debris.update(1 / 60);
+    expect(plank.asleep).toBe(true);
+    expect(plank.pos.y).toBeGreaterThan(3.2);
+    // a blast at the far end opens the house into its parts: the box (and so the plank's support) is gone
+    dmg.blast(blast(-6, 0.3, -3.8, 0.8));
+    for (let k = 0; k < 600; k++) debris.update(1 / 60);
+    expect(plank.pos.y).toBeLessThan(0.5);
+  });
 });
+
