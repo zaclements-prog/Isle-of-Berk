@@ -7,7 +7,7 @@ import type { MotionTuning } from '../motion/tuning';
 import type { RayHit } from '../../../world/collision';
 
 type FlightTuning = MotionTuning['flight'];
-type Phase = 'idle' | 'prep' | 'takeoff' | 'air' | 'descend' | 'landing' | 'settle';
+type Phase = 'idle' | 'prep' | 'takeoff' | 'air' | 'descend' | 'landing' | 'settle' | 'runout';
 
 /** Flight clips play above every other layer (posture 0 < gesture 1 < action 2). */
 const ORDER = 3;
@@ -17,21 +17,37 @@ export const FLIGHT_CLIPS = ['fly_flap', 'fly_glide', 'fly_takeoff', 'fly_runtak
 const _hit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
 const _p = new THREE.Vector3();
 
-/** A flight curve (one value per frame at 30 fps) at time t: linear between frames; clamped, or wrapped for a loop. */
+/**
+ * A flight curve (one value per frame at 30 fps) at time t: clamped, or wrapped for a loop. Between frames a
+ * Catmull-Rom spline through the neighbouring frames (a missing end neighbour extrapolated linearly, so a straight run
+ * stays straight): linear interpolation of a 30 fps curve at 120 Hz changes the pelvis's speed every fourth step.
+ */
 export function sampleFlight(curve: readonly number[], t: number, loop = false): number {
   const n = curve.length;
   if (n === 0) return 0;
+  if (n === 1) return curve[0];
+  let k: number;
+  let u: number;
   if (loop) {
     const x = fract((t * FPS) / n) * n;
-    const k = Math.floor(x);
-    const u = x - k;
-    return curve[k % n] * (1 - u) + curve[(k + 1) % n] * u;
+    k = Math.floor(x);
+    u = x - k;
+  } else {
+    const x = clamp(t * FPS, 0, n - 1);
+    k = Math.min(Math.floor(x), n - 2);
+    u = x - k;
   }
-  const x = clamp(t * FPS, 0, n - 1);
-  const k = Math.min(Math.floor(x), n - 2);
-  if (k < 0) return curve[0];
-  const u = x - k;
-  return curve[k] * (1 - u) + curve[k + 1] * u;
+  const at = (i: number): number => {
+    if (loop) return curve[((i % n) + n) % n];
+    if (i < 0) return 2 * curve[0] - curve[1];
+    if (i > n - 1) return 2 * curve[n - 1] - curve[n - 2];
+    return curve[i];
+  };
+  const p0 = at(k - 1);
+  const p1 = at(k);
+  const p2 = at(k + 1);
+  const p3 = at(k + 2);
+  return 0.5 * (2 * p1 + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (3 * p1 - p0 - 3 * p2 + p3) * u * u * u);
 }
 
 /**
@@ -52,6 +68,11 @@ export function sampleFlight(curve: readonly number[], t: number, loop = false):
  *   (fast) plays against the ground found at its touchdown spot, the height gap closing before the flare. A
  *   standing landing settles at its end; a running one hands the body to the gallop at hind touchdown (the gait
  *   phase set to 0, the feet re-seated), the clip fading out as the planner and the cycles take over.
+ * - **Run-out** (after a running landing): the ground motion has the body back (kinematics, feet, cycles) but the
+ *   pelvis eases from the clip's touchdown carriage (high, legs reaching) down onto the ground's running height over
+ *   runoutTime, its height and speed carried, instead of dropping onto the springs 0.4 m high (the legs then fall
+ *   short and pull the body down into a belly-low sag); the landing speed bleeds off over runoutDecel s whatever is
+ *   held, rather than braking to the trot at once.
  *
  * Every hand-off keeps the pelvis continuous: the difference between the old and new placement is carried and eased
  * out over `settle`.
@@ -76,6 +97,8 @@ export class FlightAction implements DragonAction {
   /** Loops: flap and glide weights, beat phases (0…1), the flap's rate (it slows to a stop into the glide). */
   flapW = 0;
   glideW = 0;
+  /** The tuck (Shift held in the air), eased in and out over tuckTime: 0 wings out, 1 swept back for a dive. */
+  tuckW = 0;
   flapU = 0;
   glideU = 0;
   private flapRate = 1;
@@ -91,6 +114,8 @@ export class FlightAction implements DragonAction {
   private groundH: number | null = null;
   private groundV = 0;
   private pitchOff = 0;
+  /** The pitch speed (rad/s) the takeoff brought beyond the clip's own, closed with the offset. */
+  private pitchOffV = 0;
   /** Continuity carry (eased out over `settle`): pelvis height (m), pitch (rad). */
   private carryH = 0;
   private carryP = 0;
@@ -106,7 +131,39 @@ export class FlightAction implements DragonAction {
   private fading: string | null = null;
   private fadeW = 0;
 
+  /** Plasma on the wing: the flap's beat held back by this share (0…1) while he charges (PlasmaBody.hitch). */
+  hitch = 0;
+  /** The plasma release's nose-up: amplitude (rad), and the time since it (s). */
+  private recoilA = 0;
+  private recoilT = Infinity;
+
   constructor(private readonly cfg: FlightTuning) {}
+
+  /** The path's velocity (m/s, world): speed along the heading at the path angle (no flap bob). */
+  velocity(out: THREE.Vector3): THREE.Vector3 {
+    if (!this.airborne) return out.set(0, 0, 0);
+    const h = Math.cos(this.gamma) * this.speed;
+    return out.set(Math.sin(this.heading) * h, Math.sin(this.gamma) * this.speed, Math.cos(this.heading) * h);
+  }
+
+  /** A plasma release on the wing: the nose pitches up by `pitch` (rad), easing in and out, and he loses some speed. */
+  recoil(pitch: number, speedLoss: number): void {
+    this.recoilA = pitch;
+    this.recoilT = 0;
+    if (this.phase === 'air' || this.phase === 'descend') this.speed = Math.max(this.cfg.minSpeed, this.speed - speedLoss);
+  }
+
+  /** The recoil's pitch now: up over 0.08 s, back over the next ~0.5 s (smooth: no pop in the pelvis). */
+  private recoilPitch(dt: number): number {
+    if (!Number.isFinite(this.recoilT)) return 0;
+    this.recoilT += dt;
+    const t = this.recoilT;
+    if (t > 0.6) {
+      this.recoilT = Infinity;
+      return 0;
+    }
+    return this.recoilA * smoothstep(0, 0.08, t) * (1 - smoothstep(0.08, 0.6, t));
+  }
 
   get active(): boolean {
     return this.phase !== 'idle';
@@ -126,6 +183,10 @@ export class FlightAction implements DragonAction {
   }
 
   reset(d: DragonCharacter): void {
+    this.tuckW = 0;
+    this.hitch = 0;
+    this.recoilT = Infinity;
+    d.wings.tuck = 0;
     if (this.phase !== 'idle' || this.fading) {
       for (const n of FLIGHT_CLIPS) if (d.layers.has(n)) d.layers.set(n, 0);
       this.release(d);
@@ -140,8 +201,8 @@ export class FlightAction implements DragonAction {
     this.t += dt;
     this.fade(d, dt);
     if (this.phase === 'idle' || this.phase === 'prep') {
-      // the body's own pelvis speed on the ground: a takeoff starts from it
-      const h = d.body.pose.height;
+      // the body's own pelvis height and speed on the ground (the gait's bob included): a takeoff starts from them
+      const h = d.body.pose.pelvisPos.y;
       this.groundV = this.groundH === null ? 0 : (h - this.groundH) / dt;
       this.groundH = h;
     } else this.groundH = null;
@@ -151,11 +212,22 @@ export class FlightAction implements DragonAction {
       else if (d.intent.jump && d.kin.speed >= c.runTakeoffSpeed) {
         d.intent.jump = false;                                    // the jump must not take it too
         this.startPrep(d);
+      } else if (d.intent.jump && d.intent.gallop) {
+        // Shift + Space is always a takeoff: short of a gallop's speed (held to a trot on rough ground, still getting
+        // going) it's a standing one, not a hop that reads as a takeoff that failed
+        d.intent.jump = false;
+        this.startTakeoff(d, false);
       }
-      return;
+      if ((this.phase as Phase) !== 'takeoff') return;
     }
-    if (this.phase === 'prep') return this.stepPrep(d, dt);
+    if (this.phase === 'prep') {
+      this.stepPrep(d, dt);
+      // the push starts this very step: a step of the gallop's own kinematics after the takeoff took his position
+      // would set him back by that step's travel
+      if ((this.phase as Phase) !== 'takeoff') return;
+    }
     if (this.phase === 'settle') return this.stepSettle(d, dt);
+    if (this.phase === 'runout') return this.stepRunout(d, dt);
     d.mods.scripted = true;
     d.climb.suspended = true;
     d.planner.autoStep = false;
@@ -192,7 +264,8 @@ export class FlightAction implements DragonAction {
     this.prevPhase = ph;
     // the push lands on the left hind's touchdown (gallop phase 0); a stalled gait (he stopped) gives up at the clip end
     if ((wrapped && this.prepLeft < 0.12) || this.prepLeft < -0.2) {
-      d.layers.set('fly_runtakeoff_wings', 0);
+      // the wings hand over to the push's as it fades in over the gallop (runBlend), not at once
+      this.fadeOut('fly_runtakeoff_wings', 1, this.cfg.runBlend, clamp(wt, 0, dur));
       this.startTakeoff(d, true);
     }
   }
@@ -210,15 +283,18 @@ export class FlightAction implements DragonAction {
     this.pos.set(d.kin.pos.x, d.body.pose.height, d.kin.pos.z);
     this.heading = d.kin.heading;
     this.v0 = d.kin.speed;
-    // the clip starts from its own authored carriage: the engine's height and pitch now hand over to it
-    this.clipOff = d.body.pose.height - (this.ground + m.height[0]);
+    // the clip starts from its own authored carriage: the engine's height and pitch (and their speeds) now hand over
+    const h0 = d.body.pose.pelvisPos.y;
+    this.clipOff = h0 - (this.ground + m.height[0]);
     this.clipOffV = this.groundV - (m.height[1] - m.height[0]) * FPS;
     this.pitchOff = d.body.pose.pitch - m.pitch[0];
+    this.pitchOffV = d.body.pitchSpeed - (m.pitch[1] - m.pitch[0]) * FPS;
     this.carryH = this.carryP = 0;
     this.pendingCarry = false;
-    this.outH = d.body.pose.height;
+    this.outH = h0;
     this.outP = d.body.pose.pitch;
-    this.outVH = this.outVP = 0;
+    this.outVH = this.groundV;
+    this.outVP = d.body.pitchSpeed;
     d.intent.fly = false;
   }
 
@@ -232,11 +308,11 @@ export class FlightAction implements DragonAction {
     const blend = this.run ? c.runBlend : 0.25;
     this.clipW = smoothstep(0, blend, t);
     d.layers.set(this.clip!, Math.max(this.clipW, 1e-4), t, false, ORDER);
-    d.wings.liftScale = 1 - this.clipW;
+    d.wings.liftScale = 1 - Math.min(1, this.clipW + this.fadeWeight);
     const offW = 1 - smoothstep(0, c.runOffsetTime, t);
     // the gap to the clip's carriage (and its speed) closes over runOffsetTime
     const h = this.ground + sampleFlight(m.height, t) + (this.clipOff + this.clipOffV * t) * offW;
-    const pitch = sampleFlight(m.pitch, t) + this.pitchOff * offW;
+    const pitch = sampleFlight(m.pitch, t) + (this.pitchOff + this.pitchOffV * t) * offW;
     // forward: the clip's own travel, plus (running) the gallop's extra speed over the clip's, handing over in 1 s
     const xs = m.x!;
     let dx = sampleFlight(xs, t) - sampleFlight(xs, t0);
@@ -281,10 +357,14 @@ export class FlightAction implements DragonAction {
     const glide = this.meta(d, 'fly_glide')!;
     const throttle = d.intent.throttle;
     const agl = this.pos.y - this.groundBelow(d);
+    // the tuck: Shift held (not while landing); it ends any flap and lets the dive go steeper
+    const tuck = d.intent.gallop && this.phase === 'air';
+    this.tuckW = clamp(this.tuckW + (tuck ? 1 : -1) * (dt / c.tuckTime), 0, 1);
+    const dive = lerp(c.diveDeg, c.tuckDiveDeg, this.tuckW);
     // the path angle the camera asks for, then the glide's sink, a stall's nose-down and the ground's pull-up
-    let gammaT = clamp(deg(c.neutralPitchDeg) - d.cameraPitch, -deg(c.diveDeg), deg(c.climbDeg)) * c.pitchGain;
-    gammaT = clamp(gammaT, -deg(c.diveDeg), deg(c.climbDeg));
-    const wantFlap = throttle > 0 || gammaT > deg(5) || this.speed < c.minSpeed;
+    let gammaT = clamp(deg(c.neutralPitchDeg) - d.cameraPitch, -deg(dive), deg(c.climbDeg)) * c.pitchGain;
+    gammaT = clamp(gammaT, -deg(dive), deg(c.climbDeg));
+    const wantFlap = !tuck && (throttle > 0 || gammaT > deg(5) || this.speed < c.minSpeed);
     if (this.phase === 'descend') gammaT = -deg(c.descendDeg);
     else if (!wantFlap && this.speed <= c.glideSpeed) gammaT = Math.min(gammaT, -deg(c.glideSinkDeg));
     if (this.speed < c.minSpeed) gammaT = Math.min(gammaT, -deg(4) * (c.minSpeed - this.speed));
@@ -300,16 +380,18 @@ export class FlightAction implements DragonAction {
     // speed: thrust while flapping against the flap's drag; the glide's drag balances its sink at glideSpeed
     const kFlap = c.flapThrust / (c.flapSpeed * c.flapSpeed);
     const kGlide = (G * Math.sin(deg(c.glideSinkDeg))) / (c.glideSpeed * c.glideSpeed);
-    const k = lerp(kGlide, kFlap, this.flapW);
-    let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) - k * this.speed * this.speed;
+    const k = lerp(lerp(kGlide, kFlap, this.flapW), kGlide * c.tuckDrag, this.tuckW);
+    let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) * (1 - this.tuckW) - k * this.speed * this.speed;
     if (throttle < 0) a -= c.brakeDrag * this.speed;
+    // wings out above their top speed (out of a dive), the open wings bleed it off over a few seconds
+    a -= 0.6 * Math.max(0, this.speed - c.maxSpeed) * (1 - this.tuckW);
     // the descent brakes against the dive: a slow (standing) landing holds its slow speed, a running one stays near the
     // glide's (a long dive from height would otherwise run away)
     if (this.phase === 'descend') {
       const cap = this.landRun ? c.glideSpeed : 0.8 * c.runLandSpeed;
       a = Math.min(a, -2 * c.brakeDrag * Math.max(0, this.speed - cap));
     }
-    this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.maxSpeed);
+    this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.tuckMaxSpeed);
     const h = Math.cos(this.gamma) * this.speed;
     this.pos.x += Math.sin(this.heading) * h * dt;
     this.pos.z += Math.cos(this.heading) * h * dt;
@@ -340,12 +422,14 @@ export class FlightAction implements DragonAction {
     }
     if (this.mode === 'flap' && !this.stopping) this.glideW = Math.max(0, this.glideW - dt / c.glideToFlap);
     this.flapW = 1 - this.glideW;
-    this.flapU = fract(this.flapU + (this.flapRate * dt) / fp);
+    // a plasma charge holds the stroke back a little (the phase runs on, slower: the cycle never jumps)
+    this.flapU = fract(this.flapU + (this.flapRate * (1 - clamp(this.hitch, 0, 0.9)) * dt) / fp);
     this.glideU = fract(this.glideU + dt / gp);
     this.airW = Math.min(1, this.airW + dt / c.handoff);
     this.setLoops(d, 1);
     const [bob, att] = this.loopBody(d);
-    this.place(d, this.pos.y + bob * this.airW, att * this.airW + (1 - this.airW) * this.outP + 0.6 * this.gamma * this.airW, this.bank, dt);
+    const aw = this.airEase;
+    this.place(d, this.pos.y + bob * aw, att * aw + (1 - aw) * this.outP + 0.6 * this.gamma * aw, this.bank, dt);
     // Space: land (descending first when high)
     if (d.intent.jump) {
       d.intent.jump = false;
@@ -367,14 +451,21 @@ export class FlightAction implements DragonAction {
     ];
   }
 
+  /** The loops' hand-in from the takeoff clip (0…1), eased so the cross-fade starts and ends without a kink. */
+  private get airEase(): number {
+    return smoothstep(0, 1, this.airW);
+  }
+
   private setLoops(d: DragonCharacter, w: number): void {
     const flap = this.meta(d, 'fly_flap')!;
     const glide = this.meta(d, 'fly_glide')!;
-    const fw = this.flapW * w * this.airW;
-    const gw = this.glideW * w * this.airW;
+    const fw = this.flapW * w * this.airEase;
+    const gw = this.glideW * w * this.airEase;
     d.layers.set('fly_flap', fw > 1e-4 ? fw : 0, this.flapU * (flap.period ?? 0.9), false, ORDER);
     d.layers.set('fly_glide', gw > 1e-4 ? gw : 0, this.glideU * (glide.period ?? 4), false, ORDER);
-    d.wings.liftScale = 1 - Math.min(1, fw + gw + this.clipW);
+    d.wings.liftScale = 1 - Math.min(1, fw + gw + this.clipW + this.fadeWeight);
+    d.wings.tuck = this.tuckW * w * this.airEase;
+    d.wings.tuckFold = this.cfg.tuckFold;
   }
 
   // ---- landing ------------------------------------------------------------------------------------------------------
@@ -400,8 +491,13 @@ export class FlightAction implements DragonAction {
     const g = d.world.groundAt(_p.x, _p.z, this.pos.y + 2, 60, _hit);
     this.ground = g ? g.point.y : this.groundBelow(d);
     this.clipOff = this.pos.y - (this.ground + m.height[0]);
+    // the descent's sink rate carries on into the clip and eases out (the clip's own approach starts near level)
+    this.landVOff = this.outVH - (m.height[1] - m.height[0]) * FPS;
     this.pitchOff = 0.6 * this.gamma;
   }
+
+  /** The vertical speed (m/s) the pelvis brought into the landing clip beyond the clip's own, eased out over landCarryTime. */
+  private landVOff = 0;
 
   private stepLanding(d: DragonCharacter, dt: number): void {
     const c = this.cfg;
@@ -420,7 +516,9 @@ export class FlightAction implements DragonAction {
     this.setLoops(d, 1 - this.clipW);
     const [bob, att] = this.loopBody(d);
     const w = smoothstep(0, 0.5, t);
-    const h = this.ground + sampleFlight(m.height, t) + this.clipOff * (1 - smoothstep(0, flare, t)) + bob * (1 - w);
+    const tc = Math.max(c.landCarryTime, 1e-3);
+    const h = this.ground + sampleFlight(m.height, t) + this.clipOff * (1 - smoothstep(0, flare, t)) + bob * (1 - w)
+      + this.landVOff * t * Math.exp(-t / tc);
     const pitch = lerp(att + this.pitchOff, sampleFlight(m.pitch, t), w);
     const dx = t > t0 ? this.landSpeed(m, t, flare) * (t - t0) : 0;
     const steer = 1 - smoothstep(0, flare, t);                     // small corrections until the flare, then committed
@@ -438,9 +536,20 @@ export class FlightAction implements DragonAction {
       this.fadeOut(this.clip!, 1, m.handoff ?? 0.35);
       d.gait.phase = 0;
       d.kin.speed = m.runSpeed ?? 6;
-      this.finishScripted(d);
+      // the ground motion takes the body back; the pelvis eases down onto it (stepRunout)
+      d.resetFeet();
+      d.mods.scripted = false;
+      d.climb.suspended = false;
+      d.planner.autoStep = true;
       d.kin.velocity.set(Math.sin(this.heading) * d.kin.speed, 0, Math.cos(this.heading) * d.kin.speed);
-      this.phase = 'idle';
+      this.runH = this.outH - (d.kin.pos.y + d.body.hipHeight);
+      this.runVH = this.outVH;
+      this.runP = this.outP;
+      this.runVP = this.outVP;
+      this.runRoll = this.bank;
+      this.runV = d.kin.speed;
+      this.phase = 'runout';
+      this.t = 0;
       this.clip = null;
       return;
     }
@@ -471,6 +580,42 @@ export class FlightAction implements DragonAction {
     if (!this.fading) this.phase = 'idle';
   }
 
+  /** Run-out state: the pelvis's offset over the ground's standing height (m) and speed, pitch, roll, ground speed. */
+  private runH = 0;
+  private runVH = 0;
+  private runP = 0;
+  private runVP = 0;
+  private runRoll = 0;
+  private runV = 0;
+
+  /**
+   * After a running landing: the pelvis, still the flight's (an exact override), eases from its touchdown height and
+   * speed to the running height over the ground (standing less runoutCrouch) and its pitch and roll to level, along a
+   * cubic that closes offset and speed together; then the springs take it over at rest. The speed he landed with
+   * bleeds off over runoutDecel s (held keys can keep it up, never cut it short).
+   */
+  private stepRunout(d: DragonCharacter, dt: number): void {
+    const c = this.cfg;
+    const T = Math.max(c.runoutTime, 1e-3);
+    const u = clamp(this.t / T, 0, 1);
+    const h00 = 2 * u * u * u - 3 * u * u + 1;
+    const h10 = u * u * u - 2 * u * u + u;
+    const ground = d.kin.pos.y + d.body.hipHeight - c.runoutCrouch * smoothstep(0, 1, u);
+    const o = d.body.override;
+    o.active = true;
+    o.exact = true;
+    o.snap = false;
+    o.height = ground + this.runH * h00 + this.runVH * T * h10;
+    o.pitch = this.runP * h00 + this.runVP * T * h10;
+    o.roll = this.runRoll * h00;
+    o.bob = smoothstep(0, 1, u);                                   // the running cycles' bob comes back in with the ground
+    d.intent.speed = Math.max(d.intent.speed, this.runV * (1 - smoothstep(0, c.runoutDecel, this.t)));
+    if (u >= 1) {
+      this.release(d);
+      this.phase = 'idle';
+    }
+  }
+
   // ---- shared -------------------------------------------------------------------------------------------------------
 
   /** Place the body: the pelvis at height h (world) with the pitch and roll, the origin at the path's (x, z). */
@@ -494,8 +639,9 @@ export class FlightAction implements DragonAction {
     o.active = true;
     o.exact = true;
     o.snap = false;
+    o.bob = 0;
     o.height = this.outH;
-    o.pitch = this.outP;
+    o.pitch = this.outP + this.recoilPitch(dt);
     o.roll = roll;
     const kin = d.kin;
     const dx = this.pos.x - kin.pos.x;
@@ -532,15 +678,21 @@ export class FlightAction implements DragonAction {
     d.body.override.exact = false;
     d.body.override.snap = false;
     d.body.override.roll = 0;
+    d.body.override.bob = 0;
     d.wings.liftScale = 1;
   }
 
-  private fadeOut(name: string, from: number, time = this.cfg.handoff): void {
+  private fadeOut(name: string, from: number, time = this.cfg.handoff, clipT = this.clipT): void {
     if (this.fading && this.fading !== name) this.fadingDone();
     this.fading = name;
     this.fadeW = from;
     this.fadeTime = time;
-    this.fadeClipT = this.clipT;
+    this.fadeClipT = clipT;
+  }
+
+  /** The fading clip's layer weight: its linear fade eased (smoothstep), so the clip under it fades in kink-free. */
+  private get fadeWeight(): number {
+    return this.fading ? smoothstep(0, 1, this.fadeW) : 0;
   }
 
   private fadeTime = 0.5;
@@ -562,8 +714,8 @@ export class FlightAction implements DragonAction {
       if (!this.airborne) d.wings.liftScale = 1;
       return;
     }
-    d.layers.set(this.fading, this.fadeW, this.fadeClipT, false, ORDER);
-    if (!this.airborne) d.wings.liftScale = 1 - this.fadeW;
+    d.layers.set(this.fading, this.fadeWeight, this.fadeClipT, false, ORDER);
+    if (!this.airborne) d.wings.liftScale = 1 - this.fadeWeight;
   }
 
   /** The highest ground under the body (m), from the hips to the muzzle. */

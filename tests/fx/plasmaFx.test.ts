@@ -42,6 +42,19 @@ describe('PlasmaFx', () => {
     expect(fx.decals).toBe(1);
     expect(shakes).toHaveLength(1);
   });
+  it('keeps a far impact readable: the flash grows with distance and the shake falls off gently', () => {
+    const near = scene();
+    near.fx.explode(V(0, 0, 10), V(0, 0, -1));
+    const far = scene();
+    far.camera.position.set(0, 0, -150);
+    far.fx.update(DT, far.camera, 1080);
+    far.fx.explode(V(0, 0, 10), V(0, 0, -1));
+    for (const s of [near, far]) for (let k = 0; k < 6; k++) s.fx.update(DT, s.camera, 1080);
+    const flashOf = (s: typeof near) => (s.fx.root.children.find((c) => (c as THREE.Sprite).isSprite && c.visible && c.scale.x > 1) as THREE.Sprite).scale.x;
+    // ~160 m away, the flash keeps ~3° of view instead of shrinking to a few pixels
+    expect(flashOf(far)).toBeGreaterThan(flashOf(near) * 1.8);
+    expect(far.shakes[0]).toBeGreaterThan(DEFAULT_TUNING.plasma.shake / 4.5);
+  });
   it('projects the scorch onto the hit mesh', () => {
     const { fx, camera } = scene();
     fx.fire({ from: V(1, 2, 5), dir: V(0, 0, 1) });
@@ -78,7 +91,7 @@ describe('PlasmaFx', () => {
     const camera = new THREE.PerspectiveCamera();
     const fx = new PlasmaFx({ world, cfg: DEFAULT_TUNING.plasma });
     fx.fire({ from: V(0, 5, 0), dir: V(0, 0.2, 1) });
-    for (let k = 0; k < 400 && fx.flying; k++) fx.update(DT, camera, 1080);
+    for (let k = 0; k < 900 && fx.flying; k++) fx.update(DT, camera, 1080);   // boltRange at boltSpeed: ~7 s
     expect(fx.flying).toBe(0);
     expect(fx.impacts).toBe(0);
     const lightsBefore = fx.root.children.filter((c) => (c as THREE.PointLight).isPointLight).length;

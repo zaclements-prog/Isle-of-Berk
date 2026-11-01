@@ -71,13 +71,21 @@ describe('tree damage', () => {
     expect(world.raycast(side.set(1, 1.2, 0), west, 2)).toBeNull();
     const onLog = world.groundAt(2.5, 0, 5, 10)!;
     expect(onLog.point.y).toBeGreaterThan(0.3);
-    // the crown has come down: the instance's up axis now lies near horizontal
+    // the crown broke off as it hit: the tree is gone, a log lies along its fall to the east, a stump at its foot
     const m = new THREE.Matrix4();
     const inst = props.treeInstances[0];
     inst.mesh.getMatrixAt(inst.k, m);
-    const up = new THREE.Vector3().setFromMatrixColumn(m, 1).normalize();
+    expect(new THREE.Vector3().setFromMatrixColumn(m, 1).length()).toBe(0);
+    const logs: THREE.Matrix4[] = [];
+    for (let k = 0; k < dmg.logs.count; k++) {
+      dmg.logs.getMatrixAt(k, m);
+      if (new THREE.Vector3().setFromMatrixColumn(m, 1).length() > 0) logs.push(m.clone());
+    }
+    expect(logs).toHaveLength(1);
+    const up = new THREE.Vector3().setFromMatrixColumn(logs[0], 1).normalize();
     expect(up.y).toBeLessThan(0.3);
     expect(up.x).toBeGreaterThan(0.9);
+    expect(dmg.stumps.count).toBe(1);
     // the scorched tree is darkened
     const c = new THREE.Color();
     props.treeInstances[1].mesh.getColorAt(props.treeInstances[1].k, c);
@@ -86,8 +94,12 @@ describe('tree damage', () => {
     for (let k = 0; k < 60 * 50; k++) dmg.update(1 / 60);
     expect(dmg.state(0)).toBe('stump');
     expect(dmg.stumps.count).toBe(1);
+    for (let k = 0; k < dmg.logs.count; k++) {
+      dmg.logs.getMatrixAt(k, m);
+      expect(new THREE.Vector3().setFromMatrixColumn(m, 1).length()).toBe(0); // the log has crumbled away
+    }
     expect(trees.has('tree:0')).toBe(false);
-    expect(dmg.census()).toEqual({ standing: 1, scorched: 1, falling: 0, felled: 0, stump: 1 });
+    expect(dmg.census()).toEqual({ standing: 1, scorched: 1, burning: 0, burnt: 0, falling: 0, felled: 0, stump: 1 });
     props.dispose();
     dmg.dispose();
   });

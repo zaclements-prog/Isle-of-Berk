@@ -3,6 +3,7 @@ import { geometryTriangles } from '../collision';
 import { longhouseParts, pierParts, type Structure } from '../damage/structures';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
+import type { Heightfield } from '../terrain/heightfield';
 
 /** A house from the bake: centre on its terrace, ground height, yaw (its long axis), length and width (m). */
 export interface HousePlacement { x: number; z: number; y: number; yaw: number; len: number; wid: number; terrace: number }
@@ -142,6 +143,105 @@ const _p = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const _c = new THREE.Color();
 const CHAR = new THREE.Color(0.18, 0.15, 0.13);
+
+/** A house's padded footprint as a 2-D box (centre, unit axes, half extents), for overlap tests. */
+function footprint(h: HousePlacement, margin: number) {
+  const c = Math.cos(h.yaw);
+  const sn = Math.sin(h.yaw);
+  return { x: h.x, z: h.z, ax: [c, -sn], az: [sn, c], hx: h.len / 2 + margin, hz: h.wid / 2 + margin };
+}
+
+/** Do two oriented boxes overlap (separating axes)? */
+function overlaps(a: ReturnType<typeof footprint>, b: ReturnType<typeof footprint>): boolean {
+  const d = [b.x - a.x, b.z - a.z];
+  const dot = (u: number[], v: number[]) => u[0] * v[0] + u[1] * v[1];
+  for (const axis of [a.ax, a.az, b.ax, b.az]) {
+    const ra = a.hx * Math.abs(dot(a.ax, axis)) + a.hz * Math.abs(dot(a.az, axis));
+    const rb = b.hx * Math.abs(dot(b.ax, axis)) + b.hz * Math.abs(dot(b.az, axis));
+    if (Math.abs(dot(d, axis)) > ra + rb) return false;
+  }
+  return true;
+}
+
+/** Each house's pad height: the ground under its centre, or the mean of those over a group whose walls overlap. */
+function sharedPadHeights(hf: Heightfield, houses: HousePlacement[]): number[] {
+  const parent = houses.map((_, k) => k);
+  const root = (k: number): number => (parent[k] === k ? k : (parent[k] = root(parent[k])));
+  const boxes = houses.map((h) => footprint(h, 0));
+  for (let a = 0; a < houses.length; a++) {
+    for (let b = a + 1; b < houses.length; b++) if (overlaps(boxes[a], boxes[b])) parent[root(b)] = root(a);
+  }
+  const sum = new Map<number, [number, number]>();
+  const ground = houses.map((h) => hf.heightAt(h.x, h.z));
+  ground.forEach((y, k) => {
+    const s = sum.get(root(k)) ?? [0, 0];
+    sum.set(root(k), [s[0] + y, s[1] + 1]);
+  });
+  return houses.map((_, k) => {
+    const [y, n] = sum.get(root(k))!;
+    return y / n;
+  });
+}
+
+/**
+ * Level a pad under each house before anything reads the ground (terrain, collision, grass, trees, water). The bake's
+ * house heights can sit metres off the eroded slope: houses half buried uphill and floating downhill, and wall debris
+ * spawned inside the hill fell through it. Each pad is flat at the ground under the house's centre over its footprint
+ * plus `margin`, then eases back to the slope over a skirt that widens with the cut or fill. Sets each house's `y` to
+ * its pad. Returns the largest cut or fill (m), for the log.
+ */
+export function levelHousePads(hf: Heightfield, houses: HousePlacement[], margin = 0.8): number {
+  // two passes so neighbours' skirts never bend each other's pads: first each sample's strongest pad (1…2 on a
+  // footprint), then one blend
+  const weight = new Map<number, number>();
+  const target = new Map<number, number>();
+  // houses whose walls overlap (the bake can crowd a steep terrace) share one pad at their mean ground height: two
+  // pads can't both hold the same ground (houses merely close split the margin between them, below)
+  const padY = sharedPadHeights(hf, houses);
+  let worst = 0;
+  for (const [n, h] of houses.entries()) {
+    const y = padY[n];
+    const c = Math.cos(h.yaw);
+    const sn = Math.sin(h.yaw);
+    const hx = h.len / 2 + margin;
+    const hz = h.wid / 2 + margin;
+    let drop = 0;
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const lx = sx * hx;
+      const lz = sz * hz;
+      drop = Math.max(drop, Math.abs(hf.heightAt(h.x + lx * c + lz * sn, h.z - lx * sn + lz * c) - y));
+    }
+    worst = Math.max(worst, drop);
+    const skirt = Math.max(4, drop * 3); // banks under about 45° on terrace ground
+    const reach = Math.hypot(hx, hz) + skirt;
+    const i0 = Math.max(0, Math.floor((h.x - reach - hf.origin) / hf.spacing));
+    const i1 = Math.min(hf.size - 1, Math.ceil((h.x + reach - hf.origin) / hf.spacing));
+    const j0 = Math.max(0, Math.floor((h.z - reach - hf.origin) / hf.spacing));
+    const j1 = Math.min(hf.size - 1, Math.ceil((h.z + reach - hf.origin) / hf.spacing));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        // the sample in the house's frame (its local x runs along the yaw, as the instance matrix turns it)
+        const dx = hf.coord(i) - h.x;
+        const dz = hf.coord(j) - h.z;
+        const lx = dx * c - dz * sn;
+        const lz = dx * sn + dz * c;
+        const out = Math.hypot(Math.max(0, Math.abs(lx) - hx), Math.max(0, Math.abs(lz) - hz)); // 0 on the pad
+        if (out >= skirt) continue;
+        // on a footprint, rank by how central the sample is (1…2), so where two padded footprints overlap each house
+        // keeps the ground under its own walls and the step between them falls on the midline
+        const w = out > 0 ? 1 - THREE.MathUtils.smoothstep(out, 0, skirt) : 2 - Math.max(Math.abs(lx) / hx, Math.abs(lz) / hz);
+        const k = j * hf.size + i;
+        if (w > (weight.get(k) ?? 0)) {
+          weight.set(k, w);
+          target.set(k, y);
+        }
+      }
+    }
+    h.y = y;
+  }
+  for (const [k, w] of weight) hf.heights[k] += (target.get(k)! - hf.heights[k]) * Math.min(1, w);
+  return worst;
+}
 
 /**
  * The village and its landmarks: longhouses on the terraces (two roof colours, instanced), the Great Hall on its

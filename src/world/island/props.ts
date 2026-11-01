@@ -141,6 +141,16 @@ export interface Props {
   trunks: { key: string; index: number; positions: Float32Array }[];
   /** Each tree's instance (by tree index): its mesh and slot, so damage can scorch, fell or remove it. */
   treeInstances: { mesh: THREE.InstancedMesh; k: number }[];
+  /**
+   * Each boulder (placement order of its collision hull): its instance, where it stands and its hull's vertex range
+   * in the `boulders_collision` triangles (first vertex, vertex count), so a crater can re-seat it.
+   */
+  boulders: { mesh: THREE.InstancedMesh; k: number; x: number; z: number; y: number; scale: number; first: number; count: number }[];
+  /**
+   * Re-seat the boulders standing in a world rectangle on the ground as it is now (a crater dug or raised it).
+   * Returns the ones that moved with how far (dy, m), so the caller can move their collision hulls.
+   */
+  reseatBoulders(rect: readonly [number, number, number, number], ground: GroundFn): { boulder: Props['boulders'][number]; dy: number }[];
   /** Advance the trees' wind sway. */
   update(dt: number): void;
   dispose(): void;
@@ -184,14 +194,14 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     vec2 side = d - hd * along;
     float sd = length(side);
     float r = uForceWake.w;
-    float lon = along < 0.0 ? along / 2.5 : along;
+    float lon = along < 0.0 ? along / 5.0 : along; // it lingers well behind him
     float crown = base.y + 6.0 * length(instanceMatrix[1].xyz);
     float f = uForceWakeDir.z * (1.0 - smoothstep(r * 0.3, r, length(vec2(lon, sd)))) * (1.0 - smoothstep(3.0, 11.0, abs(uForceWake.y - crown)));
     float shiver = 0.8 + 0.2 * sin(uTreeTime * 8.0 + ph * 5.0);
     push += ((sd > 1e-3 ? side / sd : vec2(0.0)) * 0.9 + hd * 0.7) * f * shiver;
   }
   float pl = length(push);
-  if (pl > 1.6) push *= 1.6 / pl;
+  if (pl > 2.6) push *= 2.6 / pl;
   // world push into the instance's own (yawed, scaled) frame, bending from the base; the crown dips as it leans
   vec3 lean3 = inverse(mat3(instanceMatrix)) * vec3(push.x, 0.0, push.y) * bendK;
   transformed += lean3;
@@ -203,6 +213,8 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   const trunkParts: THREE.BufferGeometry[] = [];
   const treeInstances: Props['treeInstances'] = [];
   const rockParts: THREE.BufferGeometry[] = [];
+  const boulders: Props['boulders'] = [];
+  const BOULDER_SINK = 0.12;
   const place = (list: readonly Placement[], geoOf: (v: number) => THREE.BufferGeometry, variants: number, mat: THREE.Material, name: string,
     sink: number, squashY: number, hull: (p: Placement, y: number, index: number) => THREE.BufferGeometry | null) => {
     for (let v = 0; v < variants; v++) {
@@ -226,6 +238,11 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
           treeInstances[idx[k]] = { mesh, k };
         }
         const h = hull(p, y, idx[k]);
+        if (h && name === 'boulder') {
+          const count = h.index ? h.index.count : h.attributes.position.count;
+          const last = boulders[boulders.length - 1];
+          boulders.push({ mesh, k, x: p[0], z: p[2], y, scale: p[3], first: last ? last.first + last.count : 0, count });
+        }
         if (h) (name === 'pine' ? trunkParts : rockParts).push(h);
       });
       mesh.instanceMatrix.needsUpdate = true;
@@ -245,7 +262,7 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     trunks.push({ key: `tree:${index}`, index, positions: geometryTriangles(g) });
     return g;
   });
-  place(rocks, boulderGeometry, 4, rockMat, 'boulder', 0.12, 1, (p, y) => {
+  place(rocks, boulderGeometry, 4, rockMat, 'boulder', BOULDER_SINK, 1, (p, y) => {
     const g = boulderGeometry(p[4], 1);
     _m.compose(_p.set(p[0], y, p[2]), _q.setFromAxisAngle(UP, p[5]), _s.set(p[3], p[3], p[3]));
     g.applyMatrix4(_m);
@@ -268,6 +285,28 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     collision,
     trunks,
     treeInstances,
+    boulders,
+    reseatBoulders(rect, ground) {
+      const moved: { boulder: Props['boulders'][number]; dy: number }[] = [];
+      const touched = new Set<THREE.InstancedMesh>();
+      for (const b of boulders) {
+        if (b.x < rect[0] || b.x > rect[2] || b.z < rect[1] || b.z > rect[3]) continue;
+        const y = ground(b.x, b.z) - BOULDER_SINK * b.scale;
+        const dy = y - b.y;
+        if (Math.abs(dy) < 1e-4) continue;
+        b.mesh.getMatrixAt(b.k, _m);
+        _m.elements[13] += dy;
+        b.mesh.setMatrixAt(b.k, _m);
+        b.y = y;
+        touched.add(b.mesh);
+        moved.push({ boulder: b, dy });
+      }
+      for (const mesh of touched) {
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.computeBoundingSphere();
+      }
+      return moved;
+    },
     update(dt: number) {
       sway.uTreeTime.value += dt;
     },

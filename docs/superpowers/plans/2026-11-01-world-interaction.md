@@ -109,11 +109,75 @@ GPU with `npm run dev`, then open the game page.
   `DEFAULT_STRUCTURE` and `DEFAULT_DEBRIS`.
 
 **Known gaps and next steps:**
-- Boulders and props on a crater's rim are not re-seated.
-- Debris does not collide with other moving debris, only with settled debris.
-- Structures show damage only as a darker tint before they collapse; nothing comes loose part by part yet.
+- Boulders and props on a crater's rim are not re-seated (trees are: a felled tree falls from the dug ground).
 - No fire spread (`burn` event) and no embers or smoke trails.
-- The per-blast budgets (crater < 8 ms, felling a tree < 1 ms) are only checked loosely in CI; measure them in
-  the browser.
-- Headless swiftshader sometimes returns black frames. This predates this work, so retake those frames in capture
-  scripts.
+- Opened structures are drawn as their box parts: the gable infill, the crossed gable boards and the door of the
+  longhouse mesh go when the first real damage swaps the mesh out.
+- Done 2026-11-01 (wave 2, structures): buildings break part by part (per-part hit points, lean, char, supports,
+  per-wall collision), moving debris collides with moving debris, and debris splashes on the sea and the pond (see
+  `damage/structures.ts`, `damage/debris.ts`, `damage/splash.ts`).
+
+## GPU review and fixes (2026-11-01)
+
+Reviewed on an Apple M5 Max (ANGLE Metal) with the dev server, driving the systems directly (a scripted force
+source hovering over the sea and the pond, a free camera, stepped captures).
+
+**Black frames: a capture-timing artifact, not a render bug.** About 14,000 frames on the GPU (High and Low, about
+100 blasts, cameras inside houses, under the terrain and water) had none. The canvas is created with
+`preserveDrawingBuffer: false`: read in the same task as the render it holds the frame, read one task later (a
+paused, stepped capture that screenshots or calls `toDataURL` afterwards) it is cleared, all zero. A slow software
+renderer only widens that window. Capture with **`berk.capture(type?, quality?)`**, which renders and reads back in
+one task.
+
+| Found | Fix |
+|---|---|
+| Power-3 blasts took 7–11 ms (budget 8): rebuilding each touched 64 m terrain tile's BVH cost ~1.2 ms, four at a tile corner | `CollisionWorld.refitLayer`: craters move the tile's vertices in place and refit its BVH (0.15 ms vs 1.4–2.2 ms a tile). Power 3 now 3.0 ms median, 6.0 ms max at a tile corner; 1.2 ms median elsewhere |
+| 7 of 37 houses buried 1.5–8.2 m on their uphill side, 10 floating up to 6.6 m downhill; their wall debris spawned inside the hill and 16 of 202 pieces ended under the ground (6 fell out of the world) | `levelHousePads` at load: each house gets a flat pad at the ground under its centre, easing back to the slope over a skirt that widens with the cut; houses whose walls overlap share a pad; close neighbours split the margin. Worst now 0.2 m buried (the intended sink), 0.8 m at one corner |
+| Debris could tunnel or start inside the ground | `Debris` takes the ground: no corner ends below it (a frictional contact, so pieces still come to rest). 240 pieces from all 38 structures: 0 under the ground |
+| Pier planks sank to the seabed and vanished | `Debris` takes the water: wood floats half under, with water drag, and is kept out of the collision |
+| The downwash spray on the sea and pond was a regular checkerboard (`sin x · sin z`) | Two octaves of rotated value noise streaming outward, as a flow map (two phases crossfaded, so it never shears) |
+| The wake barely moved the trees (~1% of pixels, ~4° at cruise) | `wakeRadius` 9 → 12, `wakeStrength` 1 → 1.8, the bend lingers twice as far behind, crown push cap 1.6 → 2.6 m (~10–12° at cruise) |
+| Felled trees lay as whole green trees | The crown breaks off on impact: a charred log lies along the fall and a splintered stump stays; the log crumbles after `lie` |
+| Stump (and log) vertex colours were authored as sRGB but read as linear, so pale | Converted to linear |
+
+**Still to judge in play:** the wake's lean in motion; the pads' banks on the steepest terraces; whether a power-1
+blast (fells within 4.5 m, crater radius 3.3 m) feels strong enough. The plan's grass test spot (200, 100) is forest
+floor; use the meadow at (30, 30)–(40, 60).
+
+## Wave 2 (2026-11-01, branch `wave2`)
+
+Built on `look-faceted` (the faceted Toothless and the golden-hour grade), checked on the GPU (M5 Max, ANGLE Metal).
+658 tests green.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Airborne plasma | `actions/plasma.ts`, `fx/plasmaFx.ts`, `camera/orbitCamera.ts`, `toothless.ts` | Fires in every flight state and mid-jump. The bolt flies along the aim ray at `boltSpeed` plus the body's speed along it; aim error 0.2–0.6 m at 50–180 m; range 320 m. An air charge pose (face plus half the rear on the flight clips, the beat held), a recoil pitch-up. Fires only within 75° of the flight path (holds up to 0.6 s for the camera to turn him). Flight camera lifted 3 m; a reticle ring. Far hits keep a ~3° flash and a sqrt-falloff shake. |
+| Buildings piece by piece | `damage/structures.ts` | Per-part hit points, leaning/sagging/charring before a part breaks, per-wall collision (openings), supports (roofs on walls, planks on posts), collapse below 30% integrity. Rubble resting on a part or a house wakes when it goes. |
+| Debris on debris | `damage/debris.ts` | Spatial-hash broad phase, sampled box contacts, sequential impulses; stacks settle and sleep. Blasts toss settled rubble. Hall collapse: 0.7 ms median per frame. |
+| Splashes | `damage/splash.ts`, `forceField.ts` (`uForceRipple*`), `island/ocean.ts` | Spray, column and mist by impact energy; ripple rings and foam drawn by the water shader. |
+| Fire | `damage/fire.ts`, `damage/fireFx.ts`, `trees.ts` (burning, burnt), `events.ts` (`burn`) | 2 m grid; ignites from blasts, scorched trees and felled logs; spreads downwind and with the downwash, decays by distance (~25 m), burns out in under 45 s; caps 180 cells / 24 trees. Faceted flames, ember beds, embers, faceted smoke; downwash fans flames and smoke. ~0.1 ms update, ~0.75 ms render at peak. |
+| Crater rims | `island/props.ts`, `island/island.ts` (`reseatBoulders`) | Boulders re-seat on the dug ground, their collision hulls refit with them. |
+
+**Known gaps:**
+- A house swapped for its parts loses its gable infill, boards and door.
+- The hall chews slowly (7 spread blasts to collapse).
+- Floating wood that falls asleep freezes on the water.
+- Fire doesn't set buildings alight.
+- `berk.world.stats()` doesn't show fire (`island.fire.stats()` does).
+- Two older wall-clock budget tests (`island.test.ts`, `collisionLayers.test.ts`) flake under heavy CPU load.
+
+## Wave 3 (2026-11-01, branch `wave3`)
+
+Play-test feedback round: dark terrain, quick/charged fire, ground clipping, animation chaining.
+
+| Item | Branch / commit | Notes |
+|---|---|---|
+| Navy-black terrain shade | `d8c34cb` | Shade-gated neutral warm fill, reflection cut in shade, AO floor 45%, wet 74% |
+| Tap / hold-charge plasma | `wave3-charge` `e99c8a5` | Tap <0.25 s = power 0.6; hold 2 s auto-fires power 2.6; early release fires scaled; plates light tail→head |
+| Ground clipping | `wave3-clip` `44d3b68` | `CollisionWorld.version` re-seats planted paws after edits; stale landing prediction ignored; landing seats from ground under body; pelvis/head floors |
+| Transitions | `wave3-anim` `efa64aa`, `aa9b3b5` | Running takeoff wing cross-fade, jump push, landing carry, new `runout` phase, Catmull-Rom clip sampling, jump buffering |
+
+Known gaps: tail tip can dip 0.2–0.4 m into steep slopes (secondary.ts ground avoidance); a full charge
+on the ground puts him inside his own blast; he stands still while charging on the ground and sinks 2–3 m
+while charging in flight; plates clip to white past ~1.6 s of charge; HUD text doesn't mention hold-to-charge;
+standing-jump launch steps 0→1.5 m/s in one step; Space during the takeoff clip is ignored.

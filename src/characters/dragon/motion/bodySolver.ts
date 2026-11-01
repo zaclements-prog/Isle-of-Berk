@@ -76,10 +76,12 @@ export class BodySolver {
    * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height and
    * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
    * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
-   * speed, so a landing's fall speed becomes its absorb. With `snap` (M6 jump), only the height jumps to its target,
+   * speed, so a landing's fall speed becomes its absorb; the locomotion bob is left out, but for `bob` (0…1) of it
+   * (the action carries the pelvis as it found it, bob and all, and may hand the bob back in as it lets go). With
+   * `snap`, only the height jumps to its target,
    * with no speed: the pitch still springs. `roll` (rad, + lifts the left side) is the target roll: a flight's bank.
    */
-  readonly override = { active: false, height: 0, pitch: 0, roll: 0, exact: false, snap: false };
+  readonly override = { active: false, height: 0, pitch: 0, roll: 0, exact: false, snap: false, bob: 0 };
   /**
    * Library-pose placement (M6): the height (world, pelvis head) and pitch targets blend toward these by `weight`
    * (roll levels out with it). Scripted `override`s still replace everything.
@@ -94,6 +96,8 @@ export class BodySolver {
   bobOffset = 0;
   /** How much lower (m) the authored cycles carry the shoulders (a chest-low prowl): through the pitch spring. */
   authoredCrouch = 0;
+  /** 0–1: how rough the ground ahead reads against the trot threshold (DragonCharacter): the uphill lead fades over it. */
+  rough = 0;
   /**
    * How far (m) a planted paw of each pair (hind, front) ended under its contact last step because its leg could not
    * fold any further (a joint at its limit as the body comes down onto it): the body rises by that at once, the
@@ -167,10 +171,13 @@ export class BodySolver {
    * `climb`: climbing, the body rides on the face under its joints (see ClimbRide), pitches over the joints' real
    * spread, and its pelvis stands hipHeight along the climb's up axis from the face rather than straight above it (on
    * a 60° face, straight above leaves the body half its height from the surface).
+   * `floor`: the lowest the pelvis may go (m, world): whatever the springs or a scripted placement ask, the pelvis stops
+   * there and loses any downward speed (DragonCharacter keeps the trunk out of the ground with it). `pitchFloor`: the
+   * lowest pitch (rad, + nose up), likewise (DragonCharacter keeps the head out of the ground with it).
    */
   update(
     kin: BodyKinState, sup: SupportSource, gait: GaitEngine, shortfall: readonly number[], maxTiltDeg: number, dt: number,
-    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide,
+    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide, floor = -Infinity, pitchFloor = -Infinity,
   ): BodyPose {
     const t = this.t;
     // ride on the terrain under the hips/shoulders: on a slope the supports' average is biased by the stance (a
@@ -237,8 +244,22 @@ export class BodySolver {
       this.pitch.v = (pitchT - this.pitch.x) / dt;
       this.pitch.x = pitchT;
     } else {
+      // running up a smooth rise (not climbing, not over rough ground: steps are the paws' business), lead the spring
+      // by the ground's climb rate under him (body.heightLead), so a gallop up a hill doesn't drag his chest through it
+      const grade = Number.isFinite(groundFront) && Number.isFinite(groundHind) ? (groundFront - groundHind) / span : 0;
+      const rising = clamp((grade - 0.1) / 0.2, 0, 1) * (1 - cw) * (1 - clamp(this.rough, 0, 1));
+      this.height.x += t.heightLead * kin.speed * grade * rising * dt;
       stepSpring(this.height, heightT, t.heightOmega, 1, dt);
       stepSpring(this.pitch, pitchT, tiltOmega, 1, dt);
+      // and there, however it lags, never far under its target nor nose-down of it into the slope ahead
+      if (rising > 0.5 && this.height.x < heightT - t.maxSag) {
+        this.height.x = heightT - t.maxSag;
+        this.height.v = Math.max(this.height.v, 0);
+      }
+      if (rising > 0.5 && this.pitch.x < pitchT - deg(t.maxPitchLagDeg)) {
+        this.pitch.x = pitchT - deg(t.maxPitchLagDeg);
+        this.pitch.v = Math.max(this.pitch.v, 0);
+      }
       const [ph0, pf0] = this.pinch;
       if (ph0 > 0 || pf0 > 0) {
         const k = t.pinchRaise;
@@ -248,6 +269,14 @@ export class BodySolver {
         this.pitch.x += dp;
         if (dp > 0) this.pitch.v = Math.max(this.pitch.v, 0);
       }
+    }
+    if (this.height.x < floor) {
+      this.height.x = floor;
+      this.height.v = Math.max(this.height.v, 0);
+    }
+    if (this.pitch.x < pitchFloor) {
+      this.pitch.x = pitchFloor;
+      this.pitch.v = Math.max(this.pitch.v, 0);
     }
     stepSpring(this.roll, rollT, tiltOmega, 1, dt);
 
@@ -271,6 +300,15 @@ export class BodySolver {
   /** Landing absorb: push the height spring down by dv (m/s). */
   impulse(dv: number): void {
     this.height.v -= dv;
+  }
+
+  /** The pelvis height's and the pitch's current speeds (m/s, rad/s): an action taking the body over carries them. */
+  get heightSpeed(): number {
+    return this.height.v;
+  }
+
+  get pitchSpeed(): number {
+    return this.pitch.v;
   }
 
   /** Write the pelvis transform and the spine bends as absolute locals (call right after skeleton.resetToBind()). */
@@ -298,6 +336,9 @@ export class BodySolver {
     rotY(this.pelvisOffset, heading, p.pelvisPos).add(pos);
     p.pelvisPos.x += up.x * this.hipHeight;
     p.pelvisPos.z += up.z * this.hipHeight;
-    p.pelvisPos.y = p.height + this.bobOffset * up.y;
+    // an exact override places the pelvis itself (a flight, a jump's arc): the cycles' bob, fading out under it, is
+    // already in the height it carried over, and adding it again would bounce the pelvis as the cycles let go
+    const o = this.override;
+    p.pelvisPos.y = p.height + (o.active && o.exact ? o.bob : 1) * this.bobOffset * up.y;
   }
 }

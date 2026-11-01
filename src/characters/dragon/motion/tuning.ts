@@ -54,6 +54,14 @@ export interface MotionTuning {
     proxySkin: number;
     /** 0–1: ride on the paws' supports (0) or the terrain under the hips and shoulders (1); never below the terrain. */
     terrainFollow: number;
+    /**
+     * Rising ground at speed: the height spring alone lags 2v/ω behind a ramp (0.6 m galloping up a 26° slope, his chest
+     * in the hill). heightLead (0–1) feeds the terrain's climb rate under him forward into it; however it lags, the body
+     * never sags more than maxSag (m) below its target height, nor pitches more than maxPitchLagDeg nose-down of it.
+     */
+    heightLead: number;
+    maxSag: number;
+    maxPitchLagDeg: number;
     /** Spacing (m) of the three terrain probes along his heading under the hips and shoulders (stairs read as ramps). */
     terrainSpan: number;
     /** Share of a leg's reach a swing may land at (from the joint at touchdown) before the body lowers for it. */
@@ -194,7 +202,8 @@ export interface MotionTuning {
    * slopes are not rough). From roughTrot m he is held to trotCap m/s, and for roughHold s after the last rough
    * reading: he trots over rough ground rather than
    * gallop onto footholds his legs cannot keep. (One level only: a plane fit also reads a ramp's foot or a step's
-   * edge as rough, which a trot takes in its stride.)
+   * edge as rough, which a trot takes in its stride.) The fit is a plane across his path and a curve along it: a hill's
+   * rise and crest aren't rough, and he gallops up them.
    */
   rough: { roughAhead: number[]; roughLead: number; roughSpan: number; roughTrot: number; trotCap: number; roughHold: number };
   loco: {
@@ -228,6 +237,16 @@ export interface MotionTuning {
     rearExtent: number; clearance: number;
     /** Speed (m/s) a landing keeps when no direction is held. */
     landCarry: number;
+    /**
+     * Transitions: the push (s) over which the pelvis rises from wherever the crouch left it onto the arc (its height
+     * and speed carried, no snap); the landing absorb depth per m/s of impact (m·s/m), clamped to [absorbMin,
+     * absorbMax] m, sunk at the body's height spring (the absorb carries landImpulse m/s at least); a Space press kept
+     * for bufferTime s while the jump is busy (landing, recovering, cooling down) and taken as soon as it can be, and
+     * from rejumpAfter s into a landing a new crouch may start straight from the landing pose.
+     */
+    pushTime: number; absorbPerSpeed: number; absorbMin: number; absorbMax: number; bufferTime: number; rejumpAfter: number;
+    /** The tuck holds the legs until the body is within reachExtra m of its landing height (or releaseTime s out). */
+    reachExtra: number;
   };
   /**
    * Flight (Phase 2): the camera-steered path and the clip hand-offs. Speeds m/s, angles deg, rates deg/s, times s,
@@ -236,8 +255,17 @@ export interface MotionTuning {
   flight: {
     /** A Space press at or above this speed (m/s) is a running takeoff; slower, the jump. */
     runTakeoffSpeed: number;
-    /** Level cruise speed flapping, the glide's best speed, the slowest he flies (below it he noses down), the top. */
+    /**
+     * Level cruise speed flapping, the glide's best speed, the slowest he flies (below it he noses down), and the top
+     * speed with the wings out: above it (after a dive) drag pulls him back toward it rather than a hard cap.
+     */
     flapSpeed: number; glideSpeed: number; minSpeed: number; maxSpeed: number;
+    /**
+     * The tuck (Shift held in the air): the wings sweep back half folded (tuckFold) over tuckTime s, drag falls to
+     * tuckDrag of the glide's, the path may dive to tuckDiveDeg and speed build to tuckMaxSpeed. Released, the wings
+     * open again and the speed it built carries him on, or up: pulling out of a dive trades it for height.
+     */
+    tuckFold: number; tuckTime: number; tuckDrag: number; tuckDiveDeg: number; tuckMaxSpeed: number;
     /** Flapping thrust (m/s²) at rest air; drag sets the level cruise at flapSpeed. brakeDrag: extra drag (1/s) on S. */
     flapThrust: number; brakeDrag: number;
     /** The glide's sink: its path angle never rises above −glideSinkDeg unless it trades speed above glideSpeed. */
@@ -255,6 +283,11 @@ export interface MotionTuning {
     /** A landing is a running one at or above this speed (m/s); its clip starts no higher than maxLandHeight above
      *  the ground, after a descent at descendDeg. The flight's body roll / pitch blend out over settle (s). */
     runLandSpeed: number; maxLandHeight: number; descendDeg: number; settle: number;
+    /** How long (s, the time constant) the descent's sink rate takes to ease out into a landing clip's own approach. */
+    landCarryTime: number;
+    /** After a running landing: the pelvis eases onto the ground's running height (standing less runoutCrouch m)
+     *  over runoutTime s, and the landing speed bleeds off over runoutDecel s. */
+    runoutTime: number; runoutCrouch: number; runoutDecel: number;
   };
   /** The plasma blast (M6, spec §6.13): deg, s, m/s, m. recoilDrop: suspension dip (m/s); recoilKick: head (rad/s). */
   plasma: {
@@ -263,6 +296,24 @@ export interface MotionTuning {
     boltSpeed: number; boltRadius: number; boltRange: number; shake: number; shakeTime: number;
     /** A blast's power (1 = the standard blast: it scales every world effect) and its radius (m). */
     blastPower: number; blastRadius: number;
+    /**
+     * On the wing: the forward cone (deg about his flight path) he fires into, how long (s) a charge holds for an aim
+     * outside it, the head's spring speed-up, the flap beat's held-back share, the neck's share of plasma_rear, the
+     * release's nose-up (deg) and speed lost (m/s), and the share of the body's speed along the aim ray the bolt keeps.
+     * boltRange (m) is also the aim ray's reach: a shot from 60 m up at a shallow angle still finds the ground.
+     */
+    airConeDeg: number; airHoldTime: number; airSnap: number; airHitch: number; airRear: number;
+    airRecoilDeg: number; airRecoilSpeed: number; inherit: number;
+    /**
+     * Quick fire vs long fire (actions/plasma.ts, PlasmaAction): a press released within tapTime (s) is a quick shot
+     * of tapPower; held on, the charge builds over fullTime (s, from the press) to fullPower and fires itself there.
+     * Released between the two, it fires at once with the power of the charge so far (chargePower). `cooldown` is the
+     * quick shot's; a full charge's is fullCooldown (between, by the charge). The dorsal plates glow tapGlow on a quick
+     * shot and climb to fullGlow over a long charge, flickering in its last flickerFrom share. A press up to
+     * pressBuffer (s) before he is ready is kept and fires when he is.
+     */
+    tapTime: number; tapPower: number; fullTime: number; fullPower: number; fullCooldown: number;
+    tapGlow: number; fullGlow: number; flickerFrom: number; pressBuffer: number;
   };
   /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
   attention: {
@@ -278,6 +329,8 @@ export interface MotionTuning {
     climbPitchOmega: number;
     /** Flying: extra distance (m) the camera backs off, and its spring (rad/s). */
     flightExtra: number; flightOmega: number;
+    /** Flying: how far (m) the view centre rises off him along the camera's up, so the aim is not on his back. */
+    flightLift: number;
   };
 }
 
@@ -299,6 +352,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
     leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1, pinchRaise: 1,
+    heightLead: 0, maxSag: 99, maxPitchLagDeg: 999,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
     crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
@@ -329,7 +383,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   wings: { omega: 8, climbFlare: 0.8 },
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
-  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2, roughHold: 2 },
+  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.1, trotCap: 3.2, roughHold: 0.75 },
   loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
     strainLo: 0.93, strainHi: 0.99, fallTime: 0.08, crouch: [0.08, 0.08, 0] },
   face: {
@@ -347,21 +401,27 @@ export const DEFAULT_TUNING: MotionTuning = {
     crouchTime: 0.12, apex: 2, gravity: 9.81, minForward: 1.5, wallMargin: 0.3, maxFlight: 2.5,
     tuckAt: 0.3, releaseTime: 0.28, landLead: 0.3, frontLag: 0.02, hindLag: 0.1, minLift: 0.25,
     landImpulse: 1.2, recoverHold: 0.2, recoverTime: 0.35, cooldown: 0.3, rearExtent: 1.1, clearance: 0.1, landCarry: 0.8,
+    pushTime: 0.15, absorbPerSpeed: 0.018, absorbMin: 0.05, absorbMax: 0.24, bufferTime: 0.25, rejumpAfter: 0.15,
+    reachExtra: 0.5,
   },
   flight: {
-    runTakeoffSpeed: 6.5, flapSpeed: 12, glideSpeed: 15, minSpeed: 7, maxSpeed: 26,
+    runTakeoffSpeed: 6.5, flapSpeed: 18, glideSpeed: 18, minSpeed: 7, maxSpeed: 30,
+    tuckFold: 0.55, tuckTime: 0.35, tuckDrag: 0.2, tuckDiveDeg: 70, tuckMaxSpeed: 55,
     flapThrust: 6, brakeDrag: 0.6, glideSinkDeg: 4,
     neutralPitchDeg: 18, pitchGain: 1.2, climbDeg: 28, diveDeg: 40,
     pathOmega: 2.5, headingGain: 1.6, maxTurnRateDeg: 70, maxBankDeg: 40, bankOmega: 4,
     minClearance: 3, clearLookahead: 1.2,
     handoff: 0.5, flapToGlide: 0.4, glideToFlap: 0.3, flapEntryPhase: 0.74, flapStopPhase: 0.26,
     runBlend: 0.45, runOffsetTime: 0.6,
-    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4,
+    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4, landCarryTime: 0.2, runoutTime: 0.45, runoutCrouch: 0.1, runoutDecel: 0.9,
   },
   plasma: {
-    turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
+    turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.35,
     recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
-    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
+    boltSpeed: 45, boltRadius: 0.12, boltRange: 320, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
+    airConeDeg: 75, airHoldTime: 0.6, airSnap: 2.5, airHitch: 0.6, airRear: 0.5, airRecoilDeg: 6, airRecoilSpeed: 1.5, inherit: 1,
+    tapTime: 0.25, tapPower: 0.6, fullTime: 2, fullPower: 2.6, fullCooldown: 1.4,
+    tapGlow: 0.45, fullGlow: 2.6, flickerFrom: 0.7, pressBuffer: 0.15,
   },
   attention: {
     maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,
@@ -371,7 +431,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,
     wheelScale: 0.0012, followOmega: 8, lookAhead: 0.25, recentreDelay: 2, recentreOmega: 1.5, climbPitchDeg: 15,
     radius: 0.3, easeOutOmega: 2, fadeNear: 0.5, fadeFar: 1.2, chestHeight: 1.25, climbPitchOmega: 3,
-    flightExtra: 7, flightOmega: 1.5,
+    flightExtra: 7, flightOmega: 1.5, flightLift: 3,
   },
 };
 

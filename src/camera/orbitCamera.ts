@@ -29,6 +29,7 @@ const _goal = new THREE.Vector3();
 const _shake = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _want = new THREE.Vector3();
+const _up = new THREE.Vector3();
 
 /**
  * Third-person orbit camera (spec §6.15):
@@ -99,6 +100,10 @@ export class OrbitCamera {
 
     const pitch = clamp(this.pitch + this.climbPitch.x, deg(t.minPitchDeg), deg(t.maxPitchDeg));
     _dir.set(-Math.sin(this.yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(this.yaw) * Math.cos(pitch));
+    // flying, the view centre (the aim) rises off him along the camera's up: he sits low in the frame and the reticle
+    // looks past him at what he'll hit, not at his back
+    const lift = t.flightLift * (t.flightExtra > 0 ? this.flightBack.x / t.flightExtra : 0);
+    if (lift > 1e-4) this.target.add(_up.set(Math.sin(this.yaw) * Math.sin(pitch), Math.cos(pitch), Math.cos(this.yaw) * Math.sin(pitch)).multiplyScalar(lift));
     _want.copy(this.target).addScaledVector(_dir, distance);
     const free = this.world.sphereCast(this.target, _want, t.radius) * distance;
     if (free < this.dist.x) {

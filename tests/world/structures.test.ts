@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { CollisionWorld } from '../../src/world/collision';
-import { Debris } from '../../src/world/damage/debris';
+import { DEFAULT_DEBRIS, Debris } from '../../src/world/damage/debris';
 import { StructureDamage, longhouseParts, type Structure } from '../../src/world/damage/structures';
 import { WorldEvents } from '../../src/world/events';
 import { buildBerk, type BerkSites } from '../../src/world/island/berk';
@@ -44,6 +44,36 @@ describe('debris', () => {
     d.dispose();
   });
 
+  it('climbs out of the ground it spawned inside, and rests on top', () => {
+    const { world, set } = flatWorld();
+    const d = new Debris(world, set, DEFAULT_DEBRIS, { ground: () => 0 });
+    const p = d.spawn(new THREE.Vector3(2, -1.2, 0), new THREE.Quaternion(), new THREE.Vector3(1.5, 0.2, 1),
+      new THREE.Color(), new THREE.Vector3(0, -2, 0), new THREE.Vector3());
+    for (let t = 0; t < 6 && !p.asleep; t += 1 / 60) d.update(1 / 60);
+    expect(p.asleep).toBe(true);
+    expect(p.pos.y).toBeGreaterThan(0.15);
+    expect(p.pos.y).toBeLessThan(0.3);
+    d.dispose();
+  });
+
+  it('floats wood half under the water instead of sinking, and keeps it out of the collision', () => {
+    const { world, set } = flatWorld(); // the floor at 0 is the seabed; the sea is 4 m deep
+    const d = new Debris(world, set, DEFAULT_DEBRIS, { ground: () => 0, water: () => 4 });
+    const p = d.spawn(new THREE.Vector3(0, 7, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, 0, 0.2)),
+      new THREE.Vector3(1.2, 0.1, 0.3), new THREE.Color(), new THREE.Vector3(0, -4, 0), new THREE.Vector3(1, 0, 0));
+    let lowest = Infinity;
+    for (let t = 0; t < 15 && !p.asleep; t += 1 / 60) {
+      d.update(1 / 60);
+      lowest = Math.min(lowest, p.pos.y);
+    }
+    expect(lowest).toBeGreaterThan(1);            // plunges in, never to the bottom
+    expect(p.pos.y).toBeGreaterThan(3.8);
+    expect(p.pos.y).toBeLessThan(4.2);            // rides at the surface
+    expect(p.asleep).toBe(true);
+    expect(set.size).toBe(0);
+    d.dispose();
+  });
+
   it('keeps the moving and the total pieces within their caps', () => {
     const { world, set } = flatWorld();
     const d = new Debris(world, set, { ...new Debris(world, null)['t'], maxActive: 5, maxPieces: 8 });
@@ -66,7 +96,7 @@ describe('structures', () => {
     return s;
   };
 
-  it('breaks a house next to a blast into flying debris, damages one further off, and spares a far one', () => {
+  it('breaks a house next to repeated blasts into flying debris, damages one further off, and spares a far one', () => {
     const { world } = flatWorld();
     const set = world.createSet('structures');
     const box = (x: number) => new THREE.BoxGeometry(8, 3.2, 5).translate(x, 1.6, 0);
@@ -81,10 +111,16 @@ describe('structures', () => {
     events.emit(blast(-3, 0.5, 4));
     expect(dmg.health('house:0')).toBeLessThan(100);
     events.emit(blast(-2, 0.5, 3));
-    expect(dmg.health('house:0')).toBeLessThanOrEqual(0);              // two close blasts finish it
+    // two close blasts chew it open (it now breaks part by part) but it still stands
+    expect(dmg.health('house:0')).toBeGreaterThan(0);
+    expect(dmg.standing('house:0')).toBeLessThan(houses[0].parts.length);
+    expect(collapsed).toEqual([]);
+    events.emit(blast(-2, 0.5, 3));
+    expect(dmg.health('house:0')).toBeLessThanOrEqual(0);              // a third finishes it
     expect(houses[0].hidden).toBe(true);
     expect(collapsed).toEqual(['house:0']);
     expect(set.has('house:0')).toBe(false);
+    expect([...Array(houses[0].parts.length).keys()].some((i) => set.has(`house:0#${i}`))).toBe(false);
     expect(dmg.health('house:1')).toBe(100);
     expect(houses[2].scorched).toBe(0);
     // its parts fly away from the blast and come down as rubble

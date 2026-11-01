@@ -9,6 +9,7 @@ import { debug } from '../../core/debug';
 import { KeyboardMouseInput, ScriptedInput, type InputSource } from '../../core/input';
 import { CollisionWorld } from '../../world/collision';
 import { loadDragonAsset } from '../../characters/dragon/asset';
+import { dragonLook } from '../../characters/dragon/facet';
 import { DRAGON_MATERIAL_NAMES } from '../../characters/dragon/materials';
 import { DragonCharacter } from '../../characters/dragon/motion/dragon';
 import { loadPosesMeta } from '../../characters/dragon/motion/poseLayers';
@@ -89,7 +90,7 @@ async function startToothless(): Promise<void> {
   const [asset, posesMeta, tuning] = await Promise.all([
     loadDragonAsset({
       glbUrl: 'assets/characters/toothless/toothless.glb', posesUrl: 'assets/characters/toothless/toothless.poses.glb',
-      rigUrl: 'assets/characters/toothless/toothless.rig.json', sunDir: app.lighting.sunDir, prepare: (m) => app.materials.prepare(m),
+      rigUrl: 'assets/characters/toothless/toothless.rig.json', sunDir: app.lighting.sunDir, prepare: (m) => app.materials.prepare(m), look: dragonLook(location.search),
     }),
     loadPosesMeta('assets/characters/toothless/toothless.poses.json'),
     loadTuning(),

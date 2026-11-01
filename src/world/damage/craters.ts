@@ -115,20 +115,21 @@ export class Craters {
       for (let tj = Math.floor((rect[1] - pad) / tile); tj <= Math.floor((rect[3] + pad) / tile); tj++) {
         const layer = w.tileLayer(ti, tj);
         if (!layer) continue;
-        const src = layer.geometry.attributes.position.array as Float32Array;
-        const pos = new Float32Array(src);
-        let touched = false;
-        for (let v = 0; v < pos.length; v += 3) {
-          const x = pos[v];
-          const z = pos[v + 2];
-          if (x < rect[0] - pad || x > rect[2] + pad || z < rect[1] - pad || z > rect[3] + pad) continue;
-          const y = hf.sample(Math.round((x - hf.origin) / hf.spacing), Math.round((z - hf.origin) / hf.spacing));
-          if (y !== pos[v + 1]) {
-            pos[v + 1] = y;
-            touched = true;
+        // the triangles keep their vertices, only the heights move: refit the tile's BVH, don't rebuild it
+        w.refitLayer(layer, (pos) => {
+          let touched = false;
+          for (let v = 0; v < pos.length; v += 3) {
+            const x = pos[v];
+            const z = pos[v + 2];
+            if (x < rect[0] - pad || x > rect[2] + pad || z < rect[1] - pad || z > rect[3] + pad) continue;
+            const y = hf.sample(Math.round((x - hf.origin) / hf.spacing), Math.round((z - hf.origin) / hf.spacing));
+            if (y !== pos[v + 1]) {
+              pos[v + 1] = y;
+              touched = true;
+            }
           }
-        }
-        if (touched) w.replaceLayer(layer, pos);
+          return touched;
+        });
       }
     }
   }

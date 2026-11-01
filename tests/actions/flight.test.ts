@@ -59,7 +59,7 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
     if (r.phases[r.phases.length - 1] !== ph) r.phases.push(ph);
     if (ph === 'landing' && was !== 'landing') landV0 = d.kin.speed;
     if (ph === 'landing') r.landSpeedUp = Math.max(r.landSpeedUp, d.kin.speed - landV0);
-    if (was === 'landing' && ph === 'idle') {
+    if (was === 'landing' && ph === 'runout') {
       r.handGait = d.gait.phase;
       r.handSpeed = d.kin.speed;
     }
@@ -148,7 +148,7 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
       if (at(t, 10)) return { keys: [], press: ['Space'] };
       return { keys: [] };
     }, 14);
-    expect(r.phases).toEqual(['idle', 'prep', 'takeoff', 'air', 'descend', 'landing', 'idle']);
+    expect(r.phases).toEqual(['idle', 'prep', 'takeoff', 'air', 'descend', 'landing', 'runout', 'idle']);
     expect(r.tb.jump.phase).toBe('idle');                         // the Space at a gallop was the takeoff, not a jump
     expect(r.d.nanResets).toBe(0);
     expect(r.minH).toBeGreaterThan(0.55);
@@ -193,8 +193,53 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
       maxAlt = Math.max(maxAlt, tb.flight.pos.y);
     }
     expect(maxAlt).toBeGreaterThan(12);
-    expect(phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'idle']);
+    expect(phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'runout', 'idle']);
     expect(topSpeed).toBeLessThan(d.tuning.flight.glideSpeed + 3);
+    expect(d.nanResets).toBe(0);
+  });
+
+  it('cruises faster flapping, and a tucked dive builds speed it can trade back for height', { timeout: 60_000 }, async () => {
+    const a = await loadToothlessMotion();
+    const world = CollisionWorld.fromObjects([box(3000, 1, 3000, 0, -0.5, 0)]);
+    const d = new DragonCharacter({ rig: a.rig, world, clips: a.clips, posesMeta: a.posesMeta, seed: 1 });
+    d.spawn(0, -1200, 0);
+    const tb = createToothlessBrain(d, a.rig, {});
+    const climb = (-10 * Math.PI) / 180;                         // the camera low: his steepest climb
+    const dive = (80 * Math.PI) / 180;                           // the camera well down: as steep as he'll go
+    let cruise = 0;
+    let wingsOutTop = 0;
+    let tuckTop = 0;
+    let tuckFolded = 0;
+    let altBeforeDive = 0;
+    let lowest = Infinity;
+    let pulledUpTo = 0;
+    for (let k = 0; k < Math.round(46 / DT); k++) {
+      const t = k * DT;
+      // take off and climb (to 24 s), cruise level flapping (to 30 s), tucked dive (to 34 s), wings out, pull up
+      const keys = t < 1 ? [] : t < 1.5 ? ['Space'] : t < 30 ? ['KeyW'] : t < 34 ? ['ShiftLeft'] : [];
+      const pitch = t < 24 ? climb : t < 30 ? LEVEL : t < 34 ? dive : -0.2;
+      d.update({ input: input(keys, at(t, 1) ? ['Space'] : []), cameraYaw: 0, cameraPitch: pitch, cameraPos: CAM }, DT);
+      const f = tb.flight;
+      if (t > 28 && t < 30) cruise = Math.max(cruise, f.speed);
+      if (at(t, 30)) altBeforeDive = f.pos.y;
+      if (t > 30 && t < 34) {
+        tuckTop = Math.max(tuckTop, f.speed);
+        tuckFolded = Math.max(tuckFolded, d.wings.tuck);
+        lowest = Math.min(lowest, f.pos.y);
+      }
+      if (t > 34) {
+        pulledUpTo = Math.max(pulledUpTo, f.pos.y);
+        if (t > 40) wingsOutTop = Math.max(wingsOutTop, f.speed);
+      }
+    }
+    const c = d.tuning.flight;
+    expect(cruise).toBeGreaterThan(c.flapSpeed - 1.5);           // the faster cruise
+    expect(altBeforeDive).toBeGreaterThan(80);
+    expect(tuckFolded).toBeGreaterThan(0.95);                     // the wings swept back
+    expect(tuckTop).toBeGreaterThan(c.maxSpeed + 5);              // the dive outruns the wings-out top speed
+    expect(tuckTop).toBeLessThanOrEqual(c.tuckMaxSpeed);
+    expect(pulledUpTo - lowest).toBeGreaterThan(8);               // and pulls out into a zoom climb
+    expect(wingsOutTop).toBeLessThan(c.maxSpeed + 3);             // the open wings bleed the excess off again
     expect(d.nanResets).toBe(0);
   });
 

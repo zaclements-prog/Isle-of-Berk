@@ -177,6 +177,15 @@ export function createApp(container: HTMLElement): App {
       if (mode !== undefined) post.ao.setDisplayMode(mode);
       return AO_DISPLAY_MODES[post.ao.configuration.renderMode] ?? null;
     },
+    /**
+     * Render one frame and read it back in the same task, as a data URL. The canvas doesn't preserve its drawing
+     * buffer, so a capture that pauses, steps and then reads the canvas later (a screenshot script, toDataURL in a
+     * timeout) gets a cleared, black frame; this never does.
+     */
+    capture: (type = 'image/png', quality?: number) => {
+      renderFrame();
+      return renderer.domElement.toDataURL(type, quality);
+    },
     perf: (frames = 30) => {
       renderFrame(); // one whole frame (one shadow update + the post stack) for the per-frame stats
       const stats = rendererStats(renderer);

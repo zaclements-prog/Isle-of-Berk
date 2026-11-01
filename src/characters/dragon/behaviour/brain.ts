@@ -18,6 +18,8 @@ export interface DragonAction {
   readonly aim: THREE.Vector3 | null;
   /** Face mood input (plasma: aggressive). */
   readonly aggressive: boolean;
+  /** Dorsal-plate glow the action drives itself (the plasma's charge), over the layers' curves; absent/null: none. */
+  readonly glow?: number | null;
   /** Called every step in DragonCharacter.hooks.beforeMove, after the behaviours. `standing` = posture settled on stand. */
   step(d: DragonCharacter, dt: number, standing: boolean): void;
   /** Drop whatever it is doing at once (a respawn, a lab script start): no layer, demand or scripted body left over. */
@@ -121,6 +123,7 @@ export class DragonBrain {
     f.eyePitch = d.look.eyePitch.x;
     f.content = this.behaviours.content;
     f.wingFold = d.wings.state.fold;
+    f.plasmaGlow = this.actions.reduce((g, a) => (a.glow != null ? Math.max(g, a.glow) : g), -1);
     const st = this.face.update(f, d.layers.active(), dt);
     this.faceRig.apply(s, d.secondary, st);
   }

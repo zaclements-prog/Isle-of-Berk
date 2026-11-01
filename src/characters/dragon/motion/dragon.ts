@@ -46,6 +46,16 @@ export type DragonHook = (dragon: DragonCharacter, dt: number) => void;
 
 /** Body proxies whose contacts with ground-like surfaces raise the front of the body (see frontRaise). */
 const FRONT_PROXIES: readonly string[] = ['head', 'muzzle', 'neck'];
+/** Body proxies that must never sink into the ground (see bodyFloor): the trunk. */
+const TRUNK_PROXIES: readonly string[] = ['chest', 'belly', 'hips'];
+/** How far (m) the ground may drop away under a resting paw and the paw still follow it down (a deep crater). */
+const GROUND_DROP_MAX = 8;
+/** How far (m) a trunk proxy may sit inside the ground before the body floor lifts it (they rest ≥ 3 cm clear lying down). */
+const TRUNK_SINK = 0.02;
+/** The deepest (m) a trunk proxy's centre may be under the ground and still be lifted out (deeper: inside a rock). */
+const TRUNK_LIFT_MAX = 1.5;
+/** The nose-up (rad) the head floor may ask for at most (see headFloor). */
+const HEAD_FLOOR_MAX_PITCH = (45 * Math.PI) / 180;
 
 /** Per-step motion modifiers — climbing (Task 14) and M6 actions set these before the kinematics run. */
 export interface MotionMods {
@@ -157,6 +167,12 @@ export class DragonCharacter {
   private readonly frontLever: number[];
   private readonly raiseProbe = new THREE.Vector3();
   private readonly raiseContact: SphereContact = { point: new THREE.Vector3(), normal: new THREE.Vector3(), depth: 0 };
+  /** Proxy indices of the chest, belly and hips (bodyFloor). */
+  private readonly trunk: number[];
+  /** The collision world's geometry version the paws' contacts were last checked against (refreshContacts). */
+  private worldVersion = -1;
+  /** Where the character origin stood at the start of this step (bodyFloor carries the last pose by the move). */
+  private readonly stepFrom = new THREE.Vector3();
 
   constructor(opts: DragonOptions) {
     this.world = opts.world;
@@ -204,6 +220,7 @@ export class DragonCharacter {
       this.legTuck = this.legBones.map((bones) => bones.map((b) => (byBone.get(b) ?? this.skeleton.bindLocalQuat[b]).clone()));
     } else this.legTuck = null;
     this.front = this.proxies.items.flatMap((p, k) => (FRONT_PROXIES.includes(p.name) ? [k] : []));
+    this.trunk = this.proxies.items.flatMap((p, k) => (TRUNK_PROXIES.includes(p.name) ? [k] : []));
     const jaw = opts.rig.jaw;
     const jawBone = jaw?.restCloseRad ? this.skeleton.id(jaw.bone) : -1;
     this.jawRest = jawBone < 0 ? null : {
@@ -251,6 +268,7 @@ export class DragonCharacter {
     this.prevVy = 0;
     this.verticalAccel = 0;
     this.time = 0;
+    this.worldVersion = this.world.version;
   }
 
   update(frame: DragonFrameInput, dt: number): void {
@@ -258,6 +276,14 @@ export class DragonCharacter {
     const s = this.skeleton;
     s.snapshot();
     this.cameraPos.copy(frame.cameraPos);
+    this.stepFrom.copy(this.kin.pos);
+    // 0) the ground changed under him (a blast's crater, a re-seated boulder, debris): his planted paws were locked to
+    // the old surface — back onto the live one, before anything rides on them
+    const version = this.world.version;
+    if (version !== this.worldVersion) {
+      this.worldVersion = version;
+      this.planner.refreshContacts(this.plannerBody(), GROUND_DROP_MAX);
+    }
     // 1) input → intent (hooks may adjust mods first: climbing, actions)
     this.cameraPitch = frame.cameraPitch ?? this.cameraPitch;
     this.cameraYaw = frame.cameraYaw;
@@ -314,9 +340,17 @@ export class DragonCharacter {
     // 5) body (library poses with a root blend the placement)
     this.poseBody();
     // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
-    for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
+    // (only for a target below the joint: lowering the body toward one above it — the body already under its paws —
+    // only takes it further away, and fed back step by step it drove the body metres into the ground)
+    for (let i = 0; i < 4; i++) {
+      const below = this.targets.sole[i].y < this.hips[i].y;
+      this.short[i] = below ? Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach)) : 0;
+    }
+    this.body.rough = this.roughness / t.rough.roughTrot;
+    const floor = this.bodyFloor();
+    const pitchFloor = this.headFloor();
     const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
-      this.groundUnder(1, 3), this.groundUnder(0, 2), raise, this.climbRide());
+      this.groundUnder(1, 3), this.groundUnder(0, 2), raise, this.climbRide(), floor, pitchFloor);
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
     // 6) the absolute pose: bind (jaw closed) → body → library layers → breathing
     this.resetPose();
@@ -397,19 +431,30 @@ export class DragonCharacter {
       this.roughHold = Math.max(0, this.roughHold - dt);
       return this.roughHold > 0 ? r.trotCap : Infinity;
     }
-    // least-squares plane h = c0 + c1·a + c2·l over the probes, then the largest residual
-    let sa = 0, sl = 0, sh = 0, saa = 0, sll = 0, sal = 0, sah = 0, slh = 0;
+    // least-squares surface h = c0 + c1·a + c2·l + c3·a² over the probes, then the largest residual. The a² term takes
+    // up a hill's curvature along his path (a plane read a smooth 50 m hill as 0.25 m rough and held him to a trot on
+    // every rise); rocks, logs and ledges stay local bumps no such smooth surface fits
+    // (too few probes for the curve, as by a wall: a plane)
+    const nb = n >= 6 ? 4 : 3;
+    const basis = (a: number, l: number) => [1, a, l, a * a].slice(0, nb);
+    const m = Array.from({ length: nb }, () => new Array<number>(nb).fill(0));
+    const v = new Array<number>(nb).fill(0);
     for (let k = 0; k < n; k++) {
       const [a, l, h] = pts[k];
-      sa += a; sl += l; sh += h; saa += a * a; sll += l * l; sal += a * l; sah += a * h; slh += l * h;
+      const b = basis(a, l);
+      for (let i = 0; i < nb; i++) {
+        v[i] += b[i] * h;
+        for (let j = 0; j < nb; j++) m[i][j] += b[i] * b[j];
+      }
     }
-    const m = [[n, sa, sl], [sa, saa, sal], [sl, sal, sll]];
-    const v = [sh, sah, slh];
-    const c = solve3(m, v);
+    const c = solveN(m, v);
     let rough = 0;
     for (let k = 0; k < n; k++) {
       const [a, l, h] = pts[k];
-      rough = Math.max(rough, Math.abs(h - (c[0] + c[1] * a + c[2] * l)));
+      const b = basis(a, l);
+      let fit = 0;
+      for (let i = 0; i < nb; i++) fit += c[i] * b[i];
+      rough = Math.max(rough, Math.abs(h - fit));
     }
     this.roughness = rough;
     // once over rough ground he keeps to the trot for roughHold s after the last rough reading: a flat stretch
@@ -439,6 +484,15 @@ export class DragonCharacter {
    * planner's paws are wherever he left the ground, and the leg IK takes them back as the flight lets go of the legs.
    */
   resetFeet(): void {
+    // the origin's height is the paws' (kin.pos.y = their mean support), and a flight leaves the paws planted where it
+    // took off: landing on ground metres above or below that, the stance was projected from the take-off height — its
+    // rays started inside the hill (every foothold skipped, the paws left on raw targets 2–3 m inside the ground, the
+    // legs at full stretch) or ended above the valley. Take the height of the ground under the body first.
+    const pel = this.body.pose.pelvisPos;
+    this.groundOrigin.set(this.kin.pos.x, pel.y + 0.5, this.kin.pos.z);
+    const buried = this.world.depthInside(this.groundOrigin, 10);
+    const top = this.groundOrigin.y + (buried >= 0 ? buried + 0.01 : 0);
+    if (this.world.groundAt(this.kin.pos.x, this.kin.pos.z, top, top - pel.y + 60, this.groundHit)) this.kin.pos.y = this.groundHit.point.y;
     this.planner.reset(this.plannerBody());
     // the last leg solve reached for the old paws (wherever he took off): its shortfall would sink the body
     this.legs.shortfall.fill(0);
@@ -521,6 +575,62 @@ export class DragonCharacter {
       raise = Math.max(raise, (c.depth / c.normal.y) * (this.body.feetLength / lever));
     }
     return raise;
+  }
+
+  /**
+   * The lowest the pelvis may go this step (m, world; −Infinity: anywhere): the chest, belly and hips proxies, carried
+   * from the last pose by this step's move, must not sink more than TRUNK_SINK into the live ground under them. The
+   * body's springs, a scripted placement (a landing flight, a jump) and the leg shortfall all answer to it, so whatever
+   * the ground does — a crater lip thrown up under him, a slope a landing misjudged — the trunk never passes through.
+   * Call after frontRaise (it updates the proxies from the last pose).
+   */
+  private bodyFloor(): number {
+    const s = this.skeleton;
+    const pel = s.worldPos[this.body.pelvis].y;
+    const dx = this.kin.pos.x - this.stepFrom.x;
+    const dz = this.kin.pos.z - this.stepFrom.z;
+    let floor = -Infinity;
+    for (const k of this.trunk) {
+      const r = this.proxies.items[k].radius;
+      const c = this.raiseProbe.copy(this.proxies.centers[k]);
+      c.x += dx;
+      c.z += dz;
+      let ground: number;
+      const inside = this.world.depthInside(c, TRUNK_LIFT_MAX);
+      if (inside >= 0) ground = c.y + inside;
+      else if (this.world.groundAt(c.x, c.z, c.y, r, this.groundHit)) ground = this.groundHit.point.y;
+      else continue;
+      floor = Math.max(floor, pel + ground - (c.y - r) - TRUNK_SINK);
+    }
+    return floor;
+  }
+
+  /**
+   * The lowest body pitch (rad, + nose up; −Infinity: any) that keeps the head, muzzle and neck proxies out of the live
+   * ground under them: a library pose with a root (a sniff, a sit) places the body at its flat-ground pitch, which on a
+   * slope facing uphill buried his head to the ears. From the last pose, carried by this step's move: each proxy's
+   * depth below the ground (less TRUNK_SINK, so a sniff still reaches the ground) over its lever arm about the pelvis is
+   * the pitch it needs beyond the last step's (a proxy clear of the ground allows that much less). Call after frontRaise.
+   */
+  private headFloor(): number {
+    const dx = this.kin.pos.x - this.stepFrom.x;
+    const dz = this.kin.pos.z - this.stepFrom.z;
+    let need = -Infinity;
+    for (const k of this.front) {
+      const lever = this.frontLever[k];
+      if (lever < 0.3) continue;
+      const r = this.proxies.items[k].radius;
+      const c = this.raiseProbe.copy(this.proxies.centers[k]);
+      c.x += dx;
+      c.z += dz;
+      let ground: number;
+      const inside = this.world.depthInside(c, TRUNK_LIFT_MAX);
+      if (inside >= 0) ground = c.y + inside;
+      else if (this.world.groundAt(c.x, c.z, c.y, r, this.groundHit)) ground = this.groundHit.point.y;
+      else continue;
+      need = Math.max(need, (ground - (c.y - r) - TRUNK_SINK) / lever);
+    }
+    return Number.isFinite(need) ? Math.min(this.body.pose.pitch + need, HEAD_FLOOR_MAX_PITCH) : -Infinity;
   }
 
   /**
@@ -730,11 +840,28 @@ export class DragonCharacter {
   }
 }
 
-/** Solve the 3×3 system m · x = v (Cramer's rule); a singular system gives a flat plane at the mean height. */
-function solve3(m: number[][], v: number[]): number[] {
-  const det = (a: number[][]) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
-    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
-  const d = det(m);
-  if (Math.abs(d) < 1e-9) return [v[0] / m[0][0], 0, 0];
-  return [0, 1, 2].map((k) => det(m.map((row, i) => row.map((x, j) => (j === k ? v[i] : x)))) / d);
+/**
+ * Solve the small normal equations m · x = v (Gaussian elimination, partial pivoting); a singular system gives a flat
+ * surface at the mean height.
+ */
+function solveN(m: number[][], v: number[]): number[] {
+  const n = v.length;
+  const a = m.map((row, i) => [...row, v[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(a[r][c]) > Math.abs(a[p][c])) p = r;
+    if (Math.abs(a[p][c]) < 1e-9) return [v[0] / m[0][0], ...new Array<number>(n - 1).fill(0)];
+    [a[c], a[p]] = [a[p], a[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = a[r][c] / a[c][c];
+      for (let k = c; k <= n; k++) a[r][k] -= f * a[c][k];
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = a[r][n];
+    for (let k = r + 1; k < n; k++) s -= a[r][k] * x[k];
+    x[r] = s / a[r][r];
+  }
+  return x;
 }

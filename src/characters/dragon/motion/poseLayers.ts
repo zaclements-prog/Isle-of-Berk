@@ -175,11 +175,27 @@ export function sampleCurve(curve: FaceCurve, t: number): number {
   return curve[curve.length - 1][1];
 }
 
-/** Samples a clip's rotation tracks for the masked bones (local rotations, slerped between keys). */
+/** Two keys further apart than this (rad, about cos of half of it on the 4-D sphere) are slerped, not splined. */
+const SPLINE_MAX_DOT = Math.cos(0.4);
+/** Only densely sampled tracks (keys at most this far apart, s: an animation's frames) are splined. */
+const SPLINE_MAX_SPAN = 0.05;
+const _q0 = new THREE.Quaternion();
+const _q1 = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _q3 = new THREE.Quaternion();
+
+/**
+ * Samples a clip's rotation tracks for the masked bones (local rotations). Between keys a Catmull-Rom spline through
+ * the neighbouring keys (component-wise on hemisphere-aligned quaternions, renormalized): a 30 fps clip played at 120 Hz
+ * slerped key to key turns at a constant rate within each key span and changes rate at every key, a kink four steps
+ * apart that a fast clip (a landing's impact, the wingbeat) shows as a judder. The spline keeps the keys and smooths the
+ * rate through them. Sparse keys (more than SPLINE_MAX_SPAN s apart: the merged wing-fold samples, keyed by fold
+ * amount, Ruling 3) and keys more than ~46° apart are slerped key to key as before.
+ */
 export class ClipPose {
   readonly bones: number[] = [];
   readonly duration: number;
-  private readonly interpolants: THREE.Interpolant[] = [];
+  private readonly tracks: Array<{ times: Float32Array | number[]; values: Float32Array | number[]; last: number; spline: boolean }> = [];
 
   constructor(clip: THREE.AnimationClip, s: RigSkeleton, mask: 'all' | readonly string[]) {
     const allowed = new Set(maskBones(s, mask));
@@ -189,15 +205,70 @@ export class ClipPose {
       const bone = track.name.slice(0, dot);
       if (!s.has(bone) || !allowed.has(s.id(bone))) continue;
       this.bones.push(s.id(bone));
-      this.interpolants.push(track.InterpolantFactoryMethodLinear(new Float32Array(4)));
+      const t = track.times;
+      let spline = t.length >= 3;
+      for (let k = 1; k < t.length && spline; k++) if (t[k] - t[k - 1] > SPLINE_MAX_SPAN) spline = false;
+      this.tracks.push({ times: t, values: track.values, last: 0, spline });
     }
     this.duration = clip.duration;
   }
 
   sample(t: number, out: THREE.Quaternion[]): void {
-    for (let k = 0; k < this.bones.length; k++) {
-      const v = this.interpolants[k].evaluate(t);
-      out[k].set(v[0], v[1], v[2], v[3]).normalize();
+    for (let j = 0; j < this.tracks.length; j++) {
+      const tr = this.tracks[j];
+      const times = tr.times;
+      const v = tr.values;
+      const n = times.length;
+      const q = out[j];
+      if (n === 1 || t <= times[0]) {
+        q.set(v[0], v[1], v[2], v[3]).normalize();
+        continue;
+      }
+      if (t >= times[n - 1]) {
+        q.set(v[4 * n - 4], v[4 * n - 3], v[4 * n - 2], v[4 * n - 1]).normalize();
+        continue;
+      }
+      let k = Math.min(tr.last, n - 2);
+      if (times[k] > t) k = 0;
+      while (k < n - 2 && times[k + 1] <= t) k++;
+      tr.last = k;
+      const u = (t - times[k]) / Math.max(times[k + 1] - times[k], 1e-9);
+      const a = Math.max(k - 1, 0);
+      const d = Math.min(k + 2, n - 1);
+      _q1.set(v[4 * k], v[4 * k + 1], v[4 * k + 2], v[4 * k + 3]);
+      _q2.set(v[4 * k + 4], v[4 * k + 5], v[4 * k + 6], v[4 * k + 7]);
+      if (_q2.dot(_q1) < 0) _q2.set(-_q2.x, -_q2.y, -_q2.z, -_q2.w);
+      if (!tr.spline || Math.abs(_q1.dot(_q2)) < SPLINE_MAX_DOT) {
+        q.copy(_q1).slerp(_q2, u).normalize();
+        continue;
+      }
+      // the end spans extrapolate their missing neighbour linearly (a straight run of keys stays straight)
+      if (a === k) _q0.set(2 * _q1.x - _q2.x, 2 * _q1.y - _q2.y, 2 * _q1.z - _q2.z, 2 * _q1.w - _q2.w);
+      else {
+        _q0.set(v[4 * a], v[4 * a + 1], v[4 * a + 2], v[4 * a + 3]);
+        if (_q0.dot(_q1) < 0) _q0.set(-_q0.x, -_q0.y, -_q0.z, -_q0.w);
+      }
+      if (d === k + 1) _q3.set(2 * _q2.x - _q1.x, 2 * _q2.y - _q1.y, 2 * _q2.z - _q1.z, 2 * _q2.w - _q1.w);
+      else {
+        _q3.set(v[4 * d], v[4 * d + 1], v[4 * d + 2], v[4 * d + 3]);
+        if (_q3.dot(_q2) < 0) _q3.set(-_q3.x, -_q3.y, -_q3.z, -_q3.w);
+      }
+      if (_q0.dot(_q1) < SPLINE_MAX_DOT * _q0.length() || _q3.dot(_q2) < SPLINE_MAX_DOT * _q3.length()) {
+        q.copy(_q1).slerp(_q2, u).normalize();
+        continue;
+      }
+      const u2 = u * u;
+      const u3 = u2 * u;
+      const c0 = -0.5 * u3 + u2 - 0.5 * u;
+      const c1 = 1.5 * u3 - 2.5 * u2 + 1;
+      const c2 = -1.5 * u3 + 2 * u2 + 0.5 * u;
+      const c3 = 0.5 * u3 - 0.5 * u2;
+      q.set(
+        c0 * _q0.x + c1 * _q1.x + c2 * _q2.x + c3 * _q3.x,
+        c0 * _q0.y + c1 * _q1.y + c2 * _q2.y + c3 * _q3.y,
+        c0 * _q0.z + c1 * _q1.z + c2 * _q2.z + c3 * _q3.z,
+        c0 * _q0.w + c1 * _q1.w + c2 * _q2.w + c3 * _q3.w,
+      ).normalize();
     }
   }
 }
@@ -243,12 +314,28 @@ export class PoseLayerStack {
     private readonly metaAll: PosesMeta,
   ) {}
 
+  /** Layers made in code from a library clip (derive): their own metadata over another clip's tracks. */
+  private readonly derived = new Map<string, { clip: THREE.AnimationClip; meta: PoseClipMeta }>();
+
   has(name: string): boolean {
-    return this.clips.has(name) && name in this.metaAll.clips;
+    return this.derived.has(name) || (this.clips.has(name) && name in this.metaAll.clips);
   }
 
   meta(name: string): PoseClipMeta | undefined {
-    return this.metaAll.clips[name];
+    return this.derived.get(name)?.meta ?? this.metaAll.clips[name];
+  }
+
+  /**
+   * A layer made in code from a library clip: `from`'s tracks under its metadata with `patch` over it (a narrower
+   * mask, no root or wings...). The poses.json the Blender export writes stays the source of the clip itself. Returns
+   * false (and adds nothing) when `from` is not in the library.
+   */
+  derive(name: string, from: string, patch: Partial<PoseClipMeta>): boolean {
+    const clip = this.clips.get(from);
+    const m = this.metaAll.clips[from];
+    if (!clip || !m) return false;
+    this.derived.set(name, { clip, meta: { ...m, ...patch } });
+    return true;
   }
 
   set(name: string, weight: number, time = 0, additive = false, order = 0): void {
@@ -258,8 +345,9 @@ export class PoseLayerStack {
     }
     let layer = this.layers.get(name);
     if (!layer) {
-      const clip = this.clips.get(name);
-      const m = this.metaAll.clips[name];
+      const dv = this.derived.get(name);
+      const clip = dv?.clip ?? this.clips.get(name);
+      const m = dv?.meta ?? this.metaAll.clips[name];
       if (!clip || !m) throw new Error(`pose layer '${name}': no clip in the poses GLB or no entry in poses.json`);
       layer = { name, pose: new ClipPose(clip, this.skeleton, m.mask), meta: m, weight, time, additive, order, seq: this.seq++ };
       this.layers.set(name, layer);
@@ -309,16 +397,39 @@ export class PoseLayerStack {
     for (const l of this.sorted) {
       while (this.tmp.length < l.pose.bones.length) this.tmp.push(new THREE.Quaternion());
       l.pose.sample(l.time, this.tmp);
+      const w = this.blendWeight(l);
       for (let k = 0; k < l.pose.bones.length; k++) {
         const b = l.pose.bones[k];
         if (l.additive) {
           _d.copy(s.bindLocalQuat[b]).invert().multiply(this.tmp[k]);
-          s.localQuat[b].multiply(_w.identity().slerp(_d, l.weight));
+          s.localQuat[b].multiply(_w.identity().slerp(_d, w));
         } else {
-          s.localQuat[b].slerp(this.tmp[k], l.weight);
+          s.localQuat[b].slerp(this.tmp[k], w);
         }
       }
     }
+  }
+
+  /**
+   * The slerp weight a layer applies with. Flight clips cross-fade into each other (takeoff → flap, flap ↔ glide, the
+   * loops → landing, the running prep → its push) and their weights are meant as shares of one blend, as legOwnership
+   * reads them. Applied one over another at their own weights, the share under a fade leaks back to whatever lies
+   * beneath (at a 50/50 fade a quarter of the folded, gallop-carried wings) and the body dips mid-fade. So within a
+   * group (non-additive flight clips of one order) the first applies at the group's total weight (≤ 1) and each later
+   * one at its share of the weight so far, w_k / (w_1 + … + w_k): the sequential slerps then give the weighted blend.
+   */
+  private blendWeight(l: Layer): number {
+    if (l.additive || !l.meta.flight) return l.weight;
+    let before = 0;
+    let total = 0;
+    let seen = false;
+    for (const o of this.sorted) {
+      if (o.additive || !o.meta.flight || o.order !== l.order) continue;
+      total += o.weight;
+      if (o === l) seen = true;
+      else if (!seen) before += o.weight;
+    }
+    return before <= 0 ? Math.min(1, total) : l.weight / (before + l.weight);
   }
 
   private resort(): void {

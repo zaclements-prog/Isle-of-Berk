@@ -10,7 +10,7 @@ import { ForceField } from './world/forceField';
 import { debug } from './core/debug';
 
 const KEYS = 'click to control · WASD move · Shift gallop · C prowl · Space jump · hold Space (standing) or Space at a gallop: take off · '
-  + 'flying: mouse steers, W flap, S brake, Space land · F / left click plasma · mouse look · wheel zoom';
+  + 'flying: mouse steers, W flap, S brake, Shift tuck and dive, Space land · F / left click plasma · mouse look · wheel zoom';
 
 /**
  * The game page. The Test Isle by default (docs/superpowers/plans/2026-11-01-test-isle.md); `?scene=test` keeps the

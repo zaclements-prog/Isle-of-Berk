@@ -41,6 +41,8 @@ export class LookController {
   readonly eyePitch: SpringState = { x: 0, v: 0 };
   /** 0…1 scale on the applied head/neck turn (M6: 0 while he sleeps, so the curled head stays put). */
   gain = 1;
+  /** Scale on the head's spring frequency (M6: plasma on the wing snaps the head to the aim; 1 otherwise). */
+  snap = 1;
   private idle = 0;
   private nextGlance: number;
   private glanceLeft = 0;
@@ -102,8 +104,8 @@ export class LookController {
     if (Math.abs(yawRaw) > deg(t.yawLimitDeg) && Math.abs(this.headYaw.x) > 0.2) yawRaw = Math.sign(this.headYaw.x) * Math.abs(yawRaw);
     const yaw = clamp(yawRaw, -deg(t.yawLimitDeg), deg(t.yawLimitDeg));
     const pitch = clamp(Math.atan2(_d.y, Math.hypot(_d.x, _d.z)) - this.headBindPitch, -deg(t.pitchLimitDeg), deg(t.pitchLimitDeg));
-    stepAngleSpring(this.headYaw, yaw, t.headOmega, 1, dt);
-    stepSpring(this.headPitch, pitch, t.headOmega, 1, dt);
+    stepAngleSpring(this.headYaw, yaw, t.headOmega * this.snap, 1, dt);
+    stepSpring(this.headPitch, pitch, t.headOmega * this.snap, 1, dt);
     const eyeLim = deg(t.eyeLimitDeg);
     stepSpring(this.eyeYaw, clamp(yaw - this.headYaw.x, -eyeLim, eyeLim), t.eyeOmega, 1, dt);
     stepSpring(this.eyePitch, clamp(pitch - this.headPitch.x, -eyeLim, eyeLim), t.eyeOmega, 1, dt);

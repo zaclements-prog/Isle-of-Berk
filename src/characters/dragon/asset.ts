@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createGltfLoader } from '../../render/loaders';
 import { validateRig, type RigMeta } from './rigMeta';
 import { createDragonMaterials, DRAGON_MATERIAL_NAMES, type DragonMaterials } from './materials';
+import { facetMeshes, type DragonLook } from './facet';
 
 export interface DragonAsset {
   root: THREE.Group;
@@ -15,6 +16,7 @@ export interface DragonAsset {
   /** Blink one eye, w in [0, 1] (clamped): blends the rig's three blink keys piecewise-linearly (blinkWeights). */
   setBlink(side: 'L' | 'R', w: number): void;
   materials: DragonMaterials;
+  look: DragonLook;
 }
 
 /**
@@ -80,10 +82,14 @@ export function checkDragonScene(scene: THREE.Object3D, rig: RigMeta): { meshes:
  * rig bone) throws before the engine's 9 materials exist. Created after, they'd have no `root` for the caller to
  * remove and so would stay registered with CSM for the rest of the page session (see releaseMaterial in
  * render/lighting.ts).
+ *
+ * `look` (default 'film'): 'faceted' re-indexes the meshes at low-poly density (facetMeshes) and binds the faceted
+ * materials instead.
  */
 export async function loadDragonAsset(opts: {
-  glbUrl: string; posesUrl: string; rigUrl: string; sunDir: THREE.Vector3; prepare: (m: THREE.Material) => void;
+  glbUrl: string; posesUrl: string; rigUrl: string; sunDir: THREE.Vector3; prepare: (m: THREE.Material) => void; look?: DragonLook;
 }): Promise<DragonAsset> {
+  const look = opts.look ?? 'film';
   const loader = createGltfLoader();
   const [gltf, poses, rigRaw] = await Promise.all([
     loader.loadAsync(opts.glbUrl),
@@ -95,7 +101,8 @@ export async function loadDragonAsset(opts: {
   ]);
   const rig = validateRig(rigRaw);
   const { meshes, skeleton } = checkDragonScene(gltf.scene, rig);
-  const materials = createDragonMaterials({ sunDir: opts.sunDir, prepare: opts.prepare });
+  if (look === 'faceted') await facetMeshes(meshes.map((mesh) => ({ mesh, part: (mesh.material as THREE.Material).name })));
+  const materials = createDragonMaterials({ sunDir: opts.sunDir, prepare: opts.prepare, look });
   const bones = new Map(skeleton.bones.map((b) => [b.name, b]));
   for (const m of meshes) {
     m.castShadow = true;
@@ -129,5 +136,6 @@ export async function loadDragonAsset(opts: {
       rig.blink[side].forEach((name, k) => setMorph(name, weights[k]));
     },
     materials,
+    look,
   };
 }

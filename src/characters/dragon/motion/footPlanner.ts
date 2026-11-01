@@ -38,6 +38,9 @@ export interface PawState {
   settled: boolean;
   readonly settle: THREE.Vector3;
   readonly settleNormal: THREE.Vector3;
+  /** Planted on a surface (found under the contact as it planted), not on a raw target in the air: it follows that
+   *  surface down when the ground drops away under it (refreshContacts). */
+  rested: boolean;
 }
 
 export interface PlannerBody {
@@ -127,6 +130,12 @@ export class FootPlanner {
     [0, 1, 2, 3].map(() => ({ from: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), hip: null, reachFrom: null, reach: Infinity }));
   /** Each leg's joint predicted at touchdown by the last predictTarget (the candidates' reach check). */
   private readonly predHip = [0, 1, 2, 3].map(() => new THREE.Vector3());
+  /**
+   * Whether predHip holds a prediction for the paw's current swing. A reset (a respawn, a flight's landing) leaves it
+   * wherever the last swing before was — possibly hundreds of metres away — and a forced step does not predict one:
+   * read as is, its landing shortfall sank the body metres through the ground on the next step.
+   */
+  private readonly predOk = [false, false, false, false];
 
   constructor(rig: MotionRig, private readonly world: CollisionWorld, private readonly t: PlannerTuning) {
     this.neutral = LEG_KEYS.map((k) => new THREE.Vector3(...rig.contacts[k].sole));
@@ -141,7 +150,7 @@ export class FootPlanner {
       key, planted: true, pos: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0),
       from: new THREE.Vector3(), to: new THREE.Vector3(), fromNormal: new THREE.Vector3(0, 1, 0), toNormal: new THREE.Vector3(0, 1, 0),
       s: 1, duration: 0.3, lift: 0, forced: false, scripted: false, justPlanted: false, justLifted: false, targetOk: true, targetFound: true, wasStance: true, posed: false,
-      settled: false, settle: new THREE.Vector3(), settleNormal: new THREE.Vector3(0, 1, 0),
+      settled: false, settle: new THREE.Vector3(), settleNormal: new THREE.Vector3(0, 1, 0), rested: true,
     }));
   }
 
@@ -196,6 +205,7 @@ export class FootPlanner {
       _n.subVectors(this.hips[i], body.pos);
       rotY(_n, body.yawRate * remaining, _n).add(body.pos).addScaledVector(body.velocity, remaining);
       this.predHip[i].copy(_n);
+      this.predOk[i] = true;
       const climb = body.climb ?? 0;
       if (climb > 0) {
         // climbing: the stance under the joint itself, at its height (project casts along −up from there)
@@ -271,6 +281,7 @@ export class FootPlanner {
   }
 
   reset(body: PlannerBody): void {
+    this.predOk.fill(false);
     for (let i = 0; i < 4; i++) {
       const p = this.paws[i];
       this.neutralWorld(i, body.pos, body.heading, _target);
@@ -291,7 +302,48 @@ export class FootPlanner {
       p.targetFound = f.found !== false;
       p.wasStance = true;
       p.settled = false;
+      p.rested = f.found !== false && this.restsOn(p.pos);
     }
+  }
+
+  /**
+   * The geometry changed (CollisionWorld.version: a crater dug or raised the ground, a boulder was re-seated, debris
+   * landed): a planted paw locked to where the ground was would hang in the air or stand inside the new ground, and the
+   * body, which rides on the paws, with it. Every planted paw goes back on the live surface: lifted out when it ended
+   * inside the ground (up to planner.castUp + maxStepUp), lowered when it rested on ground that dropped away (down to
+   * `maxDrop` below). A settled swing re-casts its settle point; an unsettled one re-targets every step anyway.
+   */
+  refreshContacts(body: PlannerBody, maxDrop: number): void {
+    const t = this.t;
+    for (let i = 0; i < 4; i++) {
+      const p = this.paws[i];
+      if (!p.planted) {
+        if (p.settled && !p.scripted) this.settleOnto(i, body);
+        continue;
+      }
+      _a.copy(p.pos).y += 0.01;
+      const buried = this.world.depthInside(_a, t.castUp + t.maxStepUp);
+      if (buried >= 0) {
+        // inside the ground: up to the surface over it
+        if (this.world.groundAt(p.pos.x, p.pos.z, _a.y + buried + 0.01, buried + 0.05, _probe)) {
+          p.pos.copy(_probe.point);
+          p.normal.copy(_probe.normal);
+          p.rested = true;
+        }
+        continue;
+      }
+      if (!p.rested) continue;
+      const g = this.world.groundAt(p.pos.x, p.pos.z, _a.y, maxDrop + 0.01, _probe);
+      if (g && g.point.y < p.pos.y - 1e-3) {
+        p.pos.copy(g.point);
+        p.normal.copy(g.normal);
+      }
+    }
+  }
+
+  /** A surface lies right under `pos` (within a few cm): the paw planted there rests on it. */
+  private restsOn(pos: THREE.Vector3): boolean {
+    return !!this.world.groundAt(pos.x, pos.z, pos.y + 0.02, 0.07, _probe);
   }
 
   update(body: PlannerBody, gait: GaitEngine, stretch: readonly number[], dt: number): void {
@@ -340,6 +392,7 @@ export class FootPlanner {
         p.planted = true;
         p.pos.copy(p.to);
         p.normal.copy(p.toNormal);
+        p.rested = this.restsOn(p.pos);
         p.justPlanted = true;
         airborne--;
       }
@@ -440,7 +493,7 @@ export class FootPlanner {
    */
   landingShortfall(i: number, scale: number): number {
     const p = this.paws[i];
-    if (p.planted || p.scripted || !Number.isFinite(this.reach[i])) return 0;
+    if (p.planted || p.scripted || !this.predOk[i] || !Number.isFinite(this.reach[i])) return 0;
     return Math.max(0, p.to.distanceTo(this.predHip[i]) - scale * this.reach[i]);
   }
 
@@ -461,8 +514,12 @@ export class FootPlanner {
     p.justLifted = true;
     p.from.copy(p.pos);
     p.fromNormal.copy(p.normal);
-    if (forced) this.neutralWorld(i, body.pos, body.heading, _target);
-    else this.predictTarget(i, body, gait, p.duration, _target);
+    if (forced) {
+      this.neutralWorld(i, body.pos, body.heading, _target);
+      // a corrective step from a stand: the joint stays about where it is
+      this.predHip[i].copy(this.hips[i]).addScaledVector(body.velocity, p.duration);
+      this.predOk[i] = Number.isFinite(this.reach[i]);
+    } else this.predictTarget(i, body, gait, p.duration, _target);
     const f = this.project(_target, body, true, p.from.y, _foot, this.stepContext(i));
     p.to.copy(f.point);
     p.toNormal.copy(f.normal);
@@ -608,7 +665,7 @@ export class FootPlanner {
     c.fromNormal.copy(p.fromNormal);
     const known = Number.isFinite(this.reach[i]);
     c.hip = known ? this.hips[i] : null;
-    c.reachFrom = known ? this.predHip[i] : null;
+    c.reachFrom = known && this.predOk[i] ? this.predHip[i] : null;
     c.reach = this.t.reachFrac * this.reach[i];
     return c;
   }

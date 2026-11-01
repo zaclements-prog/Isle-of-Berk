@@ -27,11 +27,18 @@ function aheadAim(d: DragonCharacter, out: THREE.Vector3): THREE.Vector3 {
 }
 
 /** Toothless's M6 layer on a DragonCharacter: the brain with the flight, jump and plasma actions (lab, game, tests). The
- * flight steps first, so a Space it takes (a running takeoff) is not also a jump. */
+ * flight steps first, so a Space it takes (a running takeoff) is not also a jump. Plasma reads the flight and the jump
+ * to fire on the wing. */
 export function createToothlessBrain(d: DragonCharacter, rig: MotionRig, o: ToothlessBrainOptions = {}): ToothlessBrain {
   const flight = new FlightAction(d.tuning.flight);
   const jump = new JumpAction(d.tuning.jump);
-  const plasma = new PlasmaAction(rig, d, d.tuning.plasma, o.aimAt ?? aheadAim);
+  // on the wing: flying (any airborne phase) or a jump's arc; the flight's own beat hitch and recoil
+  const plasma = new PlasmaAction(rig, d, d.tuning.plasma, o.aimAt ?? aheadAim, {
+    airborne: () => flight.airborne || jump.phase === 'air',
+    velocity: (out) => (flight.airborne ? flight.velocity(out) : jump.velocity(out)),
+    hitch: (share) => { flight.hitch = share; },
+    recoil: (pitch, speedLoss) => { if (flight.airborne) flight.recoil(pitch, speedLoss); },
+  });
   const brain = new DragonBrain(d, { rig, seed: o.seed, sunDir: o.sunDir, actions: [flight, jump, plasma] });
   return { brain, jump, plasma, flight };
 }

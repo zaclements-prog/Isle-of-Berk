@@ -93,6 +93,31 @@ describe('layered collision world', () => {
     expect(ms).toBeLessThan(40); // the plan's budget is 8 ms in the browser; this CI box is far slower and shared
   });
 
+  it('refits a tile in place to the same answers as a rebuild', () => {
+    const dig = (pos: Float32Array) => {
+      for (let i = 1; i < pos.length; i += 3) {
+        const d = Math.hypot(pos[i - 1] - 100, pos[i + 1] - 100);
+        if (d < 12) pos[i] -= 3 * (1 - d / 12);
+      }
+    };
+    const a = CollisionWorld.fromObjects([ground], { tile: 64 });
+    const b = CollisionWorld.fromObjects([ground], { tile: 64 });
+    const la = a.tileLayer(1, 1)!;
+    const lb = b.tileLayer(1, 1)!;
+    const rebuilt = new Float32Array(la.geometry.attributes.position.array as ArrayLike<number>);
+    dig(rebuilt);
+    a.replaceLayer(la, rebuilt);
+    expect(b.refitLayer(lb, (pos) => (dig(pos), true))).toBe(true);
+    expect(lb.box.min.y).toBeCloseTo(la.box.min.y, 4);
+    const rnd = mulberry32(3);
+    for (let k = 0; k < 200; k++) {
+      const x = 70 + rnd() * 60;
+      const z = 70 + rnd() * 60;
+      expect(b.groundAt(x, z, 30, 60)!.point.y).toBeCloseTo(a.groundAt(x, z, 30, 60)!.point.y, 4);
+    }
+    expect(b.groundAt(100, 100, 30, 60)!.point.y).toBeLessThan(a.groundAt(140, 140, 30, 60)!.point.y + 5);
+  });
+
   it('keeps the triangle queries for decals working across layers', () => {
     const box = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(64, 0, 64), new THREE.Vector3(6, 20, 6));
     const tris = tiled.trianglesInBox(box, 2000, []);

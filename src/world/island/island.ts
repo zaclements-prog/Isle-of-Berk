@@ -8,18 +8,22 @@ import { COVE_LAYERS, loadLayerArrays, loadSplatTexture, type LayerArrays } from
 import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '../terrain/splatShader';
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
-import { CollisionWorld, trianglesOf, type CollisionSet } from '../collision';
+import { CollisionWorld, trianglesOf, type CollisionLayer, type CollisionSet } from '../collision';
 import type { WorldEvents } from '../events';
 import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
 import { Craters } from '../damage/craters';
-import { Debris } from '../damage/debris';
+import { DEFAULT_DEBRIS, Debris } from '../damage/debris';
+import { Ejecta } from '../damage/ejecta';
 import { StructureDamage } from '../damage/structures';
+import { Splashes } from '../damage/splash';
+import { islandFireFuel } from '../damage/fire';
+import { Fire } from '../damage/fireFx';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
 import { createStylizedTerrainMaterial, createStylizedUniforms, type StylizedTerrainUniforms } from './stylizedTerrain';
-import { buildBerk, type BerkLandmarks, type DockPlacement, type HousePlacement } from './berk';
+import { buildBerk, levelHousePads, type BerkLandmarks, type DockPlacement, type HousePlacement } from './berk';
 
 /** `public/assets/world/island/terrain.json` (pipeline/terrain/bakeIsland.mjs). */
 export interface IslandHeader extends GridHeader {
@@ -52,6 +56,8 @@ export interface IslandCollision {
   world: CollisionWorld;
   trees: CollisionSet;
   structures: CollisionSet;
+  /** The boulders' hulls (one layer, in `props.boulders` order), moved when a crater re-seats them. */
+  boulders?: CollisionLayer;
 }
 
 function app_prepare(app: App, root: THREE.Object3D): void {
@@ -63,13 +69,25 @@ export function islandCollisionWorld(terrainRoot: THREE.Object3D, props: Props, 
   // the terrain alone in tiles (a crater re-samples a tile from the heightfield), boulders a layer of their own
   const world = CollisionWorld.fromObjects([terrainRoot], { tile });
   const boulders = props.collision.filter((o) => o.name === 'boulders_collision');
-  if (boulders.length) world.addLayer('boulders', trianglesOf(boulders));
+  const boulderLayer = boulders.length ? world.addLayer('boulders', trianglesOf(boulders)) : undefined;
   const trees = world.createSet('trees', tile);
   for (const t of props.trunks) trees.add(t.key, t.positions);
   const structures = world.createSet('structures', tile);
   for (const b of berk.structures) structures.add(b.key, b.positions);
   world.flush();
-  return { world, trees, structures };
+  return { world, trees, structures, boulders: boulderLayer };
+}
+
+/** Re-seat the boulders in a rectangle on `ground` (props.reseatBoulders) and move their hulls in the collision layer. */
+export function reseatBoulders(props: Props, collision: IslandCollision, rect: readonly [number, number, number, number], ground: (x: number, z: number) => number): number {
+  const moved = props.reseatBoulders(rect, ground);
+  if (moved.length && collision.boulders) {
+    collision.world.refitLayer(collision.boulders, (pos) => {
+      for (const { boulder: b, dy } of moved) for (let v = b.first; v < b.first + b.count; v++) pos[v * 3 + 1] += dy;
+      return true;
+    });
+  }
+  return moved.length;
 }
 
 export interface IslandOptions {
@@ -153,7 +171,13 @@ export class IslandRegion implements Region {
   craters: Craters | null = null;
   debris: Debris | null = null;
   structures: StructureDamage | null = null;
+  /** The soil blasts throw (clods, dirt spray, dust). */
+  ejecta: Ejecta | null = null;
+  /** Debris hitting the sea or the pond. */
+  splashes: Splashes | null = null;
   trees: TreeDamage | null = null;
+  /** Fire: blasts light the grass and forest floor; it spreads a while, chars the ground and trees, and burns out. */
+  fire: Fire | null = null;
 
   /**
    * Let blasts damage the island (world-interaction plan §4, milestone 3): scorch the ground and burn or flatten the
@@ -165,7 +189,10 @@ export class IslandRegion implements Region {
     // craters first: the ground the burn and the falling trees then read is the dug one
     this.craters = new Craters(hf, {
       refreshTerrain: (r) => this.terrain.refresh(r), collision: collision?.world, tile, heightTexture: this.heightTexture,
-      changed: () => this.grass?.invalidate(),
+      changed: (r) => {
+        this.grass?.invalidate();
+        this.reseatBoulders(r, collision);
+      },
     }, events);
     const burn = new BurnMask(hf.size, hf.origin - hf.spacing / 2, hf.spacing);
     this.burn = burn;
@@ -187,17 +214,57 @@ export class IslandRegion implements Region {
     this.root.add(this.trees.root);
     // buildings break into debris that tumbles, settles and becomes rubble Toothless can walk on
     if (collision) {
-      this.debris = new Debris(collision.world, collision.world.createSet('debris', tile));
+      const sea = this.header.seaLevel;
+      const P = this.header.cove.pond;
+      const splashes = (this.splashes = new Splashes(force ?? null));
+      this.debris = new Debris(collision.world, collision.world.createSet('debris', tile), DEFAULT_DEBRIS, {
+        ground: (x, z) => hf.heightAt(x, z),
+        water: (x, z) => Math.max(hf.heightAt(x, z) < sea ? sea : -Infinity, Math.hypot(x - P.x, z - P.z) < P.r ? P.level : -Infinity),
+        splash: (at, speed, mass) => splashes.splash(at, speed, mass),
+      });
       app_prepare(this.app, this.debris.mesh);
-      this.root.add(this.debris.mesh);
+      this.root.add(this.debris.mesh, splashes.root);
     }
+    // houses, the hall and piers break part by part (their standing parts drawn by the damage once opened)
     this.structures = new StructureDamage(this.berk.breakables, collision?.structures ?? null, this.debris, events);
+    app_prepare(this.app, this.structures.root);
+    this.root.add(this.structures.root);
+    // the soil a blast throws: clods, a dirt spray and a dust cloud (none off a blast on the water)
+    const sea = this.header.seaLevel;
+    const P = this.header.cove.pond;
+    const n = new THREE.Vector3();
+    this.ejecta = new Ejecta({
+      height: (x, z) => hf.heightAt(x, z),
+      rock: (x, z) => (hf.heightAt(x, z) < sea || Math.hypot(x - P.x, z - P.z) < P.r ? 2 : THREE.MathUtils.smoothstep(1 - hf.normalAt(x, z, n).y, 0.15, 0.4)),
+    }, null);
+    events.on('blast', (e) => {
+      if (hf.heightAt(e.point.x, e.point.z) < sea || Math.hypot(e.point.x - P.x, e.point.z - P.z) < P.r) return;
+      this.ejecta!.blast(e);
+    });
+    app_prepare(this.app, this.ejecta.root);
+    this.root.add(this.ejecta.root);
+    const grass = this.grass?.field;
+    this.fire = new Fire({
+      fuel: islandFireFuel({ height: (x, z) => hf.heightAt(x, z), upness: (x, z) => hf.normalAt(x, z, n).y, grass: grass && ((x, z) => grass.density(x, z)), seaLevel: sea, pond: P, burn }),
+      ground: (x, z) => hf.heightAt(x, z), start: hf.origin - hf.spacing / 2, size: hf.size * hf.spacing,
+      burn, trees: this.trees, events, force,
+    });
+    app_prepare(this.app, this.fire.root);
+    this.root.add(this.fire.root);
+  }
+
+  /** Set the boulders in a crater's rectangle back on the dug (or raised) ground, their collision hulls with them. */
+  private reseatBoulders(rect: readonly [number, number, number, number], collision: IslandCollision | null): void {
+    if (collision) reseatBoulders(this.props, collision, rect, (x, z) => this.hf.heightAt(x, z));
   }
 
   update(dt: number, ctx: RegionUpdateContext): void {
     this.burn?.update(dt);
     this.trees?.update(dt);
     this.debris?.update(dt);
+    this.splashes?.update(dt, ctx.camera, this.app.renderer.domElement.height);
+    this.ejecta?.update(dt, ctx.camera, this.app.renderer.domElement.height);
+    this.fire?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
     this.pond.update(dt);
@@ -209,6 +276,8 @@ export class IslandRegion implements Region {
     this.app.remove(this.root);
     this.terrain.dispose();
     this.terrain.material.dispose();
+    this.ejecta?.dispose();
+    this.fire?.dispose();
     this.layers?.dispose();
     this.ocean.dispose();
     this.pond.dispose();
@@ -220,6 +289,7 @@ export class IslandRegion implements Region {
     this.craters?.dispose();
     this.structures?.dispose();
     this.debris?.dispose();
+    this.splashes?.dispose();
     this.heightTexture.dispose();
     for (const t of this.splatTextures) t.dispose();
   }
@@ -238,6 +308,8 @@ export async function createIsland(app: App, opts: IslandOptions = {}): Promise<
     look === 'photo' ? loadLayerArrays(`${base}textures/terrain/`, COVE_LAYERS, low ? 512 : 1024) : Promise.resolve(null),
   ]);
   const hf = Heightfield.fromUint16LE(header, heightBuf);
+  // flat pads under the houses before the terrain, collision, grass, trees and water read the ground
+  levelHousePads(hf, header.houses);
   let splat: SplatUniforms | null = null;
   let material: THREE.Material;
   if (layers) {

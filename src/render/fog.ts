@@ -24,7 +24,7 @@ export interface FogParams {
  * lobe toward the sky's broad brightening without washing near ground toward the sun.
  */
 export const GOLDEN_FOG: FogParams = {
-  color: new THREE.Color(0.15, 0.17, 0.2),
+  color: new THREE.Color(0.19, 0.18, 0.17),   // warm haze (was a cool 0.15, 0.17, 0.2)
   sunColor: new THREE.Color(1.4, 0.78, 0.53),
   density: 0.0035,
   heightFalloff: 0.035,
