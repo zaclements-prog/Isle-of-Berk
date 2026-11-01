@@ -213,6 +213,11 @@ ${FORCE_PARS}`)
     this.rebuild(c.x, c.z);
   }
 
+  /** The ground changed (a crater): regrow the ring from the field on the next update. */
+  invalidate(): void {
+    this.center.set(Infinity, 0, Infinity);
+  }
+
   private rebuild(cx: number, cz: number): void {
     const { radius: R, cell, seed = 1 } = this.o;
     const f = this.field;

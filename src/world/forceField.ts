@@ -79,6 +79,7 @@ uniform vec4 uForceShockS[${MAX_SHOCKS}];
 uniform float uForceTime;
 uniform sampler2D tWorldBurn;
 uniform vec4 uWorldExtent;
+float sq(float x) { return x * x; } // (GLSL pow(x, 2.0) is undefined for x < 0: NaN on some GPUs)
 // Scorch (r) and flattening (g) of the ground at world xz.
 vec2 worldBurn(vec2 xz) {
   return texture2D(tWorldBurn, clamp((xz - uWorldExtent.xy) * uWorldExtent.zw, 0.0, 1.0)).rg;
@@ -103,7 +104,7 @@ vec3 forceAt(vec3 p) {
     if (s <= 0.0) continue;
     vec2 d = p.xz - uForceShock[k].xz;
     float dist = length(d);
-    float band = exp(-pow((dist - uForceShock[k].w) / max(uForceShockS[k].y, 0.1), 2.0)) * s;
+    float band = exp(-sq((dist - uForceShock[k].w) / max(uForceShockS[k].y, 0.1))) * s;
     push += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * band * 1.6;
     flat_ = max(flat_, band);
   }

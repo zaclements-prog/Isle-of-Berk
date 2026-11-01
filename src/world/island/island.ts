@@ -8,10 +8,11 @@ import { COVE_LAYERS, loadLayerArrays, loadSplatTexture, type LayerArrays } from
 import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '../terrain/splatShader';
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
-import { CollisionWorld, type CollisionSet } from '../collision';
+import { CollisionWorld, trianglesOf, type CollisionSet } from '../collision';
 import type { WorldEvents } from '../events';
 import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
+import { Craters } from '../damage/craters';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
@@ -57,7 +58,10 @@ function app_prepare(app: App, root: THREE.Object3D): void {
 
 /** See IslandRegion.createCollisionWorld. */
 export function islandCollisionWorld(terrainRoot: THREE.Object3D, props: Props, berk: BerkLandmarks, tile = 64): IslandCollision {
-  const world = CollisionWorld.fromObjects([terrainRoot, ...props.collision.filter((o) => o.name !== 'trunks_collision')], { tile });
+  // the terrain alone in tiles (a crater re-samples a tile from the heightfield), boulders a layer of their own
+  const world = CollisionWorld.fromObjects([terrainRoot], { tile });
+  const boulders = props.collision.filter((o) => o.name === 'boulders_collision');
+  if (boulders.length) world.addLayer('boulders', trianglesOf(boulders));
   const trees = world.createSet('trees', tile);
   for (const t of props.trunks) trees.add(t.key, t.positions);
   const structures = world.createSet('structures', tile);
@@ -144,6 +148,7 @@ export class IslandRegion implements Region {
 
   /** Blast damage, once enabled: the burn mask (scorch, flattened grass) and the trees' states. */
   burn: BurnMask | null = null;
+  craters: Craters | null = null;
   trees: TreeDamage | null = null;
 
   /**
@@ -151,8 +156,13 @@ export class IslandRegion implements Region {
    * grass (the burn mask, read by the terrain and the grass through the force uniforms), and scorch, fell and
    * eventually reduce trees to stumps, with their collision in `collision.trees` following.
    */
-  enableDamage(events: WorldEvents, collision: IslandCollision | null, force?: ForceUniforms): void {
+  enableDamage(events: WorldEvents, collision: IslandCollision | null, force?: ForceUniforms, tile = 64): void {
     const hf = this.hf;
+    // craters first: the ground the burn and the falling trees then read is the dug one
+    this.craters = new Craters(hf, {
+      refreshTerrain: (r) => this.terrain.refresh(r), collision: collision?.world, tile, heightTexture: this.heightTexture,
+      changed: () => this.grass?.invalidate(),
+    }, events);
     const burn = new BurnMask(hf.size, hf.origin - hf.spacing / 2, hf.spacing);
     this.burn = burn;
     if (force) {
@@ -195,6 +205,7 @@ export class IslandRegion implements Region {
     this.grass?.dispose();
     this.burn?.dispose();
     this.trees?.dispose();
+    this.craters?.dispose();
     this.heightTexture.dispose();
     for (const t of this.splatTextures) t.dispose();
   }

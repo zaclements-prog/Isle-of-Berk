@@ -25,6 +25,7 @@ const events = new WorldEvents();
 const field = new ForceField(undefined, events);
 const interactions = field.contacts;
 let groundAt: (x: number, z: number) => number = () => 0;
+let explode: ((at: THREE.Vector3) => void) | null = null;
 
 async function start(): Promise<void> {
   let world: CollisionWorld;
@@ -53,11 +54,17 @@ async function start(): Promise<void> {
         tufts: island.grass?.tufts.count ?? 0, flowers: island.grass?.flowers.count ?? 0, trees: island.trees?.census(),
         layers: world.layers.length, triangles: world.triangles, downwash: +field.downwash.toFixed(3),
       }),
-      /** Set off a blast on the ground at (x, z) (power 1 = his plasma), as a plasma impact would. */
-      blast: (x: number, z: number, power = 1) => events.emit({
+      /** Camera and force-field state (diagnostics). */
+      probe: () => ({
+        cam: app.camera.position.toArray(), down: field.uniforms.uForceDown.value.toArray(), downS: field.uniforms.uForceDownS.value,
+        wake: field.uniforms.uForceWake.value.toArray(), wakeDir: field.uniforms.uForceWakeDir.value.toArray(),
+        shocks: field.uniforms.uForceShockS.value.map((v) => v.x),
+      }),
+      /** Set off a blast on the ground at (x, z): power 1 is his plasma, with its explosion; other powers, the event alone. */
+      blast: (x: number, z: number, power = 1) => (power === 1 && explode ? explode(new THREE.Vector3(x, island.heightAt(x, z), z)) : events.emit({
         type: 'blast', point: new THREE.Vector3(x, island.heightAt(x, z), z), normal: new THREE.Vector3(0, 1, 0),
         power, radius: 6 * power, time: app.loop.simTime,
-      }),
+      })),
     });
     spawn = { ...island.spawnPoints[0] };
     const ctx = { time: app.loop.simTime, camera: app.camera, interactions };
@@ -72,6 +79,7 @@ async function start(): Promise<void> {
   hud.textContent = 'Loading Toothless…';
   const t = await createToothless({ app, world, spawn, events });
   field.source = () => t.forceSource(groundAt);
+  explode = (at) => t.fx.explode(at, new THREE.Vector3(0, 1, 0));
   // what parts the island's grass: his paws and the low body (chest, belly, hips, the start of the tail)
   const d = t.dragon;
   const body = d.proxies.items.flatMap((p, k) => (['chest', 'belly', 'hips', 'tail_a', 'tail_b'].includes(p.name) ? [k] : []));

@@ -276,10 +276,15 @@ export class PlasmaFx {
   }
 
   private impact(b: Bolt, at: THREE.Vector3): void {
-    this.impacts++;
     const hit = this.o.world.closestPoint(at, this.o.cfg.boltRadius * 3);
-    _n.copy(hit ? hit.normal : b.dir.clone().negate()).normalize();
     this.retire(b);
+    this.explode(at, hit ? hit.normal : b.dir.clone().negate());
+  }
+
+  /** A plasma explosion at `at` (flash, light, sparks, smoke, scorch, shake, onImpact) — a bolt's impact, or any blast. */
+  explode(at: THREE.Vector3, normal: THREE.Vector3): void {
+    this.impacts++;
+    _n.copy(normal).normalize();
     const f = this.flash;
     f.t = 0;
     f.sprite.position.copy(at).addScaledVector(_n, 0.2);

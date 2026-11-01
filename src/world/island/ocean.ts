@@ -126,7 +126,7 @@ vec3 oceanForce(vec2 xz) {
     if (s <= 0.0) continue;
     vec2 d = xz - uForceShock[k].xz;
     float dist = length(d);
-    float band = exp(-pow((dist - uForceShock[k].w) / max(uForceShockS[k].y, 0.1), 2.0)) * min(s, 1.5);
+    float band = exp(-sq((dist - uForceShock[k].w) / max(uForceShockS[k].y, 0.1))) * min(s, 1.5);
     slope += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * band * 0.8;
     foam = max(foam, band * 0.8);
   }

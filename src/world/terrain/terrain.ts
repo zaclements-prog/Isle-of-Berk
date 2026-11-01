@@ -68,6 +68,32 @@ export class Terrain {
     }
   }
 
+  /**
+   * Rebuild the chunks overlapping the world rectangle [x0, z0, x1, z1] after the heightfield changed under them (a
+   * crater): the current LOD's geometry is rebuilt now, the other cached LODs are dropped and rebuilt when next used.
+   * Returns how many chunks were rebuilt.
+   */
+  refresh(rect: readonly [number, number, number, number]): number {
+    const pad = 2 * this.hf.spacing; // vertex normals reach one sample out
+    let n = 0;
+    for (const c of this.chunks) {
+      if (c.box.max.x < rect[0] - pad || c.box.min.x > rect[2] + pad || c.box.max.z < rect[1] - pad || c.box.min.z > rect[3] + pad) continue;
+      for (let k = 0; k < c.geos.length; k++) {
+        if (k === c.lod || !c.geos[k]) continue;
+        c.geos[k]!.dispose();
+        c.geos[k] = null;
+      }
+      const old = c.geos[c.lod]!;
+      const g = buildChunkGeometry(this.hf, c.coord, LOD_STEPS[c.lod], this.skirtDepth * LOD_STEPS[c.lod]);
+      c.geos[c.lod] = g;
+      c.mesh.geometry = g;
+      old.dispose();
+      c.box.copy(chunkBounds(this.hf, c.coord));
+      n++;
+    }
+    return n;
+  }
+
   /** Enables render `layer` on every chunk whose bounds overlap the world rectangle [x0, z0, x1, z1]. */
   enableLayerIn(layer: number, rect: readonly [number, number, number, number]): number {
     let n = 0;
