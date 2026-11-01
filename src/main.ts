@@ -33,10 +33,13 @@ async function start(): Promise<void> {
     const island = await createIsland(app, { look });
     world = CollisionWorld.fromObjects(island.collisionRoots());
     spawn = { ...island.spawnPoints[0] };
-    const ctx = { time: 0, camera: app.camera, interactions };
-    app.loop.addRender((_alpha, frameDt) => {
-      ctx.time += frameDt;
-      island.update(frameDt, ctx);
+    const ctx = { time: app.loop.simTime, camera: app.camera, interactions };
+    // the island's grass, trees and sea animate on simulation time, not wall-clock frame time: the same motion at any
+    // frame rate, and a paused, stepped capture (berk.step) shows exactly what play shows
+    app.loop.addRender(() => {
+      const dt = Math.max(0, app.loop.simTime - ctx.time);
+      ctx.time = app.loop.simTime;
+      island.update(dt, ctx);
     }, -1);
   }
   hud.textContent = 'Loading Toothless…';
