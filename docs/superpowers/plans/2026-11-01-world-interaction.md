@@ -143,3 +143,25 @@ one task.
 **Still to judge in play:** the wake's lean in motion; the pads' banks on the steepest terraces; whether a power-1
 blast (fells within 4.5 m, crater radius 3.3 m) feels strong enough. The plan's grass test spot (200, 100) is forest
 floor; use the meadow at (30, 30)–(40, 60).
+
+## Wave 2 (2026-11-01, branch `wave2`)
+
+Built on `look-faceted` (the faceted Toothless and the golden-hour grade), checked on the GPU (M5 Max, ANGLE Metal).
+658 tests green.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Airborne plasma | `actions/plasma.ts`, `fx/plasmaFx.ts`, `camera/orbitCamera.ts`, `toothless.ts` | Fires in every flight state and mid-jump. The bolt flies along the aim ray at `boltSpeed` plus the body's speed along it; aim error 0.2–0.6 m at 50–180 m; range 320 m. An air charge pose (face plus half the rear on the flight clips, the beat held), a recoil pitch-up. Fires only within 75° of the flight path (holds up to 0.6 s for the camera to turn him). Flight camera lifted 3 m; a reticle ring. Far hits keep a ~3° flash and a sqrt-falloff shake. |
+| Buildings piece by piece | `damage/structures.ts` | Per-part hit points, leaning/sagging/charring before a part breaks, per-wall collision (openings), supports (roofs on walls, planks on posts), collapse below 30% integrity. Rubble resting on a part or a house wakes when it goes. |
+| Debris on debris | `damage/debris.ts` | Spatial-hash broad phase, sampled box contacts, sequential impulses; stacks settle and sleep. Blasts toss settled rubble. Hall collapse: 0.7 ms median per frame. |
+| Splashes | `damage/splash.ts`, `forceField.ts` (`uForceRipple*`), `island/ocean.ts` | Spray, column and mist by impact energy; ripple rings and foam drawn by the water shader. |
+| Fire | `damage/fire.ts`, `damage/fireFx.ts`, `trees.ts` (burning, burnt), `events.ts` (`burn`) | 2 m grid; ignites from blasts, scorched trees and felled logs; spreads downwind and with the downwash, decays by distance (~25 m), burns out in under 45 s; caps 180 cells / 24 trees. Faceted flames, ember beds, embers, faceted smoke; downwash fans flames and smoke. ~0.1 ms update, ~0.75 ms render at peak. |
+| Crater rims | `island/props.ts`, `island/island.ts` (`reseatBoulders`) | Boulders re-seat on the dug ground, their collision hulls refit with them. |
+
+**Known gaps:**
+- A house swapped for its parts loses its gable infill, boards and door.
+- The hall chews slowly (7 spread blasts to collapse).
+- Floating wood that falls asleep freezes on the water.
+- Fire doesn't set buildings alight.
+- `berk.world.stats()` doesn't show fire (`island.fire.stats()` does).
+- Two older wall-clock budget tests (`island.test.ts`, `collisionLayers.test.ts`) flake under heavy CPU load.
