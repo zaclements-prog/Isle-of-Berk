@@ -309,7 +309,7 @@
     "chargeFacingDeg": 35,
     "turnTimeout": 1.5,
     "chargeTime": 0.3,
-    "cooldown": 0.7,
+    "cooldown": 0.35,
     "recoilDrop": 1.2,
     "recoilKick": 3,
     "skidSpeed": 0.8,
@@ -329,7 +329,16 @@
     "airRear": 0.5,
     "airRecoilDeg": 6,
     "airRecoilSpeed": 1.5,
-    "inherit": 1
+    "inherit": 1,
+    "tapTime": 0.25,
+    "tapPower": 0.6,
+    "fullTime": 2,
+    "fullPower": 2.6,
+    "fullCooldown": 1.4,
+    "tapGlow": 0.45,
+    "fullGlow": 2.6,
+    "flickerFrom": 0.7,
+    "pressBuffer": 0.15
   },
   "attention": {
     "maxDist": 15,

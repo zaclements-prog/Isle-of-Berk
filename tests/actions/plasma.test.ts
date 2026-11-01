@@ -95,7 +95,7 @@ describe.skipIf(!HAS_LIBRARY)('PlasmaAction on the real rig with the library', (
     });
     expect(s.plasma.fired).toBe(1);
     expect(rear).toBe(1);
-    expect(glow).toBeGreaterThan(0.95);
+    expect(glow).toBeGreaterThan(s.d.tuning.plasma.tapGlow - 0.05);   // a quick shot: the plates light at tapGlow
     expect(pupil).toBeLessThan(0.15);
     expect(s.d.nanResets).toBe(0);
   });

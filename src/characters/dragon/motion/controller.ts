@@ -21,6 +21,8 @@ export interface MoveIntent {
   /** Edge-triggered action requests for M6 (jump, plasma). */
   jump: boolean;
   plasma: boolean;
+  /** F or the left button held now (the plasma's long fire: a hold charges the blast). */
+  plasmaHeld: boolean;
   /** Edge: Space held from a stand for controller.flyHold s (a standing takeoff; a tap is still the jump). */
   fly: boolean;
   /** Forward / back keys, camera-independent: +1 W, −1 S (in flight: flap, brake; neither: glide). */
@@ -28,7 +30,7 @@ export interface MoveIntent {
 }
 
 export function createIntent(): MoveIntent {
-  return { dirX: 0, dirZ: 0, hasDir: false, speed: 0, gallop: false, prowl: false, jump: false, plasma: false, fly: false, throttle: 0 };
+  return { dirX: 0, dirZ: 0, hasDir: false, speed: 0, gallop: false, prowl: false, jump: false, plasma: false, plasmaHeld: false, fly: false, throttle: 0 };
 }
 
 /**
@@ -73,6 +75,7 @@ export class DragonController {
       }
     }
     out.plasma = input.pressed.has('KeyF') || (input.buttonsPressed & 1) !== 0;
+    out.plasmaHeld = input.keys.has('KeyF') || (input.buttons & 1) !== 0;
     return out;
   }
 }

@@ -81,9 +81,9 @@ describe('PlasmaAction on the wing (fixture rig, stand-in body)', () => {
     expect(Math.max(...s.calls.hitch)).toBeCloseTo(c.airHitch, 2);
     expect(s.calls.hitch[s.calls.hitch.length - 1]).toBe(0);
     expect(s.calls.recoil.length).toBe(2);
-    for (const [p, v] of s.calls.recoil) {
-      expect(p).toBeCloseTo(deg(c.airRecoilDeg), 9);
-      expect(v).toBe(c.airRecoilSpeed);
+    for (const [p, v] of s.calls.recoil) {                        // quick shots: the recoil by √tapPower
+      expect(p).toBeCloseTo(deg(c.airRecoilDeg) * Math.sqrt(c.tapPower), 9);
+      expect(v).toBeCloseTo(c.airRecoilSpeed * Math.sqrt(c.tapPower), 9);
     }
     expect(s.d.look.snap).toBe(1);
     expect(s.d.nanResets).toBe(0);
@@ -240,7 +240,7 @@ describe.skipIf(!HAS_LIBRARY)('Plasma on the wing (Toothless library, the game c
     expect(dive.shot.speed!).toBeGreaterThan(glide.shot.speed!);
     expect(r.impacts.length).toBe(2);
     for (let k = 0; k < 2; k++) expect(r.impacts[k].distanceTo(r.fired[k].aim)).toBeLessThan(0.5);
-    expect(r.glow).toBeGreaterThan(0.95);                          // the plates light on the wing too
+    expect(r.glow).toBeGreaterThan(r.d.tuning.plasma.tapGlow - 0.05);   // the plates light on the wing too
     expect(r.neck).toBeCloseTo(r.d.tuning.plasma.airRear, 2);
     expect(r.d.layers.weight('plasma_air_face')).toBe(0);           // and it all lets go
     expect(r.d.layers.weight('plasma_rear')).toBe(0);               // never the standing rear
