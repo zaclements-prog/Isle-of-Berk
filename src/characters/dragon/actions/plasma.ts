@@ -24,6 +24,51 @@ export interface PlasmaShot {
   readonly dir: THREE.Vector3;
   /** Speed along `dir` (m/s): the muzzle speed plus the body's speed along the ray; absent = tuning.plasma.boltSpeed. */
   readonly speed?: number;
+  /** The blast's power (× tuning.plasma.blastPower: it scales the bolt, the flash and every world effect); absent = 1. */
+  readonly power?: number;
+  /** How far the long fire was charged (0 = a quick shot … 1 = full). */
+  readonly charge?: number;
+}
+
+/**
+ * The long fire's charge so far (0…1) after holding `held` s from the press: nothing within tapTime (a quick shot),
+ * then linear up to fullTime.
+ */
+export function chargeFraction(c: PlasmaTuning, held: number): number {
+  if (held >= c.fullTime - 1e-6) return 1;                          // (a step-summed hold lands a hair short)
+  return Math.min(1, Math.max(0, (held - c.tapTime) / Math.max(1e-6, c.fullTime - c.tapTime)));
+}
+
+/** A blast's power for a charge (0…1): tapPower for a quick shot up to fullPower, easing in (a full charge pays most). */
+export function chargePower(c: PlasmaTuning, charge: number): number {
+  return c.tapPower + (c.fullPower - c.tapPower) * Math.max(0, Math.min(1, charge)) ** 1.5;
+}
+
+/** The cooldown after a blast of this charge (0…1): the quick shot's up to a full charge's. */
+export function chargeCooldown(c: PlasmaTuning, charge: number): number {
+  return c.cooldown + (c.fullCooldown - c.cooldown) * Math.max(0, Math.min(1, charge));
+}
+
+/**
+ * The dorsal plates' glow (berkPlasmaGlow) while he charges: the quick shot's ramp to tapGlow over the wind-up (`windup`
+ * s into it), and a long charge (`held` s since the press, past tapTime) climbing from there to fullGlow at full
+ * charge, with a pulse that dips deeper and quickens (3 → 8 Hz, to −35 %) over its last (1 − flickerFrom) share. At full charge
+ * the pulse is at its crest (the moment it fires is the brightest).
+ */
+export function chargeGlow(c: PlasmaTuning, windup: number, held: number): number {
+  const ramp = c.tapGlow * smoothstep(0, c.chargeTime, windup);
+  if (held <= c.tapTime) return ramp;
+  const f = chargeFraction(c, held);
+  let g = c.tapGlow + (c.fullGlow - c.tapGlow) * f ** 1.4;
+  if (f > c.flickerFrom) {
+    const T = (1 - c.flickerFrom) * (c.fullTime - c.tapTime);       // the flicker's span (s)
+    const tau = (f - c.flickerFrom) * (c.fullTime - c.tapTime);     // into it (s)
+    const amp = tau / T;
+    // phase of a pulse whose frequency rises 3 → 8 Hz over T, shifted so it crests at full charge
+    const ph = (x: number) => 3 * x + (2.5 * x * x) / T;
+    g *= 1 - 0.35 * amp * 0.5 * (1 - Math.cos(2 * Math.PI * (ph(tau) - ph(T))));
+  }
+  return Math.max(ramp, g);
 }
 
 /**
@@ -52,7 +97,25 @@ export function boltSpeedFrom(muzzle: number, dir: THREE.Vector3, body: THREE.Ve
 }
 
 /**
- * The plasma blast (spec §6.13). F / left click: if the aim is more than ~100° off his facing he turns to it first;
+ * Where the long charge's light has climbed to along the spine (the materials' plasmaSweep.x: 0 = the tail tip … 1 =
+ * the head, 1.2 = every plate alike): a quick shot lights them all at once; a long charge runs the light from the tail
+ * up to the head over the first 80 % of the charge, the rest of the plates holding the quick shot's glow.
+ */
+export function chargeSweep(c: PlasmaTuning, held: number): number {
+  if (held <= c.tapTime) return 1.2;
+  return Math.min(1.2, (chargeFraction(c, held) / 0.8) * 1.1);
+}
+
+/**
+ * The plasma blast (spec §6.13), quick fire and long fire. A quick press (F / left click released within tapTime) is a
+ * small shot (tapPower) after the usual ~0.3 s wind-up, with a short cooldown, so taps fire in quick succession (a tap
+ * up to pressBuffer s early is kept). Held on, the blast charges: the dorsal plates light up (`glow`, chargeGlow) from
+ * the quick shot's level to a bright, flickering fullGlow, and at fullTime from the press it fires itself at fullPower
+ * (a much bigger bolt and blast, a bigger recoil and a longer cooldown). Released between the two, it fires at once
+ * with the power charged so far (chargePower): the hold is never wasted, and a tap never needs to be a perfect click.
+ * The same on the ground and on the wing. `press(holdSeconds)` / `release()` script it (berk.toothless.fireHold).
+ *
+ * F / left click: if the aim is more than ~100° off his facing he turns to it first;
  * then a ~0.3 s charge (the plasma_rear layer: head rears, jaw opens, teeth out, ears flat, pupils slit, dorsal plates
  * glow — its face curves); the bolt leaves the mouth anchor toward the aim point; a recoil kicks the head up, dips the
  * suspension and skids him back a little; then a ~0.7 s cooldown. The aim point comes from `aimAt` (the game: the
@@ -84,6 +147,22 @@ export class PlasmaAction implements DragonAction {
   offPath = 0;
   /** Blasts let go unfired: the aim stayed outside the forward cone. */
   dropped = 0;
+  /** Seconds the button has been held since this blast's press (frozen at the release). */
+  held = 0;
+  /** The button is still down for this blast. */
+  holding = false;
+  /** The last blast's charge (0…1) and power. */
+  lastCharge = 0;
+  lastPower = 0;
+  /** A press waiting for him to be ready (s it is kept for). */
+  private queued = 0;
+  /** Scripted press / hold (s) for the debug API and captures. */
+  private scriptPress = false;
+  private scriptHold = 0;
+  /** On the wing: s spent ready to fire with the aim outside the cone. */
+  private wait = 0;
+  /** The plates' glow when it fired (the recover fades it out). */
+  private fireGlow = 0;
   private readonly mouthBone: number;
   private readonly mouthLocal: THREE.Vector3;
   private readonly airLayers: boolean;
@@ -114,6 +193,39 @@ export class PlasmaAction implements DragonAction {
     return this.phase !== 'idle' || this.linger > 0;
   }
 
+  /** The long fire's charge so far (0…1); 0 when idle or for a quick shot. */
+  get charge(): number {
+    return this.phase === 'turn' || this.phase === 'charge' ? chargeFraction(this.cfg, this.held) : 0;
+  }
+
+  /** The dorsal plates' glow he drives (DragonAction.glow): charging, then fading after the release; null idle. */
+  get glow(): number | null {
+    if (this.phase === 'idle') return null;
+    if (this.phase === 'recover') return this.fireGlow * (1 - smoothstep(0, this.cfg.chargeTime, this.t));
+    return chargeGlow(this.cfg, this.phase === 'charge' ? this.t : 0, this.held);
+  }
+
+  /**
+   * The plates' sweep for the materials (plasmaSweep): the lit front along the spine and the share of the glow the
+   * plates ahead of it keep (the quick shot's level). All alike when idle, after the release, or for a quick shot.
+   */
+  sweep(out: THREE.Vector2): THREE.Vector2 {
+    const g = this.glow ?? 0;
+    if (this.phase !== 'turn' && this.phase !== 'charge') return out.set(1.2, 1);
+    return out.set(chargeSweep(this.cfg, this.held), g > this.cfg.tapGlow ? this.cfg.tapGlow / g : 1);
+  }
+
+  /** A scripted press (the debug API): held for `holdSeconds` of simulation time (0: a tap, Infinity: until release). */
+  press(holdSeconds = 0): void {
+    this.scriptPress = true;
+    this.scriptHold = holdSeconds;
+  }
+
+  /** Let a scripted hold go. */
+  release(): void {
+    this.scriptHold = 0;
+  }
+
   /** Abandon the blast at once (a respawn): no rear-up layer, pending shot, cooldown or lingering aggression. */
   reset(d: DragonCharacter): void {
     if (d.layers.has('plasma_rear')) d.layers.set('plasma_rear', 0);
@@ -125,6 +237,18 @@ export class PlasmaAction implements DragonAction {
     this.linger = 0;
     this.skid = 0;
     this.shots.length = 0;
+    this.held = 0;
+    this.holding = false;
+    this.queued = 0;
+    this.scriptPress = false;
+    this.scriptHold = 0;
+    this.wait = 0;
+    this.fireGlow = 0;
+  }
+
+  /** The muzzle as a bone name and a point in its local frame (the render places the charge's mouth glow by it). */
+  mouthAnchor(d: DragonCharacter): { bone: string; local: THREE.Vector3 } {
+    return { bone: d.skeleton.names[this.mouthBone], local: this.mouthLocal };
   }
 
   /** World position of the mouth anchor (the muzzle). */
@@ -139,14 +263,27 @@ export class PlasmaAction implements DragonAction {
     this.t += dt;
     this.dt = dt;
     const L = d.layers;
+    // the button: a press (kept pressBuffer s while he is busy), and whether it is still down
+    const down = d.intent.plasmaHeld || this.scriptHold > 0;
+    this.scriptHold = Math.max(0, this.scriptHold - dt);
+    if (d.intent.plasma || this.scriptPress) this.queued = c.pressBuffer + dt;
+    this.scriptPress = false;
+    this.queued = Math.max(0, this.queued - dt);
     if (this.phase === 'idle') {
-      if (!d.intent.plasma || this.cool > 0) return;
+      if (this.queued <= 0 || this.cool > 0) return;
       const air = this.body?.airborne() ?? false;
       if (!air && (!standing || d.mods.scripted)) return;
+      this.queued = 0;
       this.air = air;
       this.aimAt(d, this.aimPoint);
       this.phase = !air && Math.abs(this.offAim(d)) > deg(c.turnFirstDeg) ? 'turn' : 'charge';
       this.t = 0;
+      this.held = 0;
+      this.holding = down;
+      this.wait = 0;
+    } else if (this.phase !== 'recover' && this.holding) {
+      if (down) this.held += dt;
+      else this.holding = false;
     }
     if (this.air) return this.stepAir(d);
     if (this.phase === 'turn') {
@@ -168,7 +305,7 @@ export class PlasmaAction implements DragonAction {
       d.mods.speedCap = 0;
       d.intent.hasDir = false;
       if (L.has('plasma_rear')) L.set('plasma_rear', smoothstep(0, L.meta('plasma_rear')?.blendIn ?? 0.15, this.t), this.t, false, ORDER);
-      if (this.t >= c.chargeTime) this.fire(d);
+      if (this.t >= c.chargeTime && this.ready) this.fire(d);
       return;
     }
     // recover: the rear-up blends out while the charge's face curves play on; the skid decays
@@ -199,14 +336,17 @@ export class PlasmaAction implements DragonAction {
       // the face's curves run to the release and hold there while he waits for the aim to come round
       this.airPose(d, w, Math.min(this.t, c.chargeTime));
       d.look.snap = c.airSnap;
-      this.body?.hitch?.(c.airHitch * w);
+      // a long charge holds the beat back less (he has to stay up for two seconds)
+      this.body?.hitch?.(c.airHitch * w * (this.held > c.tapTime ? 0.5 : 1));
       this.mouth(d, _m);
       this.offPath = this.angleOffPath(d, _d.subVectors(this.aimPoint, _m));
       const inCone = this.offPath <= deg(c.airConeDeg);
-      if (this.t >= c.chargeTime && inCone) this.fire(d);
-      else if (this.t >= c.chargeTime + c.airHoldTime) {
+      const ready = this.t >= c.chargeTime && this.ready;
+      if (ready && inCone) this.fire(d);
+      else if (ready && (this.wait += this.dt) > c.airHoldTime + 1e-9) {
         // never came round: let it go unfired (no cooldown spent)
         this.dropped++;
+        this.fireGlow = this.glow ?? 0;
         this.phase = 'recover';
         this.t = 0;
       }
@@ -242,28 +382,41 @@ export class PlasmaAction implements DragonAction {
     return _f.angleTo(dir);
   }
 
+  /** The charge is done: released (a quick shot, or a long one let go early), or held to full. */
+  private get ready(): boolean {
+    return !this.holding || this.held >= this.cfg.fullTime - 1e-6;
+  }
+
   private offAim(d: DragonCharacter): number {
     return angleDiff(d.kin.heading, Math.atan2(this.aimPoint.x - d.kin.pos.x, this.aimPoint.z - d.kin.pos.z));
   }
 
   private fire(d: DragonCharacter): void {
     const c = this.cfg;
+    const charge = chargeFraction(c, this.held);
+    const power = chargePower(c, charge);
+    // the recoil grows with the square root of the power: a full charge kicks ~1.6× today's shot, a tap ~0.8×
+    const k = Math.sqrt(power);
+    this.fireGlow = this.glow ?? 0;
     this.mouth(d, _m);
     if (this.air) {
       // the skeleton is last step's: carry the muzzle on by one step of the body's velocity
       this.body!.velocity(_v);
       _m.addScaledVector(_v, this.dt);
       const dir = _d.subVectors(this.aimPoint, _m).normalize().clone();
-      this.shots.push({ from: _m.clone(), dir, speed: boltSpeedFrom(c.boltSpeed, dir, _v, c.inherit) });
-      this.body!.recoil?.(deg(c.airRecoilDeg), c.airRecoilSpeed);
+      this.shots.push({ from: _m.clone(), dir, speed: boltSpeedFrom(c.boltSpeed, dir, _v, c.inherit), power, charge });
+      this.body!.recoil?.(deg(c.airRecoilDeg) * k, c.airRecoilSpeed * k);
     } else {
-      this.shots.push({ from: _m.clone(), dir: _d.subVectors(this.aimPoint, _m).normalize().clone() });
-      d.body.impulse(c.recoilDrop);
-      this.skid = c.skidSpeed;
+      this.shots.push({ from: _m.clone(), dir: _d.subVectors(this.aimPoint, _m).normalize().clone(), power, charge });
+      d.body.impulse(c.recoilDrop * k);
+      this.skid = c.skidSpeed * k;
     }
     this.fired++;
-    d.look.headPitch.v += c.recoilKick;
-    this.cool = c.cooldown;
+    this.lastCharge = charge;
+    this.lastPower = power;
+    this.holding = false;
+    d.look.headPitch.v += c.recoilKick * k;
+    this.cool = chargeCooldown(c, charge);
     this.linger = c.lingerAggro;
     this.phase = 'recover';
     this.t = 0;

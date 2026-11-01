@@ -289,6 +289,16 @@ export interface MotionTuning {
      */
     airConeDeg: number; airHoldTime: number; airSnap: number; airHitch: number; airRear: number;
     airRecoilDeg: number; airRecoilSpeed: number; inherit: number;
+    /**
+     * Quick fire vs long fire (actions/plasma.ts, PlasmaAction): a press released within tapTime (s) is a quick shot
+     * of tapPower; held on, the charge builds over fullTime (s, from the press) to fullPower and fires itself there.
+     * Released between the two, it fires at once with the power of the charge so far (chargePower). `cooldown` is the
+     * quick shot's; a full charge's is fullCooldown (between, by the charge). The dorsal plates glow tapGlow on a quick
+     * shot and climb to fullGlow over a long charge, flickering in its last flickerFrom share. A press up to
+     * pressBuffer (s) before he is ready is kept and fires when he is.
+     */
+    tapTime: number; tapPower: number; fullTime: number; fullPower: number; fullCooldown: number;
+    tapGlow: number; fullGlow: number; flickerFrom: number; pressBuffer: number;
   };
   /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
   attention: {
@@ -389,10 +399,12 @@ export const DEFAULT_TUNING: MotionTuning = {
     runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4,
   },
   plasma: {
-    turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
+    turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.35,
     recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
     boltSpeed: 45, boltRadius: 0.12, boltRange: 320, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
     airConeDeg: 75, airHoldTime: 0.6, airSnap: 2.5, airHitch: 0.6, airRear: 0.5, airRecoilDeg: 6, airRecoilSpeed: 1.5, inherit: 1,
+    tapTime: 0.25, tapPower: 0.6, fullTime: 2, fullPower: 2.6, fullCooldown: 1.4,
+    tapGlow: 0.45, fullGlow: 2.6, flickerFrom: 0.7, pressBuffer: 0.15,
   },
   attention: {
     maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,

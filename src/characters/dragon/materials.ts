@@ -22,7 +22,14 @@ export interface DragonMaterials {
   byName(name: string): THREE.Material | undefined;
   uniforms: {
     rimColor: { value: THREE.Color }; rimStrength: { value: number }; scaleBump: { value: number };
-    plasmaGlow: { value: number }; pupil: { value: number }; eyeGlow: { value: number }; irisDepth: { value: number };
+    plasmaGlow: { value: number };
+    /**
+     * The plates' glow along the spine: x = the lit front's position from the tail tip (0) to the head (1; ≥ 1.1 all
+     * lit), y = the share of plasmaGlow the plates behind it (toward the head) still get. (1.2, 1): all of them alike.
+     * The plasma's long charge runs the front up the spine (PlasmaAction.sweep).
+     */
+    plasmaSweep: { value: THREE.Vector2 };
+    pupil: { value: number }; eyeGlow: { value: number }; irisDepth: { value: number };
     sunDir: { value: THREE.Vector3 };
     /** Multiplies eyeGlow (the face drives eyeGlow; the look sets how far it carries). */
     eyeGlowGain: { value: number };
@@ -32,6 +39,20 @@ export interface DragonMaterials {
     gaze: { value: THREE.Vector2 };
   };
 }
+
+/**
+ * The plates' share of the plasma glow at bind-pose z (the spine runs from the tail tip at z ≈ −4.9 to the head at
+ * z ≈ 1.9, +Z forward): full behind the sweep's front (berkPlasmaSweep.x, 0 = tail tip … 1 = head) with a soft edge
+ * and a hot band just at it, berkPlasmaSweep.y ahead of it.
+ */
+const PLATE_GLSL = /* glsl */ `
+  float berkPlateLit(float z) {
+    float u = (z + 4.9) / 6.8;
+    float f = berkPlasmaSweep.x;
+    float lit = 1.0 - smoothstep(f - 0.05, f + 0.05, u);
+    float band = f < 1.05 ? 0.6 * exp(-pow((u - f + 0.03) / 0.05, 2.0)) : 0.0;
+    return mix(berkPlasmaSweep.y, 1.0, lit) + band;
+  }`;
 
 /** Scale height (0..1) from bind-pose position, triplanar; cellular "overlapping scales" at ~2.6 cm. */
 const SCALE_GLSL = /* glsl */ `
@@ -68,12 +89,13 @@ function skinHook(m: THREE.Material, u: DragonMaterials['uniforms'], key: keyof 
     shader.uniforms.berkRimStrength = u.rimStrength;
     shader.uniforms.berkScaleBump = u.scaleBump;
     shader.uniforms.berkPlasmaGlow = u.plasmaGlow;
+    shader.uniforms.berkPlasmaSweep = u.plasmaSweep;
     shader.uniforms.berkSunDirW = u.sunDir;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec3 _mask;\nvarying vec3 vBerkMask;\nvarying vec3 vBerkBindPos;\nvarying vec3 vBerkBindNrm;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBerkMask = _mask; vBerkBindPos = position; vBerkBindNrm = normal;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vBerkMask;\nvarying vec3 vBerkBindPos;\nvarying vec3 vBerkBindNrm;\nuniform vec3 berkRimColor;\nuniform float berkRimStrength;\nuniform float berkScaleBump;\nuniform float berkPlasmaGlow;\nuniform vec3 berkSunDirW;\n${SCALE_GLSL}`)
+      .replace('#include <common>', `#include <common>\nvarying vec3 vBerkMask;\nvarying vec3 vBerkBindPos;\nvarying vec3 vBerkBindNrm;\nuniform vec3 berkRimColor;\nuniform float berkRimStrength;\nuniform float berkScaleBump;\nuniform float berkPlasmaGlow;\nuniform vec2 berkPlasmaSweep;\n${PLATE_GLSL}\nuniform vec3 berkSunDirW;\n${SCALE_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         // _mask: x = baked AO, y = underside, z = dorsal spikes (smoother, glossier plates)
         // Scales shrinking toward pixel size would alias into glitter: fade them to their mean height by the
@@ -94,7 +116,7 @@ function skinHook(m: THREE.Material, u: DragonMaterials['uniforms'], key: keyof 
           vec3 grad = sign(det) * (dhdx * r1 + dhdy * r2);
           normal = normalize(abs(det) * normal - grad * berkScaleBump);
         }`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.25, 0.55, 1.6) * vBerkMask.z * berkPlasmaGlow;')   // dorsal plates glow during plasma charge
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.25, 0.55, 1.6) * vBerkMask.z * berkPlasmaGlow * berkPlateLit(vBerkBindPos.z);')   // dorsal plates glow during plasma charge
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         {
           float berkAO = mix(1.0, vBerkMask.x, 0.85);
@@ -122,21 +144,22 @@ function facetHook(m: THREE.Material, u: DragonMaterials['uniforms'], key: 'drag
     shader.uniforms.berkRimColor = u.rimColor;
     shader.uniforms.berkRimStrength = u.rimStrength;
     shader.uniforms.berkPlasmaGlow = u.plasmaGlow;
+    shader.uniforms.berkPlasmaSweep = u.plasmaSweep;
     shader.uniforms.berkSunDirW = u.sunDir;
     shader.uniforms.berkBelly = u.bellyColor;
     shader.uniforms.berkBellyMix = u.bellyMix;
     shader.uniforms.berkPlates = u.plateColor;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 _mask;\nvarying vec3 vBerkMask;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBerkMask = _mask;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 _mask;\nvarying vec3 vBerkMask;\nvarying float vBerkBindZ;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBerkMask = _mask; vBerkBindZ = position.z;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vBerkMask;\nuniform vec3 berkRimColor;\nuniform float berkRimStrength;\nuniform float berkPlasmaGlow;\nuniform vec3 berkSunDirW;\nuniform vec3 berkBelly;\nuniform float berkBellyMix;\nuniform vec3 berkPlates;')
+      .replace('#include <common>', `#include <common>\nvarying vec3 vBerkMask;\nvarying float vBerkBindZ;\nuniform vec3 berkRimColor;\nuniform float berkRimStrength;\nuniform float berkPlasmaGlow;\nuniform vec2 berkPlasmaSweep;\n${PLATE_GLSL}\nuniform vec3 berkSunDirW;\nuniform vec3 berkBelly;\nuniform float berkBellyMix;\nuniform vec3 berkPlates;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         // _mask: x = baked AO, y = underside, z = dorsal plates. Two-tone: a lighter underside (counter-shading, so he
         // separates from dark forest from below) and darker plates along the spine
         diffuseColor.rgb = mix(diffuseColor.rgb, berkBelly, smoothstep(0.2, 0.8, vBerkMask.y) * berkBellyMix${isMembrane ? ' * 0.5' : ''});
         diffuseColor.rgb = mix(diffuseColor.rgb, berkPlates, smoothstep(0.3, 0.7, vBerkMask.z));`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.25, 0.55, 1.6) * vBerkMask.z * berkPlasmaGlow;')   // dorsal plates glow during plasma charge
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.25, 0.55, 1.6) * vBerkMask.z * berkPlasmaGlow * berkPlateLit(vBerkBindZ);')   // dorsal plates glow during plasma charge
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         {
           float berkAO = mix(1.0, vBerkMask.x, 0.7);
@@ -217,7 +240,7 @@ export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m
     // scaleBump: bump height in metres. 1.5 mm keeps the ~2.6 cm scales a fine texture; 3 mm read as beads.
     rimColor: { value: faceted ? new THREE.Color(0.62, 0.76, 1.0) : new THREE.Color(0.55, 0.68, 0.95) }, rimStrength: { value: faceted ? 0.5 : 0.35 },
     scaleBump: { value: 0.0015 },
-    plasmaGlow: { value: 0 }, pupil: { value: 0.15 }, eyeGlow: { value: 0.35 }, irisDepth: { value: 0.08 }, sunDir: { value: opts.sunDir },
+    plasmaGlow: { value: 0 }, plasmaSweep: { value: new THREE.Vector2(1.2, 1) }, pupil: { value: 0.15 }, eyeGlow: { value: 0.35 }, irisDepth: { value: 0.08 }, sunDir: { value: opts.sunDir },
     gaze: { value: new THREE.Vector2() },
     eyeGlowGain: { value: faceted ? 2.4 : 1 },
     bellyColor: { value: new THREE.Color(P.belly) }, bellyMix: { value: 0.8 }, plateColor: { value: new THREE.Color(P.plates) },

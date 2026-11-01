@@ -31,6 +31,8 @@ export interface FaceInput {
   content: number;
   /** Wing fold 0…1 (drives the membrane pleat correctives). */
   wingFold: number;
+  /** An action's own dorsal-plate glow (the plasma's long charge), taking over from the layers' curves; < 0: none. */
+  plasmaGlow: number;
 }
 
 /** Everything the expression binder writes to the asset (morphs, eye/skin uniforms) and the rig (jaw, ears). */
@@ -59,7 +61,7 @@ export interface FaceState {
 export function createFaceInput(): FaceInput {
   return {
     exertion: 0, gallopWeight: 0, idle: 0, interested: false, aggressive: false, headTurnRate: 0, sunInFace: 0,
-    eyeYaw: 0, eyePitch: 0, content: 0, wingFold: 1,
+    eyeYaw: 0, eyePitch: 0, content: 0, wingFold: 1, plasmaGlow: -1,
   };
 }
 
@@ -174,7 +176,7 @@ export class FaceController {
     st.teethOut = this.layerMax.teeth_out;
     st.nostrilFlare = Math.max(this.layerMax.nostril_flare, 0.5 * inp.exertion);
     st.jaw = Math.max(this.layerMax.jaw, t.pantJaw * clamp(inp.exertion * 1.4 - 0.4, 0, 1));
-    st.plasmaGlow = this.layerMax.plasmaGlow;
+    st.plasmaGlow = inp.plasmaGlow >= 0 ? inp.plasmaGlow : this.layerMax.plasmaGlow;
     st.eyeGlow = t.eyeGlow + t.eyeGlowAggressive * st.mood.aggressive;
     // pupils: the mood's size, narrowed by bright light; a layer's pupil target takes over by its weight
     let pupil = 0;
