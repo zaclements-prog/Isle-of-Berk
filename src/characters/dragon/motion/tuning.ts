@@ -237,6 +237,16 @@ export interface MotionTuning {
     rearExtent: number; clearance: number;
     /** Speed (m/s) a landing keeps when no direction is held. */
     landCarry: number;
+    /**
+     * Transitions: the push (s) over which the pelvis rises from wherever the crouch left it onto the arc (its height
+     * and speed carried, no snap); the landing absorb depth per m/s of impact (m·s/m), clamped to [absorbMin,
+     * absorbMax] m, sunk at the body's height spring (the absorb carries landImpulse m/s at least); a Space press kept
+     * for bufferTime s while the jump is busy (landing, recovering, cooling down) and taken as soon as it can be, and
+     * from rejumpAfter s into a landing a new crouch may start straight from the landing pose.
+     */
+    pushTime: number; absorbPerSpeed: number; absorbMin: number; absorbMax: number; bufferTime: number; rejumpAfter: number;
+    /** The tuck holds the legs until the body is within reachExtra m of its landing height (or releaseTime s out). */
+    reachExtra: number;
   };
   /**
    * Flight (Phase 2): the camera-steered path and the clip hand-offs. Speeds m/s, angles deg, rates deg/s, times s,
@@ -273,6 +283,8 @@ export interface MotionTuning {
     /** A landing is a running one at or above this speed (m/s); its clip starts no higher than maxLandHeight above
      *  the ground, after a descent at descendDeg. The flight's body roll / pitch blend out over settle (s). */
     runLandSpeed: number; maxLandHeight: number; descendDeg: number; settle: number;
+    /** How long (s, the time constant) the descent's sink rate takes to ease out into a landing clip's own approach. */
+    landCarryTime: number;
   };
   /** The plasma blast (M6, spec §6.13): deg, s, m/s, m. recoilDrop: suspension dip (m/s); recoilKick: head (rad/s). */
   plasma: {
@@ -376,6 +388,8 @@ export const DEFAULT_TUNING: MotionTuning = {
     crouchTime: 0.12, apex: 2, gravity: 9.81, minForward: 1.5, wallMargin: 0.3, maxFlight: 2.5,
     tuckAt: 0.3, releaseTime: 0.28, landLead: 0.3, frontLag: 0.02, hindLag: 0.1, minLift: 0.25,
     landImpulse: 1.2, recoverHold: 0.2, recoverTime: 0.35, cooldown: 0.3, rearExtent: 1.1, clearance: 0.1, landCarry: 0.8,
+    pushTime: 0.15, absorbPerSpeed: 0.018, absorbMin: 0.05, absorbMax: 0.24, bufferTime: 0.25, rejumpAfter: 0.15,
+    reachExtra: 0.5,
   },
   flight: {
     runTakeoffSpeed: 6.5, flapSpeed: 18, glideSpeed: 18, minSpeed: 7, maxSpeed: 30,
@@ -386,7 +400,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     minClearance: 3, clearLookahead: 1.2,
     handoff: 0.5, flapToGlide: 0.4, glideToFlap: 0.3, flapEntryPhase: 0.74, flapStopPhase: 0.26,
     runBlend: 0.45, runOffsetTime: 0.6,
-    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4,
+    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4, landCarryTime: 0.2,
   },
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
