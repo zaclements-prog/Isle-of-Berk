@@ -96,7 +96,7 @@ float sAO;
   // shingle: a coarse speckle of light and dark stones
   col *= 1.0 + w[4] * (0.28 * styNoise(p.xz / 0.7) + 0.14 * styNoise(p.xz / 0.23) - 0.21);
   float wet = sb.b;
-  col *= mix(1.0, 0.62, wet);
+  col *= mix(1.0, 0.74, wet);
   // scorched by blasts: char, mottled with ash, browner toward the edge
   float scorch = texture(tTerrainBurn, suv).r;
   vec3 ash = mix(vec3(0.045, 0.04, 0.035), vec3(0.16, 0.13, 0.1), styNoise(p.xz / 0.9) * 0.7 + (1.0 - scorch) * 0.5);
@@ -109,6 +109,25 @@ float sAO;
   sRough = mix(0.95, 0.35, wet);
   sAO = mix(1.0, sb.a, 0.8);
   diffuseColor.rgb = col * diffuse;
+}
+`;
+
+/**
+ * Replaces <aomap_fragment> (after the lights, so the sun's share is known): the light the terrain gets where the low
+ * sun doesn't reach. The baked sky is a saturated Rayleigh blue, so slopes facing away from an 11° sun, and cast
+ * shadows, took only blue fill plus a grazing sky reflection, and grey rock and dark forest floor read navy-black. In
+ * shade (direct sun weak against the fill) half the fill goes to its own luminance, warmed toward the grass it
+ * bounces off, and the reflection drops; sunlit ground keeps the sky's colour. The baked AO only takes it to 45%.
+ */
+const SHADE = /* glsl */ `
+{
+  vec3 ind = reflectedLight.indirectDiffuse;
+  float lumI = dot(ind, vec3(0.2126, 0.7152, 0.0722));
+  float lumD = dot(reflectedLight.directDiffuse, vec3(0.2126, 0.7152, 0.0722));
+  float shade = 1.0 - smoothstep(0.05, 0.6, lumD / max(lumI, 1e-5));
+  vec3 warm = vec3(lumI) * vec3(1.06, 1.06, 0.84) * 1.45;
+  reflectedLight.indirectDiffuse = mix(ind, mix(warm, ind, 0.5), shade) * max(sAO, 0.45);
+  reflectedLight.indirectSpecular *= mix(1.0, 0.25, shade);
 }
 `;
 
@@ -127,7 +146,7 @@ function patch(shader: ShaderParams, u: StylizedTerrainUniforms): void {
     .replace('#include <roughnessmap_fragment>', () => 'float roughnessFactor = sRough;')
     .replace('#include <metalnessmap_fragment>', () => 'float metalnessFactor = 0.0;')
     .replace('#include <normal_fragment_maps>', () => 'normal = normalize((viewMatrix * vec4(sNrmW, 0.0)).xyz);')
-    .replace('#include <aomap_fragment>', () => '{ reflectedLight.indirectDiffuse *= sAO; }');
+    .replace('#include <aomap_fragment>', () => SHADE);
 }
 
 /** The island terrain's stylised material: MeshStandardMaterial (CSM shadows, sky light and fog still apply). */
