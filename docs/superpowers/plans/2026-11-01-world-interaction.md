@@ -109,11 +109,36 @@ GPU with `npm run dev`, then open the game page.
   `DEFAULT_STRUCTURE` and `DEFAULT_DEBRIS`.
 
 **Known gaps and next steps:**
-- Boulders and props on a crater's rim are not re-seated.
-- Debris does not collide with other moving debris, only with settled debris.
+- Boulders and props on a crater's rim are not re-seated (trees are: a felled tree falls from the dug ground).
+- Debris does not collide with other moving debris, only with settled debris. A piece left jittering inside rubble
+  that settled around it is put to sleep after `maxAwake` (10 s).
 - Structures show damage only as a darker tint before they collapse; nothing comes loose part by part yet.
 - No fire spread (`burn` event) and no embers or smoke trails.
-- The per-blast budgets (crater < 8 ms, felling a tree < 1 ms) are only checked loosely in CI; measure them in
-  the browser.
-- Headless swiftshader sometimes returns black frames. This predates this work, so retake those frames in capture
-  scripts.
+- No splash when debris hits the water.
+
+## GPU review and fixes (2026-11-01)
+
+Reviewed on an Apple M5 Max (ANGLE Metal) with the dev server, driving the systems directly (a scripted force
+source hovering over the sea and the pond, a free camera, stepped captures).
+
+**Black frames: a capture-timing artifact, not a render bug.** About 14,000 frames on the GPU (High and Low, about
+100 blasts, cameras inside houses, under the terrain and water) had none. The canvas is created with
+`preserveDrawingBuffer: false`: read in the same task as the render it holds the frame, read one task later (a
+paused, stepped capture that screenshots or calls `toDataURL` afterwards) it is cleared, all zero. A slow software
+renderer only widens that window. Capture with **`berk.capture(type?, quality?)`**, which renders and reads back in
+one task.
+
+| Found | Fix |
+|---|---|
+| Power-3 blasts took 7–11 ms (budget 8): rebuilding each touched 64 m terrain tile's BVH cost ~1.2 ms, four at a tile corner | `CollisionWorld.refitLayer`: craters move the tile's vertices in place and refit its BVH (0.15 ms vs 1.4–2.2 ms a tile). Power 3 now 3.0 ms median, 6.0 ms max at a tile corner; 1.2 ms median elsewhere |
+| 7 of 37 houses buried 1.5–8.2 m on their uphill side, 10 floating up to 6.6 m downhill; their wall debris spawned inside the hill and 16 of 202 pieces ended under the ground (6 fell out of the world) | `levelHousePads` at load: each house gets a flat pad at the ground under its centre, easing back to the slope over a skirt that widens with the cut; houses whose walls overlap share a pad; close neighbours split the margin. Worst now 0.2 m buried (the intended sink), 0.8 m at one corner |
+| Debris could tunnel or start inside the ground | `Debris` takes the ground: no corner ends below it (a frictional contact, so pieces still come to rest). 240 pieces from all 38 structures: 0 under the ground |
+| Pier planks sank to the seabed and vanished | `Debris` takes the water: wood floats half under, with water drag, and is kept out of the collision |
+| The downwash spray on the sea and pond was a regular checkerboard (`sin x · sin z`) | Two octaves of rotated value noise streaming outward, as a flow map (two phases crossfaded, so it never shears) |
+| The wake barely moved the trees (~1% of pixels, ~4° at cruise) | `wakeRadius` 9 → 12, `wakeStrength` 1 → 1.8, the bend lingers twice as far behind, crown push cap 1.6 → 2.6 m (~10–12° at cruise) |
+| Felled trees lay as whole green trees | The crown breaks off on impact: a charred log lies along the fall and a splintered stump stays; the log crumbles after `lie` |
+| Stump (and log) vertex colours were authored as sRGB but read as linear, so pale | Converted to linear |
+
+**Still to judge in play:** the wake's lean in motion; the pads' banks on the steepest terraces; whether a power-1
+blast (fells within 4.5 m, crater radius 3.3 m) feels strong enough. The plan's grass test spot (200, 100) is forest
+floor; use the meadow at (30, 30)–(40, 60).
