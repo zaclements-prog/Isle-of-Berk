@@ -20,7 +20,15 @@ export interface FellEvent {
   readonly time: number;
 }
 
-export type WorldEvent = BlastEvent | FellEvent;
+/** A structure broken apart by a blast: its collision key and base. */
+export interface CollapseEvent {
+  readonly type: 'collapse';
+  readonly key: string;
+  readonly point: THREE.Vector3;
+  readonly time: number;
+}
+
+export type WorldEvent = BlastEvent | FellEvent | CollapseEvent;
 type Handler<E> = (e: E) => void;
 
 /**

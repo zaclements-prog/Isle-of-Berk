@@ -52,6 +52,7 @@ async function start(): Promise<void> {
       /** Live counts: grass tufts and flowers in the ring, trees by state, collision layers and triangles. */
       stats: () => ({
         tufts: island.grass?.tufts.count ?? 0, flowers: island.grass?.flowers.count ?? 0, trees: island.trees?.census(),
+        broken: island.structures?.broken ?? 0, debris: island.debris?.pieces.length ?? 0, moving: island.debris?.active ?? 0,
         layers: world.layers.length, triangles: world.triangles, downwash: +field.downwash.toFixed(3),
       }),
       /** Camera and force-field state (diagnostics). */

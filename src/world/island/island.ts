@@ -13,6 +13,8 @@ import type { WorldEvents } from '../events';
 import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
 import { Craters } from '../damage/craters';
+import { Debris } from '../damage/debris';
+import { StructureDamage } from '../damage/structures';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
@@ -149,6 +151,8 @@ export class IslandRegion implements Region {
   /** Blast damage, once enabled: the burn mask (scorch, flattened grass) and the trees' states. */
   burn: BurnMask | null = null;
   craters: Craters | null = null;
+  debris: Debris | null = null;
+  structures: StructureDamage | null = null;
   trees: TreeDamage | null = null;
 
   /**
@@ -181,11 +185,19 @@ export class IslandRegion implements Region {
     this.trees = new TreeDamage(records, collision?.trees ?? null, (x, z) => hf.heightAt(x, z), events);
     app_prepare(this.app, this.trees.root);
     this.root.add(this.trees.root);
+    // buildings break into debris that tumbles, settles and becomes rubble Toothless can walk on
+    if (collision) {
+      this.debris = new Debris(collision.world, collision.world.createSet('debris', tile));
+      app_prepare(this.app, this.debris.mesh);
+      this.root.add(this.debris.mesh);
+    }
+    this.structures = new StructureDamage(this.berk.breakables, collision?.structures ?? null, this.debris, events);
   }
 
   update(dt: number, ctx: RegionUpdateContext): void {
     this.burn?.update(dt);
     this.trees?.update(dt);
+    this.debris?.update(dt);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
     this.pond.update(dt);
@@ -206,6 +218,8 @@ export class IslandRegion implements Region {
     this.burn?.dispose();
     this.trees?.dispose();
     this.craters?.dispose();
+    this.structures?.dispose();
+    this.debris?.dispose();
     this.heightTexture.dispose();
     for (const t of this.splatTextures) t.dispose();
   }

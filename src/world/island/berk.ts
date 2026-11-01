@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { geometryTriangles } from '../collision';
+import { longhouseParts, pierParts, type Structure } from '../damage/structures';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
 
@@ -129,6 +130,8 @@ export interface BerkLandmarks {
   collision: THREE.Object3D[];
   /** Each house, the hall and each pier deck on its own (world-space triangles), for a dynamic collision set. */
   structures: { key: string; positions: Float32Array }[];
+  /** The same structures as breakable ones (hit points, pre-fractured parts, how they show damage). */
+  breakables: Structure[];
   dispose(): void;
 }
 
@@ -137,6 +140,8 @@ const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+const _c = new THREE.Color();
+const CHAR = new THREE.Color(0.18, 0.15, 0.13);
 
 /**
  * The village and its landmarks: longhouses on the terraces (two roof colours, instanced), the Great Hall on its
@@ -150,6 +155,11 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
   const disposables: Array<{ dispose(): void }> = [mat];
   const boxes: THREE.BufferGeometry[] = [];
   const structures: BerkLandmarks['structures'] = [];
+  const breakables: Structure[] = [];
+  const tint = (m: THREE.InstancedMesh, k: number, a: number) => {
+    m.setColorAt(k, _c.setRGB(1, 1, 1).lerp(CHAR, a));
+    m.instanceColor!.needsUpdate = true;
+  };
   const box = (key: string, x: number, y: number, z: number, yaw: number, sx: number, sy: number, sz: number) => {
     const g = new THREE.BoxGeometry(sx, sy, sz).translate(0, sy / 2, 0).rotateY(yaw).translate(x, y, z);
     boxes.push(g);
@@ -167,7 +177,17 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
     mine.forEach((h, k) => {
       _m.compose(_p.set(h.x, h.y - 0.2, h.z), _q.setFromAxisAngle(UP, h.yaw), _s.set(h.len, 1, h.wid));
       mesh.setMatrixAt(k, _m);
+      mesh.setColorAt(k, _c.setRGB(1, 1, 1));
       box(`house:${ids[k]}`, h.x, h.y - 0.2, h.z, h.yaw, h.len, 3.2, h.wid);
+      breakables.push({
+        key: `house:${ids[k]}`, kind: 'house', base: new THREE.Vector3(h.x, h.y - 0.2, h.z), yaw: h.yaw, halfX: h.len / 2, halfZ: h.wid / 2,
+        height: 7.5, hp: 100, parts: longhouseParts(h.len, h.wid, 1, WOOD, roof, h.len > 9 ? 3 : 2),
+        scorch: (a) => tint(mesh, k, a * 0.8),
+        hide: () => {
+          mesh.setMatrixAt(k, _m.makeScale(0, 0, 0));
+          mesh.instanceMatrix.needsUpdate = true;
+        },
+      });
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
@@ -186,6 +206,15 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
   hallMesh.castShadow = hallMesh.receiveShadow = true;
   root.add(hallMesh);
   box('hall', hall.x, hall.height - 0.3, hall.z, toVillage - Math.PI / 2, 30, 7.4, 15);
+  const hallMat = mat.clone();
+  hallMesh.material = hallMat;
+  disposables.push(hallMat);
+  breakables.push({
+    key: 'hall', kind: 'hall', base: hallMesh.position.clone(), yaw: hallMesh.rotation.y, halfX: 15, halfZ: 7.5, height: 18, hp: 600,
+    parts: longhouseParts(30, 15, 2.4, WOOD, new THREE.Color(0x5b3324), 5),
+    scorch: (a) => hallMat.color.setRGB(1, 1, 1).lerp(CHAR, a * 0.8),
+    hide: () => { hallMesh.visible = false; },
+  });
   // piers at the harbour's head
   for (const [di, d] of sites.docks.entries()) {
     const g = pierGeometry(d.len, d.width, 9 + Math.round(d.x));
@@ -199,6 +228,15 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
     const deck = new THREE.BoxGeometry(d.width, 0.2, d.len).translate(0, -0.1, d.len / 2).rotateY(d.yaw).translate(d.x, d.deck, d.z);
     boxes.push(deck);
     structures.push({ key: `pier:${di}`, positions: geometryTriangles(deck) });
+    const pierMat = mat.clone();
+    m.material = pierMat;
+    disposables.push(pierMat);
+    breakables.push({
+      key: `pier:${di}`, kind: 'pier', base: new THREE.Vector3(d.x, d.deck, d.z), yaw: d.yaw, halfX: d.width / 2, halfZ: d.len / 2,
+      height: 1, hp: 120, parts: pierParts(d.len, d.width, WOOD),
+      scorch: (a) => pierMat.color.setRGB(1, 1, 1).lerp(CHAR, a * 0.8),
+      hide: () => { m.visible = false; },
+    });
   }
   // the Kill Ring
   const kr = sites.killRing;
@@ -223,6 +261,7 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
     root,
     collision,
     structures,
+    breakables,
     dispose() {
       for (const d of disposables) d.dispose();
     },
