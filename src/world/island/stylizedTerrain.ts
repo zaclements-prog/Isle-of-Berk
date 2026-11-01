@@ -7,12 +7,12 @@ import { SPLAT_VERTEX, SPLAT_VERTEX_PARS } from '../terrain/splatShader';
  * rock. Plus the second grass tone the meadows drift toward, and the rock's lighter strata.
  */
 export const STYLE_PALETTE = {
-  grass: 0x6c9a3b,
-  grassAlt: 0x8bb04a,
+  grass: 0x6e9a3a,     // nudged toward ochre so the golden light has something to land on
+  grassAlt: 0x92b04a,
   forest: 0x3d5a2c,
   moss: 0x5f8236,
   mud: 0x6e573b,
-  pebbles: 0xc4b28c,
+  pebbles: 0xc8ac7e,
   rock: 0x6d6d6c,
   rockLight: 0x82827f,
 };

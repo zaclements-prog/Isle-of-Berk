@@ -14,9 +14,12 @@ export interface LightingParams {
   hemiIntensity: number;
 }
 
-/** Late-afternoon golden hour, sun low in the west-northwest (spec §7.8). Tuned by eye. */
+/**
+ * Late-afternoon golden hour, sun low in the west-northwest (spec §7.8). Tuned by eye; the faceted look
+ * (2026-11-01) took it lower and more amber, so the planes catch long, warm light.
+ */
 export const GOLDEN_HOUR: LightingParams = {
-  azimuth: 292, elevation: 14, sunColor: 0xffc890, sunIntensity: 3.0,
+  azimuth: 292, elevation: 11, sunColor: 0xffbe84, sunIntensity: 3.0,
   skyColor: 0xa9c8f0, groundColor: 0x4d5a36, hemiIntensity: 0.25,
 };
 
