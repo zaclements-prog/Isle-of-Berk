@@ -8,6 +8,7 @@ import { COVE_LAYERS, loadLayerArrays, loadSplatTexture, type LayerArrays } from
 import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '../terrain/splatShader';
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
+import { CollisionWorld, type CollisionSet } from '../collision';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
@@ -39,6 +40,23 @@ export interface IslandHeader extends GridHeader {
   trees: Placement[];
   rocks: Placement[];
   stats: Record<string, number>;
+}
+
+export interface IslandCollision {
+  world: CollisionWorld;
+  trees: CollisionSet;
+  structures: CollisionSet;
+}
+
+/** See IslandRegion.createCollisionWorld. */
+export function islandCollisionWorld(terrainRoot: THREE.Object3D, props: Props, berk: BerkLandmarks, tile = 64): IslandCollision {
+  const world = CollisionWorld.fromObjects([terrainRoot, ...props.collision.filter((o) => o.name !== 'trunks_collision')], { tile });
+  const trees = world.createSet('trees', tile);
+  for (const t of props.trunks) trees.add(t.key, t.positions);
+  const structures = world.createSet('structures', tile);
+  for (const b of berk.structures) structures.add(b.key, b.positions);
+  world.flush();
+  return { world, trees, structures };
 }
 
 export interface IslandOptions {
@@ -102,6 +120,15 @@ export class IslandRegion implements Region {
 
   collisionRoots(): THREE.Object3D[] {
     return [this.terrain.collisionRoot, ...this.props.collision, ...this.berk.collision];
+  }
+
+  /**
+   * The island's collision as a layered world (world-interaction plan §3): the terrain and boulders in 64 m static
+   * tiles (a crater rebuilds one), the trees' trunks and the village's houses, hall and pier decks as dynamic sets
+   * keyed `tree:<i>`, `house:<i>`, `hall`, `pier:<i>` (felled or broken ones are removed).
+   */
+  createCollisionWorld(tile = 64): IslandCollision {
+    return islandCollisionWorld(this.terrain.collisionRoot, this.props, this.berk, tile);
   }
 
   treeCapsules(): readonly TreeCapsule[] {

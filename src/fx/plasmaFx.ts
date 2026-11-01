@@ -316,14 +316,7 @@ export class PlasmaFx {
    */
   private patch(at: THREE.Vector3, halfSize: number): THREE.Mesh | null {
     _box.setFromCenterAndSize(at, _size.setScalar(2 * halfSize));
-    const pos: number[] = [];
-    this.o.world.bvh.shapecast({
-      intersectsBounds: (box) => box.intersectsBox(_box),
-      intersectsTriangle: (tri) => {
-        if (tri.intersectsBox(_box)) pos.push(tri.a.x, tri.a.y, tri.a.z, tri.b.x, tri.b.y, tri.b.z, tri.c.x, tri.c.y, tri.c.z);
-        return pos.length >= FX.maxPatchTris * 9;
-      },
-    });
+    const pos = this.o.world.trianglesInBox(_box, FX.maxPatchTris, []);
     if (!pos.length) return null;
     const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.computeVertexNormals();

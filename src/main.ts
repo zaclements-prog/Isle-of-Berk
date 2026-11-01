@@ -41,7 +41,8 @@ async function start(): Promise<void> {
     const sea = island.header.seaLevel;
     const P = island.header.cove.pond;
     groundAt = (x, z) => Math.max(island.heightAt(x, z), sea, Math.hypot(x - P.x, z - P.z) < P.r ? P.level : -Infinity);
-    world = CollisionWorld.fromObjects(island.collisionRoots());
+    // layered collision: terrain tiles that can be rebuilt, trees and buildings that can be removed
+    world = island.createCollisionWorld().world;
     spawn = { ...island.spawnPoints[0] };
     const ctx = { time: app.loop.simTime, camera: app.camera, interactions };
     // the island's grass, trees and sea animate on simulation time, not wall-clock frame time: the same motion at any

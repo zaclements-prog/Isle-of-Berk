@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
 import { addCompileHook } from '../../render/materials';
 import { FORCE_PARS, ForceField, type ForceUniforms } from '../forceField';
+import { geometryTriangles } from '../collision';
 
 /** A placement from the bake: [x, y, z, scale, variant, yaw]. */
 export type Placement = readonly [number, number, number, number, number, number];
@@ -134,6 +135,8 @@ export interface Props {
   root: THREE.Group;
   /** World-space collision meshes: trunk cylinders and boulder hulls. */
   collision: THREE.Object3D[];
+  /** Each tree's trunk on its own (world-space triangles, keyed `tree:<index>`), for a dynamic collision set. */
+  trunks: { key: string; index: number; positions: Float32Array }[];
   /** Advance the trees' wind sway. */
   update(dt: number): void;
   dispose(): void;
@@ -196,9 +199,10 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   const trunkParts: THREE.BufferGeometry[] = [];
   const rockParts: THREE.BufferGeometry[] = [];
   const place = (list: readonly Placement[], geoOf: (v: number) => THREE.BufferGeometry, variants: number, mat: THREE.Material, name: string,
-    sink: number, squashY: number, hull: (p: Placement, y: number) => THREE.BufferGeometry | null) => {
+    sink: number, squashY: number, hull: (p: Placement, y: number, index: number) => THREE.BufferGeometry | null) => {
     for (let v = 0; v < variants; v++) {
-      const mine = list.filter((p) => p[4] === v);
+      const idx = list.flatMap((p, i) => (p[4] === v ? [i] : []));
+      const mine = idx.map((i) => list[i]);
       if (!mine.length) continue;
       const geo = geoOf(v);
       disposables.push(geo);
@@ -212,7 +216,7 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
         _s.set(p[3], p[3] * squashY, p[3]);
         _m.compose(_p.set(p[0], y, p[2]), _q, _s);
         mesh.setMatrixAt(k, _m);
-        const h = hull(p, y);
+        const h = hull(p, y, idx[k]);
         if (h) (name === 'pine' ? trunkParts : rockParts).push(h);
       });
       mesh.instanceMatrix.needsUpdate = true;
@@ -226,8 +230,12 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     return h - Math.floor(h);
   };
   const kinds: Placement[] = trees.map((p) => (p[1] < 24 && hash(p[0], p[2]) < 0.4 ? [p[0], p[1], p[2], p[3], 3 + (p[4] % 2), p[5]] : p));
-  place(kinds, (v) => (v < 3 ? pineGeometry(v) : broadleafGeometry(v - 3)), 5, pineMat, 'pine', 0.15, 1, (p, y) => new THREE.CylinderGeometry(0.35 * p[3], 0.4 * p[3], 4 * p[3], 6, 1)
-    .translate(p[0], y + 2 * p[3], p[2]));
+  const trunks: Props['trunks'] = [];
+  place(kinds, (v) => (v < 3 ? pineGeometry(v) : broadleafGeometry(v - 3)), 5, pineMat, 'pine', 0.15, 1, (p, y, index) => {
+    const g = new THREE.CylinderGeometry(0.35 * p[3], 0.4 * p[3], 4 * p[3], 6, 1).translate(p[0], y + 2 * p[3], p[2]);
+    trunks.push({ key: `tree:${index}`, index, positions: geometryTriangles(g) });
+    return g;
+  });
   place(rocks, boulderGeometry, 4, rockMat, 'boulder', 0.12, 1, (p, y) => {
     const g = boulderGeometry(p[4], 1);
     _m.compose(_p.set(p[0], y, p[2]), _q.setFromAxisAngle(UP, p[5]), _s.set(p[3], p[3], p[3]));
@@ -249,6 +257,7 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   return {
     root,
     collision,
+    trunks,
     update(dt: number) {
       sway.uTreeTime.value += dt;
     },

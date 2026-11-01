@@ -6,7 +6,7 @@ import { Heightfield } from '../../src/world/terrain/heightfield';
 import { ISLAND_COLLISION, terrainCollisionRoot } from '../../src/world/terrain/collisionMesh';
 import { buildProps, boulderGeometry, pineGeometry } from '../../src/world/island/props';
 import { buildBerk } from '../../src/world/island/berk';
-import type { IslandHeader } from '../../src/world/island/island';
+import { islandCollisionWorld, type IslandHeader } from '../../src/world/island/island';
 import { rippleNormalTexture } from '../../src/world/island/ocean';
 import { CollisionWorld } from '../../src/world/collision';
 import { DragonCharacter } from '../../src/characters/dragon/motion/dragon';
@@ -81,6 +81,41 @@ describe.skipIf(!HAS_ISLAND)('Test Isle runtime', () => {
     // the hall's door faces the village: the hall stands on its terrace
     const hall = berk.root.getObjectByName('GreatHall')!;
     expect(hall.position.y).toBeCloseTo(header.hall.height - 0.3, 1);
+    berk.dispose();
+  });
+
+  it('builds the layered collision world: the same ground as one BVH, with trees and houses removable', { timeout: 60_000 }, () => {
+    const { header, hf } = loadIsland();
+    const props = buildProps(header.trees, header.rocks, (x, z) => hf.heightAt(x, z));
+    const berk = buildBerk(header);
+    const terrainRoot = terrainCollisionRoot(hf, ISLAND_COLLISION);
+    const one = CollisionWorld.fromObjects([terrainRoot, ...props.collision, ...berk.collision]);
+    const { world, trees, structures } = islandCollisionWorld(terrainRoot, props, berk);
+    expect(world.triangles).toBe(one.triangles);
+    expect(trees.size).toBe(header.trees.length);
+    expect(structures.size).toBe(header.houses.length + header.docks.length + 1);
+    for (let k = 0; k < 200; k++) {
+      const x = ((k * 37) % 500) - 250;
+      const z = ((k * 91) % 500) - 250;
+      const a = one.groundAt(x, z, 250, 300);
+      const b = world.groundAt(x, z, 250, 300);
+      expect(!!b).toBe(!!a);
+      if (a && b) expect(b.point.y).toBeCloseTo(a.point.y, 3);
+    }
+    // fell a tree: its trunk is gone from the next query, and it costs well under the per-blast budget
+    const t = props.trunks[0];
+    const tree = header.trees[t.index];
+    const at = new THREE.Vector3(tree[0] + 3, hf.heightAt(tree[0], tree[2]) + 1.2, tree[2]);
+    const west = new THREE.Vector3(-1, 0, 0);
+    expect(world.raycast(at, west, 3.2)).not.toBeNull();
+    const t0 = performance.now();
+    trees.remove(t.key);
+    world.flush();
+    const ms = performance.now() - t0;
+    expect(ms).toBeLessThan(10); // the plan's budget is 1 ms in the browser; this shared CI box is slower
+    const hit = world.raycast(at, west, 3.2);
+    expect(hit === null || hit.distance > 3).toBe(true);
+    props.dispose();
     berk.dispose();
   });
 

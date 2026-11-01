@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { geometryTriangles } from '../collision';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
 
@@ -126,6 +127,8 @@ export function killRingGeometry(r: number, seed = 13): THREE.BufferGeometry {
 export interface BerkLandmarks {
   root: THREE.Group;
   collision: THREE.Object3D[];
+  /** Each house, the hall and each pier deck on its own (world-space triangles), for a dynamic collision set. */
+  structures: { key: string; positions: Float32Array }[];
   dispose(): void;
 }
 
@@ -146,11 +149,15 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
   const mat = new THREE.MeshStandardMaterial({ name: 'berk', vertexColors: true, flatShading: true, roughness: 0.9, metalness: 0 });
   const disposables: Array<{ dispose(): void }> = [mat];
   const boxes: THREE.BufferGeometry[] = [];
-  const box = (x: number, y: number, z: number, yaw: number, sx: number, sy: number, sz: number) => {
-    boxes.push(new THREE.BoxGeometry(sx, sy, sz).translate(0, sy / 2, 0).rotateY(yaw).translate(x, y, z));
+  const structures: BerkLandmarks['structures'] = [];
+  const box = (key: string, x: number, y: number, z: number, yaw: number, sx: number, sy: number, sz: number) => {
+    const g = new THREE.BoxGeometry(sx, sy, sz).translate(0, sy / 2, 0).rotateY(yaw).translate(x, y, z);
+    boxes.push(g);
+    structures.push({ key, positions: geometryTriangles(g) });
   };
   for (const [v, roof] of [[0, ROOF], [1, ROOF_ALT]] as const) {
-    const mine = sites.houses.filter((_, k) => k % 2 === v);
+    const ids = sites.houses.flatMap((_, k) => (k % 2 === v ? [k] : []));
+    const mine = ids.map((k) => sites.houses[k]);
     if (!mine.length) continue;
     const geo = longhouseGeometry(roof, 5 + v);
     disposables.push(geo);
@@ -160,7 +167,7 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
     mine.forEach((h, k) => {
       _m.compose(_p.set(h.x, h.y - 0.2, h.z), _q.setFromAxisAngle(UP, h.yaw), _s.set(h.len, 1, h.wid));
       mesh.setMatrixAt(k, _m);
-      box(h.x, h.y - 0.2, h.z, h.yaw, h.len, 3.2, h.wid);
+      box(`house:${ids[k]}`, h.x, h.y - 0.2, h.z, h.yaw, h.len, 3.2, h.wid);
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
@@ -178,9 +185,9 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
   hallMesh.scale.set(30, 2.4, 15);
   hallMesh.castShadow = hallMesh.receiveShadow = true;
   root.add(hallMesh);
-  box(hall.x, hall.height - 0.3, hall.z, toVillage - Math.PI / 2, 30, 7.4, 15);
+  box('hall', hall.x, hall.height - 0.3, hall.z, toVillage - Math.PI / 2, 30, 7.4, 15);
   // piers at the harbour's head
-  for (const d of sites.docks) {
+  for (const [di, d] of sites.docks.entries()) {
     const g = pierGeometry(d.len, d.width, 9 + Math.round(d.x));
     disposables.push(g);
     const m = new THREE.Mesh(g, mat);
@@ -191,6 +198,7 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
     root.add(m);
     const deck = new THREE.BoxGeometry(d.width, 0.2, d.len).translate(0, -0.1, d.len / 2).rotateY(d.yaw).translate(d.x, d.deck, d.z);
     boxes.push(deck);
+    structures.push({ key: `pier:${di}`, positions: geometryTriangles(deck) });
   }
   // the Kill Ring
   const kr = sites.killRing;
@@ -214,6 +222,7 @@ export function buildBerk(sites: BerkSites): BerkLandmarks {
   return {
     root,
     collision,
+    structures,
     dispose() {
       for (const d of disposables) d.dispose();
     },
