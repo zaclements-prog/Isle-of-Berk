@@ -261,6 +261,8 @@ export interface MotionTuning {
     turnFirstDeg: number; chargeFacingDeg: number; turnTimeout: number; chargeTime: number; cooldown: number;
     recoilDrop: number; recoilKick: number; skidSpeed: number; skidDecay: number; lingerAggro: number;
     boltSpeed: number; boltRadius: number; boltRange: number; shake: number; shakeTime: number;
+    /** A blast's power (1 = the standard blast: it scales every world effect) and its radius (m). */
+    blastPower: number; blastRadius: number;
   };
   /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
   attention: {
@@ -359,7 +361,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
     recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
-    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35,
+    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
   },
   attention: {
     maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,

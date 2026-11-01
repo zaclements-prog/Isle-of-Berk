@@ -106,15 +106,16 @@ describe('grass parting and tree sway', () => {
     const cam = new THREE.PerspectiveCamera();
     const paws = [{ center: new THREE.Vector3(1, 0.05, 0), radius: 0.3 }, { center: new THREE.Vector3(-1, 0.05, 0), radius: 0.3 }];
     grass.update(0.016, cam, paws);
-    const u = (grass as unknown as { uniforms: { uGrassPush: { value: THREE.Vector4[] }; uGrassPushN: { value: number } } }).uniforms;
-    expect(u.uGrassPushN.value).toBe(2);
-    expect(u.uGrassPush.value[1].toArray()).toEqual([-1, 0.05, 0, 0.3]);
+    const u = grass.force;
+    expect(u.uForceContactsN.value).toBe(2);
+    expect(u.uForceContacts.value[1].toArray()).toEqual([-1, 0.05, 0, 0.3]);
     const s = stdShader();
     (grass.tufts.material as THREE.Material).onBeforeCompile(s as never, {} as never);
-    expect(s.vertexShader).toContain('uniform vec4 uGrassPush[12];');
+    expect(s.vertexShader).toContain('uniform vec4 uForceContacts[12];');
+    expect(s.vertexShader).toContain('vec3 fa = forceAt(root);');
     expect(s.vertexShader).toContain('inverse(mat3(instanceMatrix)) * push');
     grass.update(0.016, cam, []);
-    expect(u.uGrassPushN.value).toBe(0);
+    expect(u.uForceContactsN.value).toBe(0);
     grass.dispose();
   });
 

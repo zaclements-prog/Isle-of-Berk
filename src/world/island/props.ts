@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
 import { addCompileHook } from '../../render/materials';
+import { FORCE_PARS, ForceField, type ForceUniforms } from '../forceField';
 
 /** A placement from the bake: [x, y, z, scale, variant, yaw]. */
 export type Placement = readonly [number, number, number, number, number, number];
@@ -143,7 +144,7 @@ export interface Props {
  * reports (the bake's y can sit a few cm off after quantisation). Pines collide by their trunks only (the canopy is
  * open to a dragon), boulders by a low-detail hull.
  */
-export function buildProps(trees: readonly Placement[], rocks: readonly Placement[], ground: GroundFn): Props {
+export function buildProps(trees: readonly Placement[], rocks: readonly Placement[], ground: GroundFn, force?: ForceUniforms): Props {
   const root = new THREE.Group();
   root.name = 'IslandProps';
   const disposables: Array<{ dispose(): void }> = [];
@@ -151,10 +152,11 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   // wind: each tree leans and sways about its base, more toward the crown (∝ height²), slowly, out of phase with its
   // neighbours (the phase comes from where it stands), with a quicker flutter in the foliage on top
   const sway = { uTreeTime: { value: 0 } };
+  const air = force ?? new ForceField().uniforms;
   addCompileHook(pineMat, 'treeSway', (shader) => {
-    Object.assign(shader.uniforms, sway);
+    Object.assign(shader.uniforms, sway, air);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTreeTime;')
+      .replace('#include <common>', `#include <common>\nuniform float uTreeTime;\n${FORCE_PARS}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   vec2 site = instanceMatrix[3].xz;
@@ -164,6 +166,29 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   vec2 lean = vec2(sin(uTreeTime * 0.7 + ph), 0.6 * sin(uTreeTime * 0.53 + ph * 1.7)) * 0.16;
   vec2 flutter = vec2(sin(uTreeTime * 2.3 + ph * 3.1 + transformed.y), cos(uTreeTime * 2.9 + ph * 2.3)) * 0.035;
   transformed.xz += (lean + flutter * step(3.0, transformed.y)) * bendK;
+  // the air: the downwash and blast shocks lean the crown away from them; the wake of a dragon flying past bends a
+  // tree away from his path and along his heading, lingering a little behind him, with a shiver in it
+  vec3 base = instanceMatrix[3].xyz;
+  vec2 push = forceAt(base).xz * 0.9;
+  if (uForceWakeDir.z > 0.0) {
+    vec2 hd = uForceWakeDir.xy;
+    vec2 d = base.xz - uForceWake.xz;
+    float along = dot(d, hd);
+    vec2 side = d - hd * along;
+    float sd = length(side);
+    float r = uForceWake.w;
+    float lon = along < 0.0 ? along / 2.5 : along;
+    float crown = base.y + 6.0 * length(instanceMatrix[1].xyz);
+    float f = uForceWakeDir.z * (1.0 - smoothstep(r * 0.3, r, length(vec2(lon, sd)))) * (1.0 - smoothstep(3.0, 11.0, abs(uForceWake.y - crown)));
+    float shiver = 0.8 + 0.2 * sin(uTreeTime * 8.0 + ph * 5.0);
+    push += ((sd > 1e-3 ? side / sd : vec2(0.0)) * 0.9 + hd * 0.7) * f * shiver;
+  }
+  float pl = length(push);
+  if (pl > 1.6) push *= 1.6 / pl;
+  // world push into the instance's own (yawed, scaled) frame, bending from the base; the crown dips as it leans
+  vec3 lean3 = inverse(mat3(instanceMatrix)) * vec3(push.x, 0.0, push.y) * bendK;
+  transformed += lean3;
+  transformed.y -= dot(lean3.xz, lean3.xz) / (2.0 * max(transformed.y, 1.0));
 }`);
   });
   const rockMat = new THREE.MeshStandardMaterial({ name: 'boulder', vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });

@@ -316,7 +316,9 @@
     "boltRadius": 0.12,
     "boltRange": 120,
     "shake": 0.12,
-    "shakeTime": 0.35
+    "shakeTime": 0.35,
+    "blastPower": 1,
+    "blastRadius": 6
   },
   "attention": {
     "maxDist": 15,

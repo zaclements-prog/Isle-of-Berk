@@ -13,6 +13,8 @@ export interface PlasmaFxOptions {
   prepare?: (m: THREE.Material) => void;
   /** Camera shake at an impact (amplitude m, duration s) — OrbitCamera.shake. */
   shake?: (amplitude: number, duration: number) => void;
+  /** Every impact, with the surface normal there (the game publishes it as a world `blast`). */
+  onImpact?: (point: THREE.Vector3, normal: THREE.Vector3) => void;
   seed?: number;
 }
 
@@ -294,6 +296,7 @@ export class PlasmaFx {
     this.placeScorch(at, _n);
     const dist = this.camPos.distanceTo(at);
     this.o.shake?.(this.o.cfg.shake / Math.max(1, dist / 12), this.o.cfg.shakeTime);
+    this.o.onImpact?.(at, _n);
   }
 
   private hemisphere(n: THREE.Vector3): THREE.Vector3 {

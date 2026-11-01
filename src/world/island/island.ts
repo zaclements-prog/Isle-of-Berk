@@ -8,6 +8,7 @@ import { COVE_LAYERS, loadLayerArrays, loadSplatTexture, type LayerArrays } from
 import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '../terrain/splatShader';
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
+import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
 import { createStylizedTerrainMaterial, createStylizedUniforms } from './stylizedTerrain';
@@ -48,6 +49,8 @@ export interface IslandOptions {
    * splat, no grass (kept for comparison).
    */
   look?: 'stylised' | 'photo';
+  /** The shared force field the grass, trees and water react to (docs/superpowers/plans/2026-11-01-world-interaction.md). */
+  force?: ForceUniforms;
 }
 
 /**
@@ -160,13 +163,14 @@ export async function createIsland(app: App, opts: IslandOptions = {}): Promise<
     material = createStylizedTerrainMaterial(u);
   }
   const terrain = new Terrain(hf, material as THREE.MeshStandardMaterial, app.preset.lodDistanceScale, 1.5, ISLAND_COLLISION);
-  const ocean = new Ocean({ seaLevel: header.seaLevel, heightTexture: createHeightTexture(hf), extent: terrainUvTransform(hf) });
-  const props = buildProps(header.trees, header.rocks, (x, z) => hf.heightAt(x, z));
+  const force = opts.force;
+  const ocean = new Ocean({ seaLevel: header.seaLevel, heightTexture: createHeightTexture(hf), extent: terrainUvTransform(hf), force });
+  const props = buildProps(header.trees, header.rocks, (x, z) => hf.heightAt(x, z), force);
   const grassMap = look === 'stylised' ? await loadGrassMap(`${base}world/island/${header.files.splatA}`) : null;
-  const grass = look === 'stylised' ? new Grass(islandGrassField(header, hf, grassMap), low ? { radius: 28, cell: 0.6 } : { radius: 46, cell: 0.5 }) : null;
+  const grass = look === 'stylised' ? new Grass(islandGrassField(header, hf, grassMap), low ? { radius: 28, cell: 0.6 } : { radius: 46, cell: 0.5 }, force) : null;
   const berk = buildBerk(header);
   const P = header.cove.pond;
-  const pond = new Ocean({ seaLevel: P.level, heightTexture: ocean.uniforms.tOceanHeight.value as THREE.Texture, extent: terrainUvTransform(hf), size: P.r * 2 + 16, center: { x: P.x, z: P.z } });
+  const pond = new Ocean({ seaLevel: P.level, heightTexture: ocean.uniforms.tOceanHeight.value as THREE.Texture, extent: terrainUvTransform(hf), size: P.r * 2 + 16, center: { x: P.x, z: P.z }, force });
   pond.uniforms.uShallow.value.set(0.16, 0.36, 0.3);
   pond.uniforms.uDeep.value.set(0.04, 0.12, 0.1);
   const island = new IslandRegion(app, header, hf, terrain, splat, layers, ocean, props, grass, [splatA, splatB], berk, pond);

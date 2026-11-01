@@ -6,6 +6,8 @@ import { OrbitCamera } from '../../camera/orbitCamera';
 import { cameraFollow } from '../../dev/lab/labRunner';
 import { PlasmaFx } from '../../fx/plasmaFx';
 import type { CollisionWorld, RayHit } from '../../world/collision';
+import type { WorldEvents } from '../../world/events';
+import type { ForceSource } from '../../world/forceField';
 import { loadDragonAsset, type DragonAsset } from './asset';
 import type { InterestPoint } from './behaviour/attention';
 import { applyExpression } from './face/expression';
@@ -24,6 +26,8 @@ export interface ToothlessOptions {
   interest?: ReadonlyArray<ReadonlyArray<InterestPoint>>;
   /** Also show the model through the pond's underwater pass (Plan 5a LAYER_UNDERWATER). */
   extraLayers?: number[];
+  /** The world's events bus: each plasma impact is published as a `blast`. */
+  events?: WorldEvents;
   seed?: number;
 }
 
@@ -32,6 +36,8 @@ export interface Toothless extends ToothlessBrain {
   readonly dragon: DragonCharacter;
   readonly cam: OrbitCamera;
   readonly fx: PlasmaFx;
+  /** What the force field reads from him (flying, chest, velocity, the ground under him, the wings' push). */
+  forceSource(ground: (x: number, z: number) => number): ForceSource;
   /** Teleport (and re-seat the camera). */
   tp(x: number, z: number, heading?: number): void;
 }
@@ -73,6 +79,10 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
   const fx = new PlasmaFx({
     world, cfg: tuning.plasma, prepare: (m) => app.materials.prepare(m),
     shake: (a, t) => cam.shake(a, t), seed: o.seed ?? 1,
+    onImpact: (point, normal) => o.events?.emit({
+      type: 'blast', point: point.clone(), normal: normal.clone(), power: tuning.plasma.blastPower,
+      radius: tuning.plasma.blastRadius * tuning.plasma.blastPower, time: app.loop.simTime,
+    }),
   });
   app.scene.add(fx.root);
   const canvas = app.renderer.domElement;
@@ -156,5 +166,18 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
       if (pitchDeg !== undefined) cam.pitch = THREE.MathUtils.degToRad(pitchDeg);
     },
   });
-  return { ...tb, asset, dragon, cam, fx, tp };
+  const src: ForceSource = { airborne: false, chest: new THREE.Vector3(), velocity: new THREE.Vector3(), ground: 0, wingPush: 0 };
+  const forceSource = (ground: (x: number, z: number) => number): ForceSource => {
+    const f = tb.flight;
+    src.airborne = f.airborne;
+    dragon.chestPos(src.chest);
+    src.velocity.copy(dragon.kin.velocity);
+    src.ground = ground(src.chest.x, src.chest.z);
+    // the wings push hardest mid-downstroke (the flap's first ~half beat), a glide only a little; the takeoff and the
+    // landing are all big strokes
+    const down = Math.max(0, Math.sin((Math.PI * (f.flapU % 1)) / 0.52)) * ((f.flapU % 1) < 0.52 ? 1 : 0);
+    src.wingPush = f.phase === 'takeoff' || f.phase === 'landing' ? 0.85 : f.flapW * down + f.glideW * 0.25;
+    return src;
+  };
+  return { ...tb, asset, dragon, cam, fx, tp, forceSource };
 }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { addCompileHook } from '../../render/materials';
 import { mulberry32 } from '../../core/rng';
+import { FORCE_PARS, ForceField, MAX_CONTACTS, type ForceUniforms } from '../forceField';
 
 /** Where grass may grow: the ground height, its up-normal component, and a 0…1 density at (x, z). */
 export interface GrassField {
@@ -92,7 +93,7 @@ export function flowerGeometry(): THREE.BufferGeometry {
 }
 
 /** Most interaction spheres the grass reacts to at once (paws, belly, hips, tail). */
-export const MAX_PUSH = 12;
+export const MAX_PUSH = MAX_CONTACTS;
 
 const FLOWER_COLORS = [0xf4f1e6, 0xf2d24b, 0xb48ad8, 0xe98a6b].map((c) => new THREE.Color(c));
 
@@ -109,15 +110,17 @@ export class Grass {
     uGrassTime: { value: 0 },
     uGrassCam: { value: new THREE.Vector3() },
     uGrassRadius: { value: 40 },
-    /** Spheres that push the grass aside (xyz centre, w radius) and how many are live. */
-    uGrassPush: { value: Array.from({ length: MAX_PUSH }, () => new THREE.Vector4(0, -1e4, 0, 0)) },
-    uGrassPushN: { value: 0 },
   };
+  /** The shared force field (contacts, downwash, shocks); the grass owns one when none is passed in. */
+  readonly force: ForceUniforms;
+  private readonly ownField: ForceField | null;
   private readonly center = new THREE.Vector3(Infinity, 0, Infinity);
   private readonly material: THREE.MeshStandardMaterial;
   private readonly flowerMaterial: THREE.MeshStandardMaterial;
 
-  constructor(private readonly field: GrassField, private readonly o: GrassOptions) {
+  constructor(private readonly field: GrassField, private readonly o: GrassOptions, force?: ForceUniforms) {
+    this.ownField = force ? null : new ForceField();
+    this.force = force ?? this.ownField!.uniforms;
     this.root.name = 'Grass';
     this.uniforms.uGrassRadius.value = o.radius;
     const cap = Math.ceil((Math.PI * o.radius * o.radius) / (o.cell * o.cell) * 1.05);
@@ -139,16 +142,16 @@ export class Grass {
   private windMaterial(name: string, instanceColors: boolean): THREE.MeshStandardMaterial {
     const m = new THREE.MeshStandardMaterial({ name, vertexColors: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
     const u = this.uniforms;
+    const f = this.force;
     addCompileHook(m, `grassWind${instanceColors ? 'F' : ''}`, (shader) => {
-      Object.assign(shader.uniforms, u);
+      Object.assign(shader.uniforms, u, f);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>
 attribute float bend;
 uniform float uGrassTime;
 uniform vec3 uGrassCam;
 uniform float uGrassRadius;
-uniform vec4 uGrassPush[${MAX_PUSH}];
-uniform int uGrassPushN;`)
+${FORCE_PARS}`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   vec3 root = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -164,9 +167,9 @@ uniform int uGrassPushN;`)
   // lifted off the ground (a paw in swing, a body in flight) lets it spring back
   vec3 push = vec3(0.0);
   float flat_ = 0.0;
-  for (int k = 0; k < ${MAX_PUSH}; k++) {
-    if (k >= uGrassPushN) break;
-    vec4 s = uGrassPush[k];
+  for (int k = 0; k < ${MAX_CONTACTS}; k++) {
+    if (k >= uForceContactsN) break;
+    vec4 s = uForceContacts[k];
     vec2 d = root.xz - s.xz;
     float dist = length(d);
     float near = 1.0 - smoothstep(s.w * 0.6, s.w + 0.55, dist);
@@ -175,6 +178,10 @@ uniform int uGrassPushN;`)
     push.xz += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * f * 0.42;
     flat_ = max(flat_, f);
   }
+  // the air: downwash under a low-flying dragon and blast shockwaves
+  vec3 fa = forceAt(root);
+  push.xz += fa.xz * 0.5;
+  flat_ = max(flat_, fa.y);
   // the push is in world space: into the tuft's own (yawed, scaled) frame
   transformed += inverse(mat3(instanceMatrix)) * push * bend;
   transformed.y *= 1.0 - 0.65 * flat_ * bend;
@@ -186,9 +193,12 @@ uniform int uGrassPushN;`)
   /** Rebuild the ring when the camera has moved more than a quarter of a cell-row; animate the wind. */
   update(dt: number, camera: THREE.Camera, interactions: readonly { center: THREE.Vector3; radius: number }[] = []): void {
     this.uniforms.uGrassTime.value += dt;
-    const n = Math.min(MAX_PUSH, interactions.length);
-    for (let k = 0; k < n; k++) this.uniforms.uGrassPush.value[k].set(interactions[k].center.x, interactions[k].center.y, interactions[k].center.z, interactions[k].radius);
-    this.uniforms.uGrassPushN.value = n;
+    // a grass with its own field takes the contact spheres directly; a shared field is updated by its owner
+    if (this.ownField) {
+      this.ownField.contacts.length = 0;
+      this.ownField.contacts.push(...interactions);
+      this.ownField.update(this.uniforms.uGrassTime.value, dt);
+    }
     const c = camera.position;
     this.uniforms.uGrassCam.value.copy(c);
     if (Math.hypot(c.x - this.center.x, c.z - this.center.z) < this.o.radius * 0.12) return;

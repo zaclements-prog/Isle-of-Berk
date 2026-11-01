@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { addCompileHook } from '../../render/materials';
 import { mulberry32 } from '../../core/rng';
+import { FORCE_PARS, ForceField, MAX_SHOCKS, type ForceUniforms } from '../forceField';
 
 export interface OceanOptions {
   seaLevel: number;
@@ -10,6 +11,8 @@ export interface OceanOptions {
   size?: number;
   /** Centre of the water plane (default the origin): a pond is a small one at its own level. */
   center?: { x: number; z: number };
+  /** The shared force field: the downwash ripples and sprays the water, blast shocks run across it as rings. */
+  force?: ForceUniforms;
 }
 
 /**
@@ -86,8 +89,9 @@ export class Ocean {
       name: 'ocean', color: 0xffffff, roughness: 0.16, metalness: 0, normalMap: this.normal, normalScale: new THREE.Vector2(0.45, 0.45),
     });
     const u = this.uniforms;
+    const f = o.force ?? new ForceField().uniforms;
     addCompileHook(this.material, 'ocean', (shader) => {
-      Object.assign(shader.uniforms, u);
+      Object.assign(shader.uniforms, u, f);
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vOceanXZ;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvOceanXZ = (modelMatrix * vec4(transformed, 1.0)).xz;');
@@ -100,7 +104,34 @@ uniform float uSeaLevel;
 uniform float uOceanTime;
 uniform vec3 uShallow;
 uniform vec3 uDeep;
-uniform vec3 uFoam;`)
+uniform vec3 uFoam;
+${FORCE_PARS}
+// the air on the water: (foam 0…1, ripple slope x, z)
+vec3 oceanForce(vec2 xz) {
+  float foam = 0.0;
+  vec2 slope = vec2(0.0);
+  if (uForceDownS > 0.0) {
+    vec2 d = xz - uForceDown.xz;
+    float dist = length(d);
+    vec2 dir = dist > 1e-3 ? d / dist : vec2(1.0, 0.0);
+    float f = uForceDownS * (1.0 - smoothstep(0.0, uForceDown.w * 1.3, dist)) * (1.0 - smoothstep(0.0, 6.0, abs(uSeaLevel - uForceDown.y)));
+    // rings spreading out from under him, each downstroke a new one, plus a churned spray patch right below
+    float ph = dist * 1.4 - uForceTime * 9.0;
+    slope += dir * cos(ph) * f * 0.55;
+    float churn = 0.5 + 0.5 * sin(xz.x * 3.1 + uForceTime * 11.0) * sin(xz.y * 2.7 - uForceTime * 9.0);
+    foam = max(foam, f * (smoothstep(0.55, 1.0, sin(ph)) * 0.6 + (1.0 - smoothstep(0.0, uForceDown.w * 0.45, dist)) * churn * 0.9));
+  }
+  for (int k = 0; k < ${MAX_SHOCKS}; k++) {
+    float s = uForceShockS[k].x;
+    if (s <= 0.0) continue;
+    vec2 d = xz - uForceShock[k].xz;
+    float dist = length(d);
+    float band = exp(-pow((dist - uForceShock[k].w) / max(uForceShockS[k].y, 0.1), 2.0)) * min(s, 1.5);
+    slope += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * band * 0.8;
+    foam = max(foam, band * 0.8);
+  }
+  return vec3(clamp(foam, 0.0, 1.0), slope);
+}`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
   vec2 ouv = (vOceanXZ - uOceanExtent.xy) * uOceanExtent.zw;
@@ -113,6 +144,12 @@ uniform vec3 uFoam;`)
   float band = 1.0 - smoothstep(0.0, 0.35 + 0.45 * swell, depth);
   float breakup = 0.55 + 0.45 * sin(vOceanXZ.x * 0.9 + uOceanTime * 1.7) * sin(vOceanXZ.y * 0.8 - uOceanTime * 1.3);
   diffuseColor.rgb = mix(water, uFoam, clamp(band * breakup, 0.0, 1.0) * step(-0.3, depth));
+  diffuseColor.rgb = mix(diffuseColor.rgb, uFoam, oceanForce(vOceanXZ).x);
+}`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  vec2 sl = oceanForce(vOceanXZ).yz;
+  normal = normalize(normal + (viewMatrix * vec4(-sl.x, 0.0, -sl.y, 0.0)).xyz);
 }`);
     });
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2), this.material);
