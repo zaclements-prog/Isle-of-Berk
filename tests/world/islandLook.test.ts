@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { createStylizedTerrainMaterial, createStylizedUniforms, STYLE_PALETTE } from '../../src/world/island/stylizedTerrain';
 import { Grass, tuftGeometry, flowerGeometry, type GrassField } from '../../src/world/island/grass';
-import { broadleafGeometry, pineGeometry } from '../../src/world/island/props';
+import { broadleafGeometry, buildProps, pineGeometry } from '../../src/world/island/props';
 
 const stdShader = () => ({ uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader });
 
@@ -96,5 +96,37 @@ describe('stylised vegetation', () => {
       expect(p.z).toBeCloseTo(first[k * 2 + 1]);
     }
     grass.dispose();
+  });
+});
+
+describe('grass parting and tree sway', () => {
+  it('feeds the touching spheres to the grass shader, which pushes tufts aside and flattens them', () => {
+    const field: GrassField = { height: () => 0, upness: () => 1, density: () => 1, flowers: () => 0 };
+    const grass = new Grass(field, { radius: 6, cell: 0.8 });
+    const cam = new THREE.PerspectiveCamera();
+    const paws = [{ center: new THREE.Vector3(1, 0.05, 0), radius: 0.3 }, { center: new THREE.Vector3(-1, 0.05, 0), radius: 0.3 }];
+    grass.update(0.016, cam, paws);
+    const u = (grass as unknown as { uniforms: { uGrassPush: { value: THREE.Vector4[] }; uGrassPushN: { value: number } } }).uniforms;
+    expect(u.uGrassPushN.value).toBe(2);
+    expect(u.uGrassPush.value[1].toArray()).toEqual([-1, 0.05, 0, 0.3]);
+    const s = stdShader();
+    (grass.tufts.material as THREE.Material).onBeforeCompile(s as never, {} as never);
+    expect(s.vertexShader).toContain('uniform vec4 uGrassPush[12];');
+    expect(s.vertexShader).toContain('inverse(mat3(instanceMatrix)) * push');
+    grass.update(0.016, cam, []);
+    expect(u.uGrassPushN.value).toBe(0);
+    grass.dispose();
+  });
+
+  it('sways the trees from the base up, with time', () => {
+    const props = buildProps([[0, 0, 0, 1, 0, 0], [5, 0, 5, 1, 1, 0]], [], () => 0);
+    const mesh = props.root.children[0] as THREE.InstancedMesh;
+    const s = stdShader();
+    (mesh.material as THREE.Material).onBeforeCompile(s as never, {} as never);
+    expect(s.vertexShader).toContain('uniform float uTreeTime;');
+    expect(s.vertexShader).toContain('float bendK = h * h;');
+    props.update(0.5);
+    expect((s.uniforms as Record<string, { value: number }>).uTreeTime.value).toBeCloseTo(0.5);
+    props.dispose();
   });
 });

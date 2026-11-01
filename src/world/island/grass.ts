@@ -91,6 +91,9 @@ export function flowerGeometry(): THREE.BufferGeometry {
   return g;
 }
 
+/** Most interaction spheres the grass reacts to at once (paws, belly, hips, tail). */
+export const MAX_PUSH = 12;
+
 const FLOWER_COLORS = [0xf4f1e6, 0xf2d24b, 0xb48ad8, 0xe98a6b].map((c) => new THREE.Color(c));
 
 /**
@@ -102,7 +105,14 @@ export class Grass {
   readonly root = new THREE.Group();
   readonly tufts: THREE.InstancedMesh;
   readonly flowers: THREE.InstancedMesh;
-  private readonly uniforms = { uGrassTime: { value: 0 }, uGrassCam: { value: new THREE.Vector3() }, uGrassRadius: { value: 40 } };
+  private readonly uniforms = {
+    uGrassTime: { value: 0 },
+    uGrassCam: { value: new THREE.Vector3() },
+    uGrassRadius: { value: 40 },
+    /** Spheres that push the grass aside (xyz centre, w radius) and how many are live. */
+    uGrassPush: { value: Array.from({ length: MAX_PUSH }, () => new THREE.Vector4(0, -1e4, 0, 0)) },
+    uGrassPushN: { value: 0 },
+  };
   private readonly center = new THREE.Vector3(Infinity, 0, Infinity);
   private readonly material: THREE.MeshStandardMaterial;
   private readonly flowerMaterial: THREE.MeshStandardMaterial;
@@ -136,7 +146,9 @@ export class Grass {
 attribute float bend;
 uniform float uGrassTime;
 uniform vec3 uGrassCam;
-uniform float uGrassRadius;`)
+uniform float uGrassRadius;
+uniform vec4 uGrassPush[${MAX_PUSH}];
+uniform int uGrassPushN;`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 {
   vec3 root = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -148,14 +160,35 @@ uniform float uGrassRadius;`)
   float flutter = sin(uGrassTime * 4.1 + root.x * 1.7 + root.z * 1.3);
   vec2 wind = vec2(0.8, 0.45) * (0.12 + 0.18 * gust) + vec2(0.05, 0.08) * flutter;
   transformed.xz += wind * bend * bend * keep;
+  // parting: every sphere touching the ground near a tuft pushes it outward and flattens it, more at the tip; a sphere
+  // lifted off the ground (a paw in swing, a body in flight) lets it spring back
+  vec3 push = vec3(0.0);
+  float flat_ = 0.0;
+  for (int k = 0; k < ${MAX_PUSH}; k++) {
+    if (k >= uGrassPushN) break;
+    vec4 s = uGrassPush[k];
+    vec2 d = root.xz - s.xz;
+    float dist = length(d);
+    float near = 1.0 - smoothstep(s.w * 0.6, s.w + 0.55, dist);
+    float low = 1.0 - smoothstep(0.05, 0.9, (s.y - s.w) - root.y);
+    float f = near * low;
+    push.xz += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * f * 0.42;
+    flat_ = max(flat_, f);
+  }
+  // the push is in world space: into the tuft's own (yawed, scaled) frame
+  transformed += inverse(mat3(instanceMatrix)) * push * bend;
+  transformed.y *= 1.0 - 0.65 * flat_ * bend;
 }`);
     });
     return m;
   }
 
   /** Rebuild the ring when the camera has moved more than a quarter of a cell-row; animate the wind. */
-  update(dt: number, camera: THREE.Camera): void {
+  update(dt: number, camera: THREE.Camera, interactions: readonly { center: THREE.Vector3; radius: number }[] = []): void {
     this.uniforms.uGrassTime.value += dt;
+    const n = Math.min(MAX_PUSH, interactions.length);
+    for (let k = 0; k < n; k++) this.uniforms.uGrassPush.value[k].set(interactions[k].center.x, interactions[k].center.y, interactions[k].center.z, interactions[k].radius);
+    this.uniforms.uGrassPushN.value = n;
     const c = camera.position;
     this.uniforms.uGrassCam.value.copy(c);
     if (Math.hypot(c.x - this.center.x, c.z - this.center.z) < this.o.radius * 0.12) return;

@@ -93,7 +93,8 @@ export class IslandRegion implements Region {
   update(dt: number, ctx: RegionUpdateContext): void {
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
-    this.grass?.update(dt, ctx.camera);
+    this.grass?.update(dt, ctx.camera, ctx.interactions);
+    this.props.update(dt);
   }
 
   dispose(): void {

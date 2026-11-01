@@ -1,4 +1,5 @@
 import './styles.css';
+import * as THREE from 'three';
 import { createApp } from './app/createApp';
 import { createTestScene } from './world/testScene';
 import { CollisionWorld } from './world/collision';
@@ -16,6 +17,8 @@ const app = createApp(document.getElementById('app')!);
 const hud = document.getElementById('hud')!;
 const scene = new URLSearchParams(location.search).get('scene') ?? 'island';
 
+const interactions: { center: THREE.Vector3; radius: number }[] = [];
+
 async function start(): Promise<void> {
   let world: CollisionWorld;
   let spawn = { x: 0, z: 6, heading: Math.PI };
@@ -30,14 +33,23 @@ async function start(): Promise<void> {
     const island = await createIsland(app, { look });
     world = CollisionWorld.fromObjects(island.collisionRoots());
     spawn = { ...island.spawnPoints[0] };
-    const ctx = { time: 0, camera: app.camera, interactions: [] };
+    const ctx = { time: 0, camera: app.camera, interactions };
     app.loop.addRender((_alpha, frameDt) => {
       ctx.time += frameDt;
       island.update(frameDt, ctx);
     }, -1);
   }
   hud.textContent = 'Loading Toothless…';
-  await createToothless({ app, world, spawn });
+  const t = await createToothless({ app, world, spawn });
+  // what parts the island's grass: his paws and the low body (chest, belly, hips, the start of the tail)
+  const d = t.dragon;
+  const body = d.proxies.items.flatMap((p, k) => (['chest', 'belly', 'hips', 'tail_a', 'tail_b'].includes(p.name) ? [k] : []));
+  const spheres = [0, 1, 2, 3].map(() => ({ center: new THREE.Vector3(), radius: 0.32 }))
+    .concat(body.map((k) => ({ center: d.proxies.centers[k], radius: d.proxies.items[k].radius * 1.3 })));
+  interactions.push(...spheres);
+  app.loop.addSim(() => {
+    for (let i = 0; i < 4; i++) d.legs.soleWorld(i, d.skeleton, spheres[i].center);
+  });
   hud.textContent = `Isle of Berk · ${KEYS} · quality: ${app.preset.name}`;
 }
 

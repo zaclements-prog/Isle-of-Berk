@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../core/rng';
+import { addCompileHook } from '../../render/materials';
 
 /** A placement from the bake: [x, y, z, scale, variant, yaw]. */
 export type Placement = readonly [number, number, number, number, number, number];
@@ -132,6 +133,8 @@ export interface Props {
   root: THREE.Group;
   /** World-space collision meshes: trunk cylinders and boulder hulls. */
   collision: THREE.Object3D[];
+  /** Advance the trees' wind sway. */
+  update(dt: number): void;
   dispose(): void;
 }
 
@@ -145,6 +148,24 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   root.name = 'IslandProps';
   const disposables: Array<{ dispose(): void }> = [];
   const pineMat = new THREE.MeshStandardMaterial({ name: 'pine', vertexColors: true, flatShading: true, roughness: 0.92, metalness: 0 });
+  // wind: each tree leans and sways about its base, more toward the crown (∝ height²), slowly, out of phase with its
+  // neighbours (the phase comes from where it stands), with a quicker flutter in the foliage on top
+  const sway = { uTreeTime: { value: 0 } };
+  addCompileHook(pineMat, 'treeSway', (shader) => {
+    Object.assign(shader.uniforms, sway);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uTreeTime;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  vec2 site = instanceMatrix[3].xz;
+  float ph = site.x * 0.071 + site.y * 0.053;
+  float h = max(transformed.y, 0.0) / 9.0;
+  float bendK = h * h;
+  vec2 lean = vec2(sin(uTreeTime * 0.7 + ph), 0.6 * sin(uTreeTime * 0.53 + ph * 1.7)) * 0.16;
+  vec2 flutter = vec2(sin(uTreeTime * 2.3 + ph * 3.1 + transformed.y), cos(uTreeTime * 2.9 + ph * 2.3)) * 0.035;
+  transformed.xz += (lean + flutter * step(3.0, transformed.y)) * bendK;
+}`);
+  });
   const rockMat = new THREE.MeshStandardMaterial({ name: 'boulder', vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
   disposables.push(pineMat, rockMat);
   const trunkParts: THREE.BufferGeometry[] = [];
@@ -203,6 +224,9 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   return {
     root,
     collision,
+    update(dt: number) {
+      sway.uTreeTime.value += dt;
+    },
     dispose() {
       for (const d of disposables) d.dispose();
     },
