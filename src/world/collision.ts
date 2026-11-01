@@ -101,6 +101,21 @@ export class CollisionLayer {
     }
   }
 
+  /**
+   * Move vertices in place (the triangles stay the same) and refit the BVH's bounds instead of rebuilding it: a
+   * crater only lowers heights, and a refit costs a fraction of a rebuild. `mutate` gets the live position array and
+   * returns whether it changed anything.
+   */
+  refit(mutate: (positions: Float32Array) => boolean): boolean {
+    const attr = this.geometry.attributes.position as THREE.BufferAttribute | undefined;
+    if (!attr || !this.bvh || !mutate(attr.array as Float32Array)) return false;
+    attr.needsUpdate = true;
+    this.bvh.refit();
+    this.bvh.getBoundingBox(this.box); // the refit root's bounds: no second pass over the vertices
+    this.geometry.boundingBox = this.box.clone();
+    return true;
+  }
+
   dispose(): void {
     this.geometry.dispose();
     this.bvh = null;
@@ -252,6 +267,14 @@ export class CollisionWorld {
     this.unfile(l);
     l.set(positions);
     this.file(l);
+  }
+
+  /** Move a layer's vertices in place and refit its BVH (same triangles); see `CollisionLayer.refit`. */
+  refitLayer(l: CollisionLayer, mutate: (positions: Float32Array) => boolean): boolean {
+    this.unfile(l);
+    const changed = l.refit(mutate);
+    this.file(l);
+    return changed;
   }
 
   /** Split triangles into `tile`-metre square layers by centroid (named `${name}:i,j`). */
