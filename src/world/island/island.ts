@@ -8,7 +8,7 @@ import { COVE_LAYERS, loadLayerArrays, loadSplatTexture, type LayerArrays } from
 import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '../terrain/splatShader';
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
-import { CollisionWorld, trianglesOf, type CollisionSet } from '../collision';
+import { CollisionWorld, trianglesOf, type CollisionLayer, type CollisionSet } from '../collision';
 import type { WorldEvents } from '../events';
 import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
@@ -53,6 +53,8 @@ export interface IslandCollision {
   world: CollisionWorld;
   trees: CollisionSet;
   structures: CollisionSet;
+  /** The boulders' hulls (one layer, in `props.boulders` order), moved when a crater re-seats them. */
+  boulders?: CollisionLayer;
 }
 
 function app_prepare(app: App, root: THREE.Object3D): void {
@@ -64,13 +66,25 @@ export function islandCollisionWorld(terrainRoot: THREE.Object3D, props: Props, 
   // the terrain alone in tiles (a crater re-samples a tile from the heightfield), boulders a layer of their own
   const world = CollisionWorld.fromObjects([terrainRoot], { tile });
   const boulders = props.collision.filter((o) => o.name === 'boulders_collision');
-  if (boulders.length) world.addLayer('boulders', trianglesOf(boulders));
+  const boulderLayer = boulders.length ? world.addLayer('boulders', trianglesOf(boulders)) : undefined;
   const trees = world.createSet('trees', tile);
   for (const t of props.trunks) trees.add(t.key, t.positions);
   const structures = world.createSet('structures', tile);
   for (const b of berk.structures) structures.add(b.key, b.positions);
   world.flush();
-  return { world, trees, structures };
+  return { world, trees, structures, boulders: boulderLayer };
+}
+
+/** Re-seat the boulders in a rectangle on `ground` (props.reseatBoulders) and move their hulls in the collision layer. */
+export function reseatBoulders(props: Props, collision: IslandCollision, rect: readonly [number, number, number, number], ground: (x: number, z: number) => number): number {
+  const moved = props.reseatBoulders(rect, ground);
+  if (moved.length && collision.boulders) {
+    collision.world.refitLayer(collision.boulders, (pos) => {
+      for (const { boulder: b, dy } of moved) for (let v = b.first; v < b.first + b.count; v++) pos[v * 3 + 1] += dy;
+      return true;
+    });
+  }
+  return moved.length;
 }
 
 export interface IslandOptions {
@@ -168,7 +182,10 @@ export class IslandRegion implements Region {
     // craters first: the ground the burn and the falling trees then read is the dug one
     this.craters = new Craters(hf, {
       refreshTerrain: (r) => this.terrain.refresh(r), collision: collision?.world, tile, heightTexture: this.heightTexture,
-      changed: () => this.grass?.invalidate(),
+      changed: (r) => {
+        this.grass?.invalidate();
+        this.reseatBoulders(r, collision);
+      },
     }, events);
     const burn = new BurnMask(hf.size, hf.origin - hf.spacing / 2, hf.spacing);
     this.burn = burn;
@@ -214,6 +231,11 @@ export class IslandRegion implements Region {
     });
     app_prepare(this.app, this.ejecta.root);
     this.root.add(this.ejecta.root);
+  }
+
+  /** Set the boulders in a crater's rectangle back on the dug (or raised) ground, their collision hulls with them. */
+  private reseatBoulders(rect: readonly [number, number, number, number], collision: IslandCollision | null): void {
+    if (collision) reseatBoulders(this.props, collision, rect, (x, z) => this.hf.heightAt(x, z));
   }
 
   update(dt: number, ctx: RegionUpdateContext): void {
