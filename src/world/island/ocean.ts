@@ -8,6 +8,8 @@ export interface OceanOptions {
   heightTexture: THREE.Texture;
   extent: THREE.Vector4;
   size?: number;
+  /** Centre of the water plane (default the origin): a pond is a small one at its own level. */
+  center?: { x: number; z: number };
 }
 
 /**
@@ -115,7 +117,7 @@ uniform vec3 uFoam;`)
     });
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2), this.material);
     this.mesh.name = 'Ocean';
-    this.mesh.position.y = o.seaLevel;
+    this.mesh.position.set(o.center?.x ?? 0, o.seaLevel, o.center?.z ?? 0);
     this.mesh.receiveShadow = true;
   }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Heightfield } from './heightfield';
 import { buildChunkGeometry, chunkBounds, chunkGrid, LOD_STEPS, selectLod, type ChunkCoord } from './chunks';
-import { terrainCollisionRoot } from './collisionMesh';
+import { terrainCollisionRoot, type CollisionBands } from './collisionMesh';
 
 /** LOD k is used up to lodDistances[k] metres (× the preset's lodDistanceScale); beyond the last, the coarsest. */
 export const TERRAIN_LOD_DISTANCES = [70, 140, 240] as const;
@@ -30,6 +30,7 @@ export class Terrain {
     readonly material: THREE.Material,
     lodDistanceScale = 1,
     readonly skirtDepth = 1.5,
+    collisionBands?: CollisionBands,
   ) {
     this.root.name = 'Terrain';
     this.thresholds = TERRAIN_LOD_DISTANCES.map((d) => d * lodDistanceScale);
@@ -47,7 +48,7 @@ export class Terrain {
       this.root.add(mesh);
       this.chunks.push({ coord, mesh, box, lod: coarsest, geos });
     }
-    this.collisionRoot = terrainCollisionRoot(hf);
+    this.collisionRoot = terrainCollisionRoot(hf, collisionBands);
   }
 
   /** Picks each chunk's LOD from the camera distance to its bounds (hysteresis inside selectLod). */

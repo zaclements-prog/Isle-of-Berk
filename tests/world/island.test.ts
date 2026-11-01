@@ -3,8 +3,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import type { InputState } from '../../src/core/input';
 import { Heightfield } from '../../src/world/terrain/heightfield';
-import { terrainCollisionRoot } from '../../src/world/terrain/collisionMesh';
+import { ISLAND_COLLISION, terrainCollisionRoot } from '../../src/world/terrain/collisionMesh';
 import { buildProps, boulderGeometry, pineGeometry } from '../../src/world/island/props';
+import { buildBerk } from '../../src/world/island/berk';
 import type { IslandHeader } from '../../src/world/island/island';
 import { rippleNormalTexture } from '../../src/world/island/ocean';
 import { CollisionWorld } from '../../src/world/collision';
@@ -67,22 +68,45 @@ describe.skipIf(!HAS_ISLAND)('Test Isle runtime', () => {
     props.dispose();
   });
 
-  it.skipIf(!HAS_LIBRARY)('Toothless spawns on the meadow and gallops across it on the island collision', { timeout: 60_000 }, async () => {
+  it('builds the village, the Great Hall, the piers and the Kill Ring, with house, hall and deck collision', () => {
+    const { header } = loadIsland();
+    const berk = buildBerk(header);
+    const names = berk.root.children.map((o) => o.name);
+    expect(names).toContain('GreatHall');
+    expect(names).toContain('KillRing');
+    expect(names.filter((n) => n === 'pier')).toHaveLength(header.docks.length);
+    const houses = berk.root.children.filter((o) => o.name.startsWith('houses_')) as THREE.InstancedMesh[];
+    expect(houses.reduce((n, m) => n + m.count, 0)).toBe(header.houses.length);
+    expect(berk.collision).toHaveLength(1);
+    // the hall's door faces the village: the hall stands on its terrace
+    const hall = berk.root.getObjectByName('GreatHall')!;
+    expect(hall.position.y).toBeCloseTo(header.hall.height - 0.3, 1);
+    berk.dispose();
+  });
+
+  it.skipIf(!HAS_LIBRARY)('Toothless spawns on the path below the Great Hall, then gallops across the plateau', { timeout: 60_000 }, async () => {
     const { header, hf } = loadIsland();
     const props = buildProps(header.trees, header.rocks, (x, z) => hf.heightAt(x, z));
-    const world = CollisionWorld.fromObjects([terrainCollisionRoot(hf), ...props.collision]);
+    const berk = buildBerk(header);
+    const world = CollisionWorld.fromObjects([terrainCollisionRoot(hf, ISLAND_COLLISION), ...props.collision, ...berk.collision]);
     const a = await loadToothlessMotion();
     const d = new DragonCharacter({ rig: a.rig, world, clips: a.clips, posesMeta: a.posesMeta, seed: 1 });
     const s = header.spawn[0];
     d.spawn(s.x, s.z, s.heading);
-    expect(d.kin.pos.y).toBeCloseTo(header.meadow.height, 0);
+    expect(Math.abs(d.kin.pos.y - hf.heightAt(s.x, s.z))).toBeLessThan(0.3);
     const input = (keys: string[]): InputState => ({ keys: new Set(keys), pressed: new Set(), mouseDX: 0, mouseDY: 0, wheel: 0, buttons: 0, buttonsPressed: 0 });
-    const cam = new THREE.Vector3(s.x, 15, s.z - 8);
-    // gallop away from the tor, across the meadow
-    for (let k = 0; k < 360; k++) d.update({ input: input(['KeyW', 'ShiftLeft']), cameraYaw: s.heading + Math.PI, cameraPos: cam }, 1 / 120);
+    const cam = new THREE.Vector3(s.x, hf.heightAt(s.x, s.z) + 3, s.z - 8);
+    for (let k = 0; k < 120; k++) d.update({ input: input([]), cameraYaw: s.heading, cameraPos: cam }, 1 / 120);
+    expect(d.nanResets).toBe(0);
+    // the plateau, heading west across it
+    const p = header.plateau;
+    d.spawn(p.x + 30, p.z - 10, -Math.PI / 2);
+    expect(d.kin.pos.y).toBeCloseTo(p.height, 0);
+    for (let k = 0; k < 360; k++) d.update({ input: input(['KeyW', 'ShiftLeft']), cameraYaw: -Math.PI / 2, cameraPos: cam }, 1 / 120);
     expect(d.nanResets).toBe(0);
     expect(d.kin.speed).toBeGreaterThan(7);
     expect(Math.abs(d.kin.pos.y - hf.heightAt(d.kin.pos.x, d.kin.pos.z))).toBeLessThan(0.3);
     props.dispose();
+    berk.dispose();
   });
 });
