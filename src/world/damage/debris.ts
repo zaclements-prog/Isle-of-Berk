@@ -101,6 +101,8 @@ const _push = new THREE.Vector3();
 const CORNERS = [-1, 1].flatMap((x) => [-1, 1].flatMap((y) => [-1, 1].map((z) => new THREE.Vector3(x, y, z))));
 /** A box's 26 sample points for piece-on-piece contacts: corners, edge midpoints, face centres (unit, ±1/0). */
 const SAMPLES = [-1, 0, 1].flatMap((x) => [-1, 0, 1].flatMap((y) => [-1, 0, 1].map((z) => new THREE.Vector3(x, y, z)))).filter((v) => v.lengthSq() > 0);
+/** The 27-point grid through a box (its samples and its centre), for the part of it under water. */
+const GRID = [...SAMPLES, new THREE.Vector3()];
 /** Broad-phase cell (m), the overlap left alone (m) and the most a contact pushes pieces apart per substep (m). */
 const PAIR_CELL = 3;
 const PAIR_SLOP = 0.01;
@@ -150,8 +152,7 @@ export class Debris {
   /** Throw a box of the given half extents in, at a pose with a velocity and a spin. */
   spawn(pos: THREE.Vector3, q: THREE.Quaternion, half: THREE.Vector3, color: THREE.Color, v: THREE.Vector3, w: THREE.Vector3, density = 500): Piece {
     if (!this.free.length) this.remove(this.pieces[0]);
-    const awake = this.pieces.filter((p) => !p.asleep);
-    if (awake.length >= this.t.maxActive) this.sleep(awake[0]);
+    if (this.active >= this.t.maxActive) this.sleepSlowest();
     const mass = density * 8 * half.x * half.y * half.z;
     const I = (mass / 3) * ((half.y ** 2 + half.z ** 2) + (half.x ** 2 + half.z ** 2) + (half.x ** 2 + half.y ** 2)) / 3;
     const p: Piece = {
@@ -174,6 +175,46 @@ export class Debris {
     this.draw(p);
     this.mesh.count = this.t.maxPieces;
     return p;
+  }
+
+  /**
+   * A blast among the rubble: every piece within `reach` (m) of it wakes (leaving the collision, if it had settled)
+   * and is pushed away from it, harder the closer it is (`speed` m/s at point blank, less for heavy pieces). Also
+   * what keeps settled pieces out of a crater's raised lip: woken, they're lifted out of the new ground.
+   */
+  blast(at: THREE.Vector3, reach: number, speed: number): number {
+    let n = 0;
+    for (const p of this.pieces) {
+      _t.subVectors(p.pos, at);
+      const d = _t.length();
+      if (d > reach + p.half.length()) continue;
+      this.wake(p);
+      const k = Math.max(0, 1 - d / reach) * speed * Math.min(1, Math.sqrt(400 / p.mass));
+      if (k > 0) {
+        _t.y = Math.max(_t.y, 0.5 * d);
+        p.v.addScaledVector(_t.normalize(), k);
+      }
+      n++;
+    }
+    return n;
+  }
+
+  /** Back to moving: out of the collision, its rest timers reset. */
+  wake(p: Piece): void {
+    if (!p.asleep) return;
+    p.asleep = false;
+    p.still = 0;
+    p.age = 0;
+    p.anchor = undefined;
+    this.set?.remove(`debris:${p.id}`);
+    if (this.active > this.t.maxActive) this.sleepSlowest(p);
+  }
+
+  /** Over the cap of moving pieces: the slowest gives way (not one in mid-flight). */
+  private sleepSlowest(except?: Piece): void {
+    let best: Piece | null = null;
+    for (const o of this.pieces) if (!o.asleep && o !== except && (!best || o.v.lengthSq() < best.v.lengthSq())) best = o;
+    if (best) this.sleep(best);
   }
 
   /** Wall-clock milliseconds the last update() took (for the frame budget). */
@@ -476,11 +517,26 @@ export class Debris {
     if (!(level > lo)) return false;
     const under = Math.min(1, (level - lo) / Math.max(1e-3, hi - lo));
     const volume = 8 * p.half.x * p.half.y * p.half.z;
-    p.v.y += ((WATER * volume * under) / p.mass) * this.t.gravity * h;
+    const lift = WATER * volume * under * this.t.gravity;
+    p.v.y += (lift / p.mass) * h;
+    // the lift acts at the centre of the part under water (the 27-point grid's submerged points): a post floating
+    // upright or a plank on its edge rolls over and lies flat, as wood does
+    _r.set(0, 0, 0);
+    let n = 0;
+    for (const k of GRID) {
+      _c.set(k.x * p.half.x, k.y * p.half.y, k.z * p.half.z).applyQuaternion(p.q);
+      if (_c.y + p.pos.y > level) continue;
+      _r.add(_c);
+      n++;
+    }
+    if (n) {
+      _r.divideScalar(n);
+      p.w.addScaledVector(_t.set(-_r.z, 0, _r.x), lift * p.invI * h);   // r × (0, lift, 0)
+    }
     // drag grows with speed (a plunging plank is stopped quickly and doesn't leap back out like a cork)
     const damp = Math.exp(-WATER_DRAG * (1 + p.v.length() * WATER_DRAG_V) * under * h);
     p.v.multiplyScalar(damp);
-    p.w.multiplyScalar(damp);
+    p.w.multiplyScalar(damp * Math.exp(-WATER_DRAG * under * h));
     return true;
   }
 
@@ -488,6 +544,16 @@ export class Debris {
     p.asleep = true;
     p.v.set(0, 0, 0);
     p.w.set(0, 0, 0);
+    // never asleep under the ground: one put to sleep by the cap before it ever moved (spawned inside a slope) is
+    // lifted clear first
+    if (this.env.ground) {
+      let deficit = 0;
+      for (const k of CORNERS) {
+        _c.set(k.x * p.half.x, k.y * p.half.y, k.z * p.half.z).applyQuaternion(p.q).add(p.pos);
+        deficit = Math.max(deficit, this.env.ground(_c.x, _c.z) - _c.y);
+      }
+      if (deficit > 0.05) p.pos.y += deficit;
+    }
     this.draw(p);
     this.mesh.instanceMatrix.needsUpdate = true;
     if (!this.set || p.pos.y < -50 || p.afloat) return;

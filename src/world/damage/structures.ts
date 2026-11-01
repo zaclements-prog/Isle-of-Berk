@@ -189,6 +189,8 @@ export class StructureDamage {
 
   blast(e: BlastEvent): void {
     const reach = e.radius * this.t.reach;
+    // the rubble already lying about is thrown about again (and lifted out of the crater's lip it may now be under)
+    this.debris?.blast(e.point, e.radius, this.t.throwSpeed * 0.6 * e.power);
     for (const L of this.live.values()) {
       if (L.down) continue;
       const s = L.s;

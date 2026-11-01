@@ -55,4 +55,20 @@ describe('splashes', () => {
     expect(s.spray.count).toBe(0);
     s.dispose();
   });
+
+  it('floats wood flat: an upright post rolls over, a plank on its edge settles face down', () => {
+    const d = new Debris(flatWorld(), null, DEFAULT_DEBRIS, { ground: () => -20, water: () => 3 });
+    const post = d.spawn(new THREE.Vector3(0, 1, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.05, 0, 0.03)), new THREE.Vector3(0.17, 3, 0.17),
+      new THREE.Color(), new THREE.Vector3(), new THREE.Vector3());
+    const plank = d.spawn(new THREE.Vector3(10, 4, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(1.3, 0, 0)), new THREE.Vector3(1, 0.1, 0.5),
+      new THREE.Color(), new THREE.Vector3(), new THREE.Vector3());
+    for (let t = 0; t < 12; t += 1 / 60) d.update(1 / 60);
+    const up = (q: THREE.Quaternion) => new THREE.Vector3(0, 1, 0).applyQuaternion(q).y;
+    expect(Math.abs(up(post.q))).toBeLessThan(0.15);       // lying along the water
+    expect(Math.abs(up(plank.q))).toBeGreaterThan(0.95);   // face down
+    expect(post.asleep && plank.asleep).toBe(true);
+    expect(post.pos.y).toBeGreaterThan(2.8);
+    expect(post.pos.y).toBeLessThan(3.1);
+    d.dispose();
+  });
 });

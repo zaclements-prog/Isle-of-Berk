@@ -78,4 +78,36 @@ describe('debris against debris', () => {
     expect(d.pieces.filter((p) => p.pos.y > 0.5).length).toBeGreaterThan(2);
     d.dispose();
   });
+
+  it('a blast wakes the settled rubble near it and throws it again; far rubble stays put', () => {
+    const { world, set } = flatWorld();
+    const d = new Debris(world, set, DEFAULT_DEBRIS, { ground: () => 0 });
+    const near = d.spawn(new THREE.Vector3(2, 0.2, 0), new THREE.Quaternion(), new THREE.Vector3(1, 0.2, 0.5), C, V0(), V0());
+    const far = d.spawn(new THREE.Vector3(30, 0.2, 0), new THREE.Quaternion(), new THREE.Vector3(1, 0.2, 0.5), C, V0(), V0());
+    for (let t = 0; t < 3; t += 1 / 60) d.update(1 / 60);
+    expect(near.asleep && far.asleep).toBe(true);
+    expect(set.size).toBe(2);
+    expect(d.blast(new THREE.Vector3(0, 0, 0), 6, 5)).toBe(1);
+    expect(near.asleep).toBe(false);
+    expect(set.has(`debris:${near.id}`)).toBe(false);
+    expect(near.v.x).toBeGreaterThan(1);
+    expect(near.v.y).toBeGreaterThan(0.5);
+    expect(far.asleep).toBe(true);
+    for (let t = 0; t < 6; t += 1 / 60) d.update(1 / 60);
+    expect(near.asleep).toBe(true);
+    expect(near.pos.x).toBeGreaterThan(2.5);
+    d.dispose();
+  });
+
+  it('never leaves a piece asleep under the ground, even one the cap puts to sleep before it moves', () => {
+    const { world, set } = flatWorld();
+    const d = new Debris(world, set, { ...DEFAULT_DEBRIS, maxActive: 2 }, { ground: () => 0 });
+    // spawned half inside the ground, then two more: the cap puts the first to sleep at once
+    const buried = d.spawn(new THREE.Vector3(0, -0.3, 0), new THREE.Quaternion(), new THREE.Vector3(1, 0.5, 1), C, V0(), V0());
+    d.spawn(new THREE.Vector3(5, 2, 0), new THREE.Quaternion(), new THREE.Vector3(0.5, 0.5, 0.5), C, V0(), V0());
+    d.spawn(new THREE.Vector3(9, 2, 0), new THREE.Quaternion(), new THREE.Vector3(0.5, 0.5, 0.5), C, V0(), V0());
+    expect(buried.asleep).toBe(true);
+    expect(buried.pos.y - buried.half.y).toBeGreaterThan(-0.06);
+    d.dispose();
+  });
 });
