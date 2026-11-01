@@ -76,11 +76,12 @@ export class BodySolver {
    * Scripted actions drive the height/pitch targets directly (roll levels out). With `exact`, the pelvis height and
    * pitch are the targets themselves, not springs chasing them (a fall outruns any spring, and a choreography places
    * the shoulders where the paws can reach); when the action ends, the springs take over at that height, pitch and
-   * speed, so a landing's fall speed becomes its absorb; the locomotion bob is left out (the action carries the
-   * pelvis as it found it, bob and all). With `snap`, only the height jumps to its target,
+   * speed, so a landing's fall speed becomes its absorb; the locomotion bob is left out, but for `bob` (0…1) of it
+   * (the action carries the pelvis as it found it, bob and all, and may hand the bob back in as it lets go). With
+   * `snap`, only the height jumps to its target,
    * with no speed: the pitch still springs. `roll` (rad, + lifts the left side) is the target roll: a flight's bank.
    */
-  readonly override = { active: false, height: 0, pitch: 0, roll: 0, exact: false, snap: false };
+  readonly override = { active: false, height: 0, pitch: 0, roll: 0, exact: false, snap: false, bob: 0 };
   /**
    * Library-pose placement (M6): the height (world, pelvis head) and pitch targets blend toward these by `weight`
    * (roll levels out with it). Scripted `override`s still replace everything.
@@ -326,6 +327,7 @@ export class BodySolver {
     p.pelvisPos.z += up.z * this.hipHeight;
     // an exact override places the pelvis itself (a flight, a jump's arc): the cycles' bob, fading out under it, is
     // already in the height it carried over, and adding it again would bounce the pelvis as the cycles let go
-    p.pelvisPos.y = p.height + (this.override.active && this.override.exact ? 0 : this.bobOffset * up.y);
+    const o = this.override;
+    p.pelvisPos.y = p.height + (o.active && o.exact ? o.bob : 1) * this.bobOffset * up.y;
   }
 }

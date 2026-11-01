@@ -7,7 +7,7 @@ import type { MotionTuning } from '../motion/tuning';
 import type { RayHit } from '../../../world/collision';
 
 type FlightTuning = MotionTuning['flight'];
-type Phase = 'idle' | 'prep' | 'takeoff' | 'air' | 'descend' | 'landing' | 'settle';
+type Phase = 'idle' | 'prep' | 'takeoff' | 'air' | 'descend' | 'landing' | 'settle' | 'runout';
 
 /** Flight clips play above every other layer (posture 0 < gesture 1 < action 2). */
 const ORDER = 3;
@@ -68,6 +68,11 @@ export function sampleFlight(curve: readonly number[], t: number, loop = false):
  *   (fast) plays against the ground found at its touchdown spot, the height gap closing before the flare. A
  *   standing landing settles at its end; a running one hands the body to the gallop at hind touchdown (the gait
  *   phase set to 0, the feet re-seated), the clip fading out as the planner and the cycles take over.
+ * - **Run-out** (after a running landing): the ground motion has the body back (kinematics, feet, cycles) but the
+ *   pelvis eases from the clip's touchdown carriage (high, legs reaching) down onto the ground's running height over
+ *   runoutTime, its height and speed carried, instead of dropping onto the springs 0.4 m high (the legs then fall
+ *   short and pull the body down into a belly-low sag); the landing speed bleeds off over runoutDecel s whatever is
+ *   held, rather than braking to the trot at once.
  *
  * Every hand-off keeps the pelvis continuous: the difference between the old and new placement is carried and eased
  * out over `settle`.
@@ -222,6 +227,7 @@ export class FlightAction implements DragonAction {
       if ((this.phase as Phase) !== 'takeoff') return;
     }
     if (this.phase === 'settle') return this.stepSettle(d, dt);
+    if (this.phase === 'runout') return this.stepRunout(d, dt);
     d.mods.scripted = true;
     d.climb.suspended = true;
     d.planner.autoStep = false;
@@ -530,9 +536,20 @@ export class FlightAction implements DragonAction {
       this.fadeOut(this.clip!, 1, m.handoff ?? 0.35);
       d.gait.phase = 0;
       d.kin.speed = m.runSpeed ?? 6;
-      this.finishScripted(d);
+      // the ground motion takes the body back; the pelvis eases down onto it (stepRunout)
+      d.resetFeet();
+      d.mods.scripted = false;
+      d.climb.suspended = false;
+      d.planner.autoStep = true;
       d.kin.velocity.set(Math.sin(this.heading) * d.kin.speed, 0, Math.cos(this.heading) * d.kin.speed);
-      this.phase = 'idle';
+      this.runH = this.outH - (d.kin.pos.y + d.body.hipHeight);
+      this.runVH = this.outVH;
+      this.runP = this.outP;
+      this.runVP = this.outVP;
+      this.runRoll = this.bank;
+      this.runV = d.kin.speed;
+      this.phase = 'runout';
+      this.t = 0;
       this.clip = null;
       return;
     }
@@ -563,6 +580,42 @@ export class FlightAction implements DragonAction {
     if (!this.fading) this.phase = 'idle';
   }
 
+  /** Run-out state: the pelvis's offset over the ground's standing height (m) and speed, pitch, roll, ground speed. */
+  private runH = 0;
+  private runVH = 0;
+  private runP = 0;
+  private runVP = 0;
+  private runRoll = 0;
+  private runV = 0;
+
+  /**
+   * After a running landing: the pelvis, still the flight's (an exact override), eases from its touchdown height and
+   * speed to the running height over the ground (standing less runoutCrouch) and its pitch and roll to level, along a
+   * cubic that closes offset and speed together; then the springs take it over at rest. The speed he landed with
+   * bleeds off over runoutDecel s (held keys can keep it up, never cut it short).
+   */
+  private stepRunout(d: DragonCharacter, dt: number): void {
+    const c = this.cfg;
+    const T = Math.max(c.runoutTime, 1e-3);
+    const u = clamp(this.t / T, 0, 1);
+    const h00 = 2 * u * u * u - 3 * u * u + 1;
+    const h10 = u * u * u - 2 * u * u + u;
+    const ground = d.kin.pos.y + d.body.hipHeight - c.runoutCrouch * smoothstep(0, 1, u);
+    const o = d.body.override;
+    o.active = true;
+    o.exact = true;
+    o.snap = false;
+    o.height = ground + this.runH * h00 + this.runVH * T * h10;
+    o.pitch = this.runP * h00 + this.runVP * T * h10;
+    o.roll = this.runRoll * h00;
+    o.bob = smoothstep(0, 1, u);                                   // the running cycles' bob comes back in with the ground
+    d.intent.speed = Math.max(d.intent.speed, this.runV * (1 - smoothstep(0, c.runoutDecel, this.t)));
+    if (u >= 1) {
+      this.release(d);
+      this.phase = 'idle';
+    }
+  }
+
   // ---- shared -------------------------------------------------------------------------------------------------------
 
   /** Place the body: the pelvis at height h (world) with the pitch and roll, the origin at the path's (x, z). */
@@ -586,6 +639,7 @@ export class FlightAction implements DragonAction {
     o.active = true;
     o.exact = true;
     o.snap = false;
+    o.bob = 0;
     o.height = this.outH;
     o.pitch = this.outP + this.recoilPitch(dt);
     o.roll = roll;
@@ -624,6 +678,7 @@ export class FlightAction implements DragonAction {
     d.body.override.exact = false;
     d.body.override.snap = false;
     d.body.override.roll = 0;
+    d.body.override.bob = 0;
     d.wings.liftScale = 1;
   }
 

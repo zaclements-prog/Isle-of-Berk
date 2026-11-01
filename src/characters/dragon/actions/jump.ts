@@ -144,6 +144,7 @@ export class JumpAction implements DragonAction {
       o.active = true;
       o.exact = true;
       o.snap = false;
+      o.bob = 0;
       o.height = Math.max(y, this.landY) + d.body.hipHeight + off;
       stepSpring(this.pitch, lerp(this.pitchOf(d, 'jump_launch'), this.pitchOf(d, 'jump_land'), smoothstep(0.35, 1, f)), d.tuning.body.tiltOmega, 1, dt);
       o.pitch = this.pitch.x;
@@ -162,7 +163,8 @@ export class JumpAction implements DragonAction {
         const depth = clamp(c.absorbPerSpeed * vi, c.absorbMin, c.absorbMax);
         const sink = Math.max(c.landImpulse, depth * d.tuning.body.heightOmega * Math.E);
         d.body.impulse(sink + d.body.heightSpeed);
-        // momentum carries on only if he is asked to keep going; otherwise the landing soaks it up
+        // momentum carries on only if he is asked to keep going; otherwise the landing soaks it up (the paws were
+        // planted for the arc's landing spot: sliding on past it would trail them and pull the body down a stride)
         const carry = d.intent.hasDir ? this.v.length() : Math.min(this.v.length(), c.landCarry);
         d.kin.velocity.copy(this.v).setLength(carry);
         d.kin.speed = carry;

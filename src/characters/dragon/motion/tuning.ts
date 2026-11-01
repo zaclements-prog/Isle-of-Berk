@@ -285,6 +285,9 @@ export interface MotionTuning {
     runLandSpeed: number; maxLandHeight: number; descendDeg: number; settle: number;
     /** How long (s, the time constant) the descent's sink rate takes to ease out into a landing clip's own approach. */
     landCarryTime: number;
+    /** After a running landing: the pelvis eases onto the ground's running height (standing less runoutCrouch m)
+     *  over runoutTime s, and the landing speed bleeds off over runoutDecel s. */
+    runoutTime: number; runoutCrouch: number; runoutDecel: number;
   };
   /** The plasma blast (M6, spec §6.13): deg, s, m/s, m. recoilDrop: suspension dip (m/s); recoilKick: head (rad/s). */
   plasma: {
@@ -400,7 +403,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     minClearance: 3, clearLookahead: 1.2,
     handoff: 0.5, flapToGlide: 0.4, glideToFlap: 0.3, flapEntryPhase: 0.74, flapStopPhase: 0.26,
     runBlend: 0.45, runOffsetTime: 0.6,
-    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4, landCarryTime: 0.2,
+    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4, landCarryTime: 0.2, runoutTime: 0.45, runoutCrouch: 0.1, runoutDecel: 0.9,
   },
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,

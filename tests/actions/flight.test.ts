@@ -59,7 +59,7 @@ async function fly(plan: (t: number) => { keys: string[]; press?: string[] }, se
     if (r.phases[r.phases.length - 1] !== ph) r.phases.push(ph);
     if (ph === 'landing' && was !== 'landing') landV0 = d.kin.speed;
     if (ph === 'landing') r.landSpeedUp = Math.max(r.landSpeedUp, d.kin.speed - landV0);
-    if (was === 'landing' && ph === 'idle') {
+    if (was === 'landing' && ph === 'runout') {
       r.handGait = d.gait.phase;
       r.handSpeed = d.kin.speed;
     }
@@ -148,7 +148,7 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
       if (at(t, 10)) return { keys: [], press: ['Space'] };
       return { keys: [] };
     }, 14);
-    expect(r.phases).toEqual(['idle', 'prep', 'takeoff', 'air', 'descend', 'landing', 'idle']);
+    expect(r.phases).toEqual(['idle', 'prep', 'takeoff', 'air', 'descend', 'landing', 'runout', 'idle']);
     expect(r.tb.jump.phase).toBe('idle');                         // the Space at a gallop was the takeoff, not a jump
     expect(r.d.nanResets).toBe(0);
     expect(r.minH).toBeGreaterThan(0.55);
@@ -193,7 +193,7 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
       maxAlt = Math.max(maxAlt, tb.flight.pos.y);
     }
     expect(maxAlt).toBeGreaterThan(12);
-    expect(phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'idle']);
+    expect(phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'runout', 'idle']);
     expect(topSpeed).toBeLessThan(d.tuning.flight.glideSpeed + 3);
     expect(d.nanResets).toBe(0);
   });
