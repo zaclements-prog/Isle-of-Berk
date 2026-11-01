@@ -65,8 +65,53 @@ export class BurnMask {
         if (f > this.flat[k]) this.flat[k] = f;
       }
     }
-    this.patches.push({ i0, j0, i1, j1 });
+    this.addPatch(i0, j0, i1, j1);
     this.encode(i0, j0, i1, j1);
+  }
+
+  /**
+   * Char the ground under a fire (damage/fire): scorch raised to at least `amount` (0…1) over a disc of `radius` m
+   * around (x, z), ragged at the edge; the grass isn't flattened, it burns down where it stands. Uploads with the next
+   * update (a fire chars many small cells a second).
+   */
+  char(x: number, z: number, radius: number, amount: number): void {
+    const i0 = Math.max(0, Math.floor((x - radius - this.start) / this.texel));
+    const i1 = Math.min(this.size - 1, Math.ceil((x + radius - this.start) / this.texel));
+    const j0 = Math.max(0, Math.floor((z - radius - this.start) / this.texel));
+    const j1 = Math.min(this.size - 1, Math.ceil((z + radius - this.start) / this.texel));
+    if (i0 > i1 || j0 > j1) return;
+    for (let j = j0; j <= j1; j++) {
+      const cz = this.start + (j + 0.5) * this.texel;
+      for (let i = i0; i <= i1; i++) {
+        const cx = this.start + (i + 0.5) * this.texel;
+        const d = Math.hypot(cx - x, cz - z) / radius * (1 + 0.15 * Math.sin(cx * 1.7 + cz * 2.3));
+        const s = amount * (1 - THREE.MathUtils.smoothstep(d, 0.7, 1.15));
+        const k = j * this.size + i;
+        if (s > this.scorch[k]) this.scorch[k] = s;
+      }
+    }
+    this.addPatch(i0, j0, i1, j1);
+    this.encode(i0, j0, i1, j1, false);
+    this.changed = true;
+  }
+
+  /** How many healing patches there are (a fire's cells merge into a few). */
+  get patchCount(): number {
+    return this.patches.length;
+  }
+
+  /** Track a healing rectangle, merged into one it touches (a spreading fire chars hundreds of neighbouring cells). */
+  private addPatch(i0: number, j0: number, i1: number, j1: number): void {
+    for (const p of this.patches) {
+      if (i0 > p.i1 + 2 || i1 < p.i0 - 2 || j0 > p.j1 + 2 || j1 < p.j0 - 2) continue;
+      const u = { i0: Math.min(i0, p.i0), j0: Math.min(j0, p.j0), i1: Math.max(i1, p.i1), j1: Math.max(j1, p.j1) };
+      // merge only while the union stays compact (two far-apart blasts keep their own patches)
+      const area = (q: { i0: number; j0: number; i1: number; j1: number }) => (q.i1 - q.i0 + 1) * (q.j1 - q.j0 + 1);
+      if (area(u) > 2 * (area(p) + (i1 - i0 + 1) * (j1 - j0 + 1)) + 64) continue;
+      Object.assign(p, u);
+      return;
+    }
+    this.patches.push({ i0, j0, i1, j1 });
   }
 
   /** Scorch (0…1) and flattening (0…1) at (x, z), nearest texel. */

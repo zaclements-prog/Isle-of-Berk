@@ -118,7 +118,7 @@ export class Grass {
   private readonly material: THREE.MeshStandardMaterial;
   private readonly flowerMaterial: THREE.MeshStandardMaterial;
 
-  constructor(private readonly field: GrassField, private readonly o: GrassOptions, force?: ForceUniforms) {
+  constructor(readonly field: GrassField, private readonly o: GrassOptions, force?: ForceUniforms) {
     this.ownField = force ? null : new ForceField();
     this.force = force ?? this.ownField!.uniforms;
     this.root.name = 'Grass';

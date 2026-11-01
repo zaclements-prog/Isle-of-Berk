@@ -4,7 +4,7 @@ import type { CollisionSet } from '../collision';
 import { geometryTriangles } from '../collision';
 import type { BlastEvent, WorldEvents } from '../events';
 
-export type TreeState = 'standing' | 'scorched' | 'falling' | 'felled' | 'stump';
+export type TreeState = 'standing' | 'scorched' | 'burning' | 'burnt' | 'falling' | 'felled' | 'stump';
 
 export interface TreeDamageTuning {
   /** Of a blast's radius (× power): felled inside `fell`, scorched inside `scorch`. */
@@ -15,9 +15,11 @@ export interface TreeDamageTuning {
   crumble: number;
   /** Rad/s the blast throws a felled tree over with (× power). */
   kick: number;
+  /** Seconds a tree burns once fire catches it (damage/fire), before it stands burnt out. */
+  burn: number;
 }
 
-export const DEFAULT_TREE_DAMAGE: TreeDamageTuning = { fell: 0.75, scorch: 1.6, lie: 45, crumble: 2.5, kick: 0.9 };
+export const DEFAULT_TREE_DAMAGE: TreeDamageTuning = { fell: 0.75, scorch: 1.6, lie: 45, crumble: 2.5, kick: 0.9, burn: 14 };
 
 /** What the tree damage needs of each tree: its instance, where it stands, its size and its trunk's collision key. */
 export interface TreeRecord {
@@ -39,11 +41,15 @@ interface Tree {
   omega: number;
   rest: number;
   lying: number;
+  /** Seconds it has been burning. */
+  burnT: number;
 }
 
 const G = 9.81;
 const UP = new THREE.Vector3(0, 1, 0);
 const CHAR = new THREE.Color(0.2, 0.17, 0.15);
+/** A burnt-out tree: near black, a little ash-grey. */
+const BURNT = new THREE.Color(0.075, 0.066, 0.06);
 const _m = new THREE.Matrix4();
 const _r = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -122,7 +128,7 @@ export class TreeDamage {
       const base = new THREE.Vector3();
       _m.decompose(base, _q, _s);
       const e = new THREE.Euler().setFromQuaternion(_q, 'YXZ');
-      return { rec, state: 'standing' as TreeState, base, scale: _s.x, yaw: e.y, scorch: 0, fallYaw: 0, angle: 0, omega: 0, rest: Math.PI / 2, lying: 0 };
+      return { rec, state: 'standing' as TreeState, base, scale: _s.x, yaw: e.y, scorch: 0, fallYaw: 0, angle: 0, omega: 0, rest: Math.PI / 2, lying: 0, burnT: 0 };
     });
     const mat = new THREE.MeshStandardMaterial({ name: 'stump', vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
     this.stumps = new THREE.InstancedMesh(stumpGeometry(), mat, maxStumps);
@@ -152,9 +158,47 @@ export class TreeDamage {
     return this.trees[i].state;
   }
 
+  /** Where tree i stands (its base, on the ground), and its height (m). */
+  base(i: number): THREE.Vector3 {
+    return this.trees[i].base;
+  }
+
+  height(i: number): number {
+    return 9 * this.trees[i].scale;
+  }
+
+  /** How charred tree i is (0 green … 1 burnt black). */
+  scorchOf(i: number): number {
+    return this.trees[i].scorch;
+  }
+
+  /** 0…1 through its burn, while it's burning (0 otherwise). */
+  burnProgress(i: number): number {
+    const tr = this.trees[i];
+    return tr.state === 'burning' ? Math.min(1, tr.burnT / this.t.burn) : 0;
+  }
+
+  /** The collision key of tree i (`tree:<i>` on the island). */
+  key(i: number): string {
+    return this.trees[i].rec.key;
+  }
+
+  /**
+   * Fire catches tree i (damage/fire): a standing or scorched tree burns for `burn` s, its crown charring as it goes,
+   * then stands burnt out. False if it can't (already burning or burnt, or down).
+   */
+  ignite(i: number): boolean {
+    const tr = this.trees[i];
+    if (tr.state !== 'standing' && tr.state !== 'scorched') return false;
+    tr.state = 'burning';
+    tr.burnT = 0;
+    this.moving.add(tr);
+    return true;
+  }
+
   /** How many trees are in each state (for tests and the HUD). */
   census(): Record<TreeState, number> {
-    const out: Record<TreeState, number> = { standing: 0, scorched: 0, falling: 0, felled: 0, stump: 0 };
+    const out: Record<TreeState, number> = { standing: 0, scorched: 0, burning: 0, burnt: 0, falling: 0, felled: 0, stump: 0 };
     for (const t of this.trees) out[t.state]++;
     return out;
   }
@@ -172,7 +216,7 @@ export class TreeDamage {
       const d = Math.hypot(dx, dz, e.point.y - tr.base.y - dy);
       if (d > scorchR) continue;
       const s = 1 - d / scorchR;
-      tr.scorch = Math.min(1, tr.scorch + s * 1.2);
+      if (tr.scorch < 1) tr.scorch = Math.min(1, tr.scorch + s * 1.2);
       this.paint(tr);
       if (tr.state === 'standing' && tr.scorch > 0.05) tr.state = 'scorched';
       if (d < fellR && tr.state !== 'falling') this.fell(tr, Math.atan2(dx, dz) + (d < 0.3 ? Math.random() : 0), e.power * (1.2 - d / fellR), e.time);
@@ -180,7 +224,9 @@ export class TreeDamage {
   }
 
   private paint(tr: Tree): void {
-    _c.setRGB(1, 1, 1).lerp(CHAR, tr.scorch);
+    _c.setRGB(1, 1, 1).lerp(CHAR, Math.min(1, tr.scorch));
+    // past a full scorch, a fire chars it on toward black
+    if (tr.scorch > 1) _c.lerp(BURNT, Math.min(1, tr.scorch - 1));
     tr.rec.mesh.setColorAt(tr.rec.k, _c);
     tr.rec.mesh.instanceColor!.needsUpdate = true;
   }
@@ -216,7 +262,19 @@ export class TreeDamage {
 
   update(dt: number): void {
     for (const tr of this.moving) {
-      if (tr.state === 'falling') {
+      if (tr.state === 'burning') {
+        // the crown chars through as it burns, to black at the end
+        tr.burnT += dt;
+        const k = Math.min(1, tr.burnT / this.t.burn);
+        tr.scorch = Math.max(tr.scorch, Math.min(1, k * 1.6) + Math.max(0, k * 2 - 1));
+        this.paint(tr);
+        if (k >= 1) {
+          tr.state = 'burnt';
+          tr.scorch = 2;
+          this.paint(tr);
+          this.moving.delete(tr);
+        }
+      } else if (tr.state === 'falling') {
         // a rod falling about its foot: θ'' = (3g / 2L) sin θ
         const L = 9 * tr.scale;
         tr.omega += (3 * G / (2 * L)) * Math.sin(tr.angle) * dt;

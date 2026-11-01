@@ -99,7 +99,7 @@ describe('tree damage', () => {
       expect(new THREE.Vector3().setFromMatrixColumn(m, 1).length()).toBe(0); // the log has crumbled away
     }
     expect(trees.has('tree:0')).toBe(false);
-    expect(dmg.census()).toEqual({ standing: 1, scorched: 1, falling: 0, felled: 0, stump: 1 });
+    expect(dmg.census()).toEqual({ standing: 1, scorched: 1, burning: 0, burnt: 0, falling: 0, felled: 0, stump: 1 });
     props.dispose();
     dmg.dispose();
   });
