@@ -36,7 +36,8 @@ export interface ForceFieldTuning {
 
 export const DEFAULT_FORCE_TUNING: ForceFieldTuning = {
   downRadius: 12, downStrength: 1, downFadeHeight: 16,
-  wakeRadius: 9, wakeStrength: 1,
+  // a wake you can see from the saddle: about a 10–12° lean of the crowns at cruise, trailing behind him
+  wakeRadius: 12, wakeStrength: 1.8,
   shockSpeed: 60, shockLife: 1.1, shockWidth: 3.5, shockStrength: 1,
 };
 

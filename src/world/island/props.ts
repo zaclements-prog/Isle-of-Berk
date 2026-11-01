@@ -184,14 +184,14 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     vec2 side = d - hd * along;
     float sd = length(side);
     float r = uForceWake.w;
-    float lon = along < 0.0 ? along / 2.5 : along;
+    float lon = along < 0.0 ? along / 5.0 : along; // it lingers well behind him
     float crown = base.y + 6.0 * length(instanceMatrix[1].xyz);
     float f = uForceWakeDir.z * (1.0 - smoothstep(r * 0.3, r, length(vec2(lon, sd)))) * (1.0 - smoothstep(3.0, 11.0, abs(uForceWake.y - crown)));
     float shiver = 0.8 + 0.2 * sin(uTreeTime * 8.0 + ph * 5.0);
     push += ((sd > 1e-3 ? side / sd : vec2(0.0)) * 0.9 + hd * 0.7) * f * shiver;
   }
   float pl = length(push);
-  if (pl > 1.6) push *= 1.6 / pl;
+  if (pl > 2.6) push *= 2.6 / pl;
   // world push into the instance's own (yawed, scaled) frame, bending from the base; the crown dips as it leans
   vec3 lean3 = inverse(mat3(instanceMatrix)) * vec3(push.x, 0.0, push.y) * bendK;
   transformed += lean3;

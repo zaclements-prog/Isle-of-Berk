@@ -106,6 +106,20 @@ uniform vec3 uShallow;
 uniform vec3 uDeep;
 uniform vec3 uFoam;
 ${FORCE_PARS}
+// value noise for the churned spray: hashed lattice, smooth cells, two rotated octaves (no axis grid shows)
+float oceanHash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float oceanNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(oceanHash(i), oceanHash(i + vec2(1.0, 0.0)), f.x), mix(oceanHash(i + vec2(0.0, 1.0)), oceanHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float oceanChurn(vec2 p) {
+  const mat2 R = mat2(0.8, -0.6, 0.6, 0.8);
+  return 0.62 * oceanNoise(R * p) + 0.38 * oceanNoise(R * R * p * 2.3 + 17.0);
+}
 // the air on the water: (foam 0…1, ripple slope x, z)
 vec3 oceanForce(vec2 xz) {
   float foam = 0.0;
@@ -118,7 +132,12 @@ vec3 oceanForce(vec2 xz) {
     // rings spreading out from under him, each downstroke a new one, plus a churned spray patch right below
     float ph = dist * 1.4 - uForceTime * 9.0;
     slope += dir * cos(ph) * f * 0.55;
-    float churn = 0.5 + 0.5 * sin(xz.x * 3.1 + uForceTime * 11.0) * sin(xz.y * 2.7 - uForceTime * 9.0);
+    // spray blown outward from under him: noise streaming along the radial direction, as two phases half a cycle
+    // apart crossfaded (a flow map), so the offset never grows and the pattern never shears
+    float fp = fract(uForceTime * 0.7);
+    float fq = fract(fp + 0.5);
+    float fw = 1.0 - abs(1.0 - 2.0 * fp);
+    float churn = smoothstep(0.35, 0.8, mix(oceanChurn(xz * 1.3 - dir * fq * 2.5 + 31.0), oceanChurn(xz * 1.3 - dir * fp * 2.5), fw));
     foam = max(foam, f * (smoothstep(0.55, 1.0, sin(ph)) * 0.6 + (1.0 - smoothstep(0.0, uForceDown.w * 0.45, dist)) * churn * 0.9));
   }
   for (int k = 0; k < ${MAX_SHOCKS}; k++) {
