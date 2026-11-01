@@ -317,11 +317,19 @@
     "lingerAggro": 1.5,
     "boltSpeed": 45,
     "boltRadius": 0.12,
-    "boltRange": 120,
+    "boltRange": 320,
     "shake": 0.12,
     "shakeTime": 0.35,
     "blastPower": 1,
-    "blastRadius": 6
+    "blastRadius": 6,
+    "airConeDeg": 75,
+    "airHoldTime": 0.6,
+    "airSnap": 2.5,
+    "airHitch": 0.6,
+    "airRear": 0.5,
+    "airRecoilDeg": 6,
+    "airRecoilSpeed": 1.5,
+    "inherit": 1
   },
   "attention": {
     "maxDist": 15,

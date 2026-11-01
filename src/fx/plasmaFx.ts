@@ -25,6 +25,8 @@ const FX = {
   coreRadius: 0.13, glowSize: 1.2, trailPoints: 18, trailSpacing: 0.28, trailWidth: 0.22, lightIntensity: 9, lightDistance: 16,
   flashSize: 3.6, flashTime: 0.14, impactLight: 40, impactLightTime: 0.3, sparkCount: 36, smokeCount: 9, scorchSize: 1.8, scorchLife: 30,
   maxDecals: 12, maxPatchTris: 2000,
+  /** Bolts in flight at once (a long shot from altitude is in the air for seconds); only the newest `lights` carry one. */
+  bolts: 8, lights: 2,
 };
 
 /**
@@ -68,12 +70,15 @@ interface Bolt {
   alive: boolean;
   readonly pos: THREE.Vector3;
   readonly dir: THREE.Vector3;
+  speed: number;
   traveled: number;
+  /** Fire order (the newest bolts keep the lights). */
+  seq: number;
   readonly history: THREE.Vector3[];
   readonly core: THREE.Mesh;
   readonly glow: THREE.Sprite;
   readonly trail: THREE.Mesh;
-  readonly light: THREE.PointLight;
+  light: THREE.PointLight | null;
 }
 
 interface Flash {
@@ -103,7 +108,9 @@ const Z = new THREE.Vector3(0, 0, 1);
  * Plasma bolts and impacts (spec §6.13): a hot core, a glow sprite and a fading ribbon trail, carrying a moving
  * light; at the first hit (a sphere cast against the collision world each frame) a flash, sparks, smoke, a projected
  * scorch decal and a small camera shake. The two bolt lights and the flash light exist from the start with zero
- * intensity, so firing never changes the scene's light count (no shader recompiles). Bolts, flashes and decals are
+ * intensity, so firing never changes the scene's light count (no shader recompiles): up to FX.bolts bolts fly at once
+ * (a shot from altitude is in the air for seconds) and the two newest carry the lights. Each bolt flies at its shot's
+ * speed (the muzzle speed plus the body's along the ray, from the wing) up to boltRange. Bolts, flashes and decals are
  * pooled. Runs per rendered frame; `fire` takes the shots PlasmaAction pushes.
  */
 export class PlasmaFx {
@@ -112,6 +119,8 @@ export class PlasmaFx {
   readonly sparks: Particles;
   readonly smoke: Particles;
   private readonly bolts: Bolt[] = [];
+  private readonly lights: THREE.PointLight[] = [];
+  private seq = 0;
   private readonly flash: Flash;
   private readonly scorches: Scorch[] = [];
   private readonly scorchMaterial: THREE.MeshStandardMaterial;
@@ -124,7 +133,12 @@ export class PlasmaFx {
     this.root.name = 'PlasmaFx';
     this.rng = mulberry32(o.seed ?? 99);
     this.scorchTex = radialTexture(64, this.rng);
-    for (let k = 0; k < 2; k++) this.bolts.push(this.makeBolt());
+    for (let k = 0; k < FX.bolts; k++) this.bolts.push(this.makeBolt());
+    for (let k = 0; k < FX.lights; k++) {
+      const light = new THREE.PointLight(FX.light, 0, FX.lightDistance, 2);
+      this.lights.push(light);
+      this.root.add(light);
+    }
     const flashMat = new THREE.SpriteMaterial({ map: this.glowTex, color: FX.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
     this.flash = { sprite: new THREE.Sprite(flashMat), light: new THREE.PointLight(FX.light, 0, FX.lightDistance * 1.5, 2), t: 1 };
     this.flash.sprite.visible = false;
@@ -148,11 +162,23 @@ export class PlasmaFx {
   }
 
   fire(shot: PlasmaShot): void {
-    const b = this.bolts.find((x) => !x.alive) ?? this.bolts[0];
+    const oldest = (list: Bolt[]) => list.reduce((a, x) => (x.seq < a.seq ? x : a));
+    const b = this.bolts.find((x) => !x.alive) ?? oldest(this.bolts);
+    if (b.alive) this.retire(b);
     b.alive = true;
     b.pos.copy(shot.from);
     b.dir.copy(shot.dir).normalize();
+    b.speed = shot.speed ?? this.o.cfg.boltSpeed;
     b.traveled = 0;
+    b.seq = ++this.seq;
+    // a light for it: a free one, else the oldest lit bolt's
+    const free = this.lights.find((l) => !this.bolts.some((x) => x.light === l));
+    if (free) b.light = free;
+    else {
+      const lit = oldest(this.bolts.filter((x) => x.light && x !== b));
+      b.light = lit.light;
+      lit.light = null;
+    }
     for (const h of b.history) h.copy(shot.from);
     b.core.visible = b.glow.visible = b.trail.visible = true;
   }
@@ -162,7 +188,7 @@ export class PlasmaFx {
     camera.getWorldPosition(this.camPos);
     for (const b of this.bolts) {
       if (!b.alive) continue;
-      const step = c.boltSpeed * dt;
+      const step = b.speed * dt;
       _next.copy(b.pos).addScaledVector(b.dir, step);
       const t = this.o.world.sphereCast(b.pos, _next, c.boltRadius);
       if (t < 1) {
@@ -237,17 +263,21 @@ export class PlasmaFx {
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     }));
     trail.frustumCulled = false;
-    const light = new THREE.PointLight(FX.light, 0, FX.lightDistance, 2);
     core.visible = glow.visible = trail.visible = false;
-    this.root.add(core, glow, trail, light);
-    return { alive: false, pos: new THREE.Vector3(), dir: new THREE.Vector3(), traveled: 0, history: Array.from({ length: n }, () => new THREE.Vector3()), core, glow, trail, light };
+    this.root.add(core, glow, trail);
+    return {
+      alive: false, pos: new THREE.Vector3(), dir: new THREE.Vector3(), speed: 0, traveled: 0, seq: 0,
+      history: Array.from({ length: n }, () => new THREE.Vector3()), core, glow, trail, light: null,
+    };
   }
 
   private placeBolt(b: Bolt): void {
     b.core.position.copy(b.pos);
     b.glow.position.copy(b.pos);
-    b.light.position.copy(b.pos);
-    b.light.intensity = FX.lightIntensity;
+    if (b.light) {
+      b.light.position.copy(b.pos);
+      b.light.intensity = FX.lightIntensity;
+    }
     // history: the head moves with the bolt; older points are kept trailSpacing apart
     const h = b.history;
     h[0].copy(b.pos);
@@ -272,7 +302,8 @@ export class PlasmaFx {
   private retire(b: Bolt): void {
     b.alive = false;
     b.core.visible = b.glow.visible = b.trail.visible = false;
-    b.light.intensity = 0;
+    if (b.light) b.light.intensity = 0;
+    b.light = null;
   }
 
   private impact(b: Bolt, at: THREE.Vector3): void {

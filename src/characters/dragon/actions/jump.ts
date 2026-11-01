@@ -39,6 +39,12 @@ export class JumpAction implements DragonAction {
 
   constructor(private readonly cfg: JumpTuning) {}
 
+  /** The arc's velocity (m/s, world) while in the air; zero otherwise. */
+  velocity(out: THREE.Vector3): THREE.Vector3 {
+    if (this.phase !== 'air') return out.set(0, 0, 0);
+    return out.set(this.v.x, this.vy - this.cfg.gravity * this.t, this.v.z);
+  }
+
   get active(): boolean {
     return this.phase !== 'idle';
   }

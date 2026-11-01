@@ -281,6 +281,14 @@ export interface MotionTuning {
     boltSpeed: number; boltRadius: number; boltRange: number; shake: number; shakeTime: number;
     /** A blast's power (1 = the standard blast: it scales every world effect) and its radius (m). */
     blastPower: number; blastRadius: number;
+    /**
+     * On the wing: the forward cone (deg about his flight path) he fires into, how long (s) a charge holds for an aim
+     * outside it, the head's spring speed-up, the flap beat's held-back share, the neck's share of plasma_rear, the
+     * release's nose-up (deg) and speed lost (m/s), and the share of the body's speed along the aim ray the bolt keeps.
+     * boltRange (m) is also the aim ray's reach: a shot from 60 m up at a shallow angle still finds the ground.
+     */
+    airConeDeg: number; airHoldTime: number; airSnap: number; airHitch: number; airRear: number;
+    airRecoilDeg: number; airRecoilSpeed: number; inherit: number;
   };
   /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
   attention: {
@@ -296,6 +304,8 @@ export interface MotionTuning {
     climbPitchOmega: number;
     /** Flying: extra distance (m) the camera backs off, and its spring (rad/s). */
     flightExtra: number; flightOmega: number;
+    /** Flying: how far (m) the view centre rises off him along the camera's up, so the aim is not on his back. */
+    flightLift: number;
   };
 }
 
@@ -381,7 +391,8 @@ export const DEFAULT_TUNING: MotionTuning = {
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
     recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
-    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
+    boltSpeed: 45, boltRadius: 0.12, boltRange: 320, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
+    airConeDeg: 75, airHoldTime: 0.6, airSnap: 2.5, airHitch: 0.6, airRear: 0.5, airRecoilDeg: 6, airRecoilSpeed: 1.5, inherit: 1,
   },
   attention: {
     maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,
@@ -391,7 +402,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,
     wheelScale: 0.0012, followOmega: 8, lookAhead: 0.25, recentreDelay: 2, recentreOmega: 1.5, climbPitchDeg: 15,
     radius: 0.3, easeOutOmega: 2, fadeNear: 0.5, fadeFar: 1.2, chestHeight: 1.25, climbPitchOmega: 3,
-    flightExtra: 7, flightOmega: 1.5,
+    flightExtra: 7, flightOmega: 1.5, flightLift: 3,
   },
 };
 

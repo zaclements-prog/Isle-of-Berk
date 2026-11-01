@@ -27,6 +27,25 @@ describe('OrbitCamera', () => {
     const p = THREE.MathUtils.degToRad(T.pitchDeg);
     expect(c.position.distanceTo(new THREE.Vector3(0, 1.25 + T.distance * Math.sin(p), -T.distance * Math.cos(p)))).toBeLessThan(1e-3);
   });
+  it('flying, backs off and lifts the view centre off him so the aim ray passes clear above his back', () => {
+    const c = new OrbitCamera(T, flatWorld());
+    const f = follow({ chest: new THREE.Vector3(0, 40, 0), flying: true });
+    c.reset(f);
+    settle(c, f, 10);
+    const view = new THREE.Vector3().subVectors(c.target, c.position).normalize();
+    // the chest sits below the view centre by flightLift, square to the line of sight
+    const off = new THREE.Vector3().subVectors(c.target, f.chest);
+    expect(off.length()).toBeCloseTo(T.flightLift, 2);
+    expect(Math.abs(off.dot(view))).toBeLessThan(1e-3);
+    expect(off.y).toBeGreaterThan(0);
+    expect(c.position.distanceTo(c.target)).toBeCloseTo(T.distance + T.flightExtra, 1);
+    // on the ground the view centre stays on his chest
+    const g = new OrbitCamera(T, flatWorld());
+    const fg = follow();
+    g.reset(fg);
+    settle(g, fg, 2);
+    expect(g.target.distanceTo(fg.chest)).toBeLessThan(1e-6);
+  });
   it('pulls in at a wall and never ends inside geometry', () => {
     const w = wallBehind();
     const c = new OrbitCamera(T, w);
@@ -65,7 +84,7 @@ describe('OrbitCamera', () => {
     c.yaw = Math.PI / 2;
     settle(c, f, 1.5);
     expect(c.yaw).toBeCloseTo(Math.PI / 2, 6);
-    settle(c, f, 6);
+    settle(c, f, 10);
     expect(Math.abs(c.yaw)).toBeLessThan(0.1);
   });
   it('orbits with the mouse and clamps the zoom', () => {

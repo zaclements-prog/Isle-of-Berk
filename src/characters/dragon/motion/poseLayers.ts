@@ -243,12 +243,28 @@ export class PoseLayerStack {
     private readonly metaAll: PosesMeta,
   ) {}
 
+  /** Layers made in code from a library clip (derive): their own metadata over another clip's tracks. */
+  private readonly derived = new Map<string, { clip: THREE.AnimationClip; meta: PoseClipMeta }>();
+
   has(name: string): boolean {
-    return this.clips.has(name) && name in this.metaAll.clips;
+    return this.derived.has(name) || (this.clips.has(name) && name in this.metaAll.clips);
   }
 
   meta(name: string): PoseClipMeta | undefined {
-    return this.metaAll.clips[name];
+    return this.derived.get(name)?.meta ?? this.metaAll.clips[name];
+  }
+
+  /**
+   * A layer made in code from a library clip: `from`'s tracks under its metadata with `patch` over it (a narrower
+   * mask, no root or wings...). The poses.json the Blender export writes stays the source of the clip itself. Returns
+   * false (and adds nothing) when `from` is not in the library.
+   */
+  derive(name: string, from: string, patch: Partial<PoseClipMeta>): boolean {
+    const clip = this.clips.get(from);
+    const m = this.metaAll.clips[from];
+    if (!clip || !m) return false;
+    this.derived.set(name, { clip, meta: { ...m, ...patch } });
+    return true;
   }
 
   set(name: string, weight: number, time = 0, additive = false, order = 0): void {
@@ -258,8 +274,9 @@ export class PoseLayerStack {
     }
     let layer = this.layers.get(name);
     if (!layer) {
-      const clip = this.clips.get(name);
-      const m = this.metaAll.clips[name];
+      const dv = this.derived.get(name);
+      const clip = dv?.clip ?? this.clips.get(name);
+      const m = dv?.meta ?? this.metaAll.clips[name];
       if (!clip || !m) throw new Error(`pose layer '${name}': no clip in the poses GLB or no entry in poses.json`);
       layer = { name, pose: new ClipPose(clip, this.skeleton, m.mask), meta: m, weight, time, additive, order, seq: this.seq++ };
       this.layers.set(name, layer);
