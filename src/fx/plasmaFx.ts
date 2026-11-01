@@ -23,7 +23,7 @@ const FX = {
   core: new THREE.Color(0.55, 0.85, 3.6), glow: new THREE.Color(0.35, 0.6, 1.8), trail: new THREE.Color(0.3, 0.55, 2.2),
   light: new THREE.Color(0.45, 0.65, 1.0), spark: new THREE.Color(0.8, 0.9, 2.4), smoke: new THREE.Color(0.14, 0.14, 0.16),
   coreRadius: 0.13, glowSize: 1.2, trailPoints: 18, trailSpacing: 0.28, trailWidth: 0.22, lightIntensity: 9, lightDistance: 16,
-  flashSize: 3.6, flashTime: 0.14, impactLight: 40, impactLightTime: 0.3, sparkCount: 36, smokeCount: 9, scorchSize: 1.8, scorchLife: 30,
+  flashSize: 3.6, flashMinAngle: 0.05, flashTime: 0.14, impactLight: 40, impactLightTime: 0.3, sparkCount: 36, smokeCount: 9, scorchSize: 1.8, scorchLife: 30,
   maxDecals: 12, maxPatchTris: 2000,
   /** Bolts in flight at once (a long shot from altitude is in the air for seconds); only the newest `lights` carry one. */
   bolts: 8, lights: 2,
@@ -85,6 +85,8 @@ interface Flash {
   readonly sprite: THREE.Sprite;
   readonly light: THREE.PointLight;
   t: number;
+  /** World size this flash grows to (larger than flashSize far away, see explode). */
+  size: number;
 }
 
 interface Scorch {
@@ -140,7 +142,7 @@ export class PlasmaFx {
       this.root.add(light);
     }
     const flashMat = new THREE.SpriteMaterial({ map: this.glowTex, color: FX.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
-    this.flash = { sprite: new THREE.Sprite(flashMat), light: new THREE.PointLight(FX.light, 0, FX.lightDistance * 1.5, 2), t: 1 };
+    this.flash = { sprite: new THREE.Sprite(flashMat), light: new THREE.PointLight(FX.light, 0, FX.lightDistance * 1.5, 2), t: 1, size: FX.flashSize };
     this.flash.sprite.visible = false;
     this.root.add(this.flash.sprite, this.flash.light);
     this.sparks = new Particles({ capacity: 256, additive: true, maxPixels: 10, fadeNear: 30, fadeFar: 90, gravity: 9.81, drag: 1.2 });
@@ -210,7 +212,7 @@ export class PlasmaFx {
       f.t = Math.min(1, f.t + dt / FX.impactLightTime);
       const k = 1 - f.t;
       f.light.intensity = FX.impactLight * k * k;
-      const s = FX.flashSize * (0.4 + 0.6 * Math.min(1, f.t * FX.impactLightTime / FX.flashTime));
+      const s = f.size * (0.4 + 0.6 * Math.min(1, f.t * FX.impactLightTime / FX.flashTime));
       f.sprite.scale.set(s, s, 1);
       (f.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0, 1 - (f.t * FX.impactLightTime) / FX.flashTime);
       f.sprite.visible = f.t * FX.impactLightTime < FX.flashTime;
@@ -321,6 +323,10 @@ export class PlasmaFx {
     f.sprite.position.copy(at).addScaledVector(_n, 0.2);
     f.light.position.copy(at).addScaledVector(_n, 0.5);
     f.sprite.visible = true;
+    // an air-to-ground hit is often 50-200 m away: the flash keeps a minimum angular size (~3°) so it still reads,
+    // and the shake falls off with the square root of the distance rather than linearly
+    const dist = this.camPos.distanceTo(at);
+    f.size = Math.max(FX.flashSize, dist * FX.flashMinAngle);
     for (let k = 0; k < FX.sparkCount; k++) {
       const v = this.hemisphere(_n).multiplyScalar(4 + 7 * this.rng());
       this.sparks.emit({ pos: at, vel: v, life: 0.35 + 0.55 * this.rng(), size: 0.05, grow: 0, color: FX.spark, alpha: 1 });
@@ -330,8 +336,7 @@ export class PlasmaFx {
       this.smoke.emit({ pos: _v.copy(at).addScaledVector(_n, 0.15), vel: v, life: 1.4 + 1.2 * this.rng(), size: 0.5, grow: 0.9, color: FX.smoke, alpha: 0.55 });
     }
     this.placeScorch(at, _n);
-    const dist = this.camPos.distanceTo(at);
-    this.o.shake?.(this.o.cfg.shake / Math.max(1, dist / 12), this.o.cfg.shakeTime);
+    this.o.shake?.(this.o.cfg.shake / Math.max(1, Math.sqrt(dist / 12)), this.o.cfg.shakeTime);
     this.o.onImpact?.(at, _n);
   }
 
