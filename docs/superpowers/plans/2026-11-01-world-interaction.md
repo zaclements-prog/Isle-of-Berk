@@ -165,3 +165,19 @@ Built on `look-faceted` (the faceted Toothless and the golden-hour grade), check
 - Fire doesn't set buildings alight.
 - `berk.world.stats()` doesn't show fire (`island.fire.stats()` does).
 - Two older wall-clock budget tests (`island.test.ts`, `collisionLayers.test.ts`) flake under heavy CPU load.
+
+## Wave 3 (2026-11-01, branch `wave3`)
+
+Play-test feedback round: dark terrain, quick/charged fire, ground clipping, animation chaining.
+
+| Item | Branch / commit | Notes |
+|---|---|---|
+| Navy-black terrain shade | `d8c34cb` | Shade-gated neutral warm fill, reflection cut in shade, AO floor 45%, wet 74% |
+| Tap / hold-charge plasma | `wave3-charge` `e99c8a5` | Tap <0.25 s = power 0.6; hold 2 s auto-fires power 2.6; early release fires scaled; plates light tail→head |
+| Ground clipping | `wave3-clip` `44d3b68` | `CollisionWorld.version` re-seats planted paws after edits; stale landing prediction ignored; landing seats from ground under body; pelvis/head floors |
+| Transitions | `wave3-anim` `efa64aa`, `aa9b3b5` | Running takeoff wing cross-fade, jump push, landing carry, new `runout` phase, Catmull-Rom clip sampling, jump buffering |
+
+Known gaps: tail tip can dip 0.2–0.4 m into steep slopes (secondary.ts ground avoidance); a full charge
+on the ground puts him inside his own blast; he stands still while charging on the ground and sinks 2–3 m
+while charging in flight; plates clip to white past ~1.6 s of charge; HUD text doesn't mention hold-to-charge;
+standing-jump launch steps 0→1.5 m/s in one step; Space during the takeoff clip is ignored.
