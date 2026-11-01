@@ -7,6 +7,7 @@ import { createGltfLoader } from '../../render/loaders';
 import { createTestScene } from '../../world/testScene';
 import { debug } from '../../core/debug';
 import { loadDragonAsset, type DragonAsset } from '../../characters/dragon/asset';
+import { dragonLook } from '../../characters/dragon/facet';
 
 const app = createApp(document.getElementById('app')!);
 const controls = new OrbitControls(app.camera, app.renderer.domElement);
@@ -170,6 +171,7 @@ async function loadToothless(): Promise<DragonAsset> {
     rigUrl: 'assets/characters/toothless/toothless.rig.json',
     sunDir: app.lighting.sunDir,
     prepare: (m) => app.materials.prepare(m),
+    look: dragonLook(location.search),
   });
   show(asset.root, [...asset.clips.values()], { morphUi: false });   // one slider per morph, not per primitive
   playClip('bind');

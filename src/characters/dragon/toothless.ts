@@ -9,6 +9,7 @@ import type { CollisionWorld, RayHit } from '../../world/collision';
 import type { WorldEvents } from '../../world/events';
 import type { ForceSource } from '../../world/forceField';
 import { loadDragonAsset, type DragonAsset } from './asset';
+import { dragonLook } from './facet';
 import type { InterestPoint } from './behaviour/attention';
 import { applyExpression } from './face/expression';
 import { applyDitherFade, dragonFade } from './fade';
@@ -56,7 +57,7 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
   const [asset, posesMeta, tuning] = await Promise.all([
     loadDragonAsset({
       glbUrl: 'assets/characters/toothless/toothless.glb', posesUrl: 'assets/characters/toothless/toothless.poses.glb',
-      rigUrl: 'assets/characters/toothless/toothless.rig.json', sunDir: app.lighting.sunDir, prepare: (m) => app.materials.prepare(m),
+      rigUrl: 'assets/characters/toothless/toothless.rig.json', sunDir: app.lighting.sunDir, prepare: (m) => app.materials.prepare(m), look: dragonLook(location.search),
     }),
     loadPosesMeta('assets/characters/toothless/toothless.poses.json'),
     loadTuning(),

@@ -51,3 +51,33 @@ describe('createDragonMaterials', () => {
     expect(shader.vertexShader).toContain('attribute vec3 _mask');
   });
 });
+
+describe('createDragonMaterials, faceted look', () => {
+  const mats = createDragonMaterials({ sunDir: new THREE.Vector3(0, 1, 0), prepare: () => {}, look: 'faceted' });
+  const patch = (m: THREE.Material) => {
+    const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.physical.vertexShader, fragmentShader: THREE.ShaderLib.physical.fragmentShader } as any;
+    m.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+    return shader as { vertexShader: string; fragmentShader: string };
+  };
+  it('names every GLB material, flat shaded except the eye', () => {
+    for (const n of DRAGON_MATERIAL_NAMES) {
+      const m = mats.byName(n) as THREE.MeshStandardMaterial;
+      expect(m, n).toBeDefined();
+      expect(m.flatShading, n).toBe(n !== 'eye');
+    }
+  });
+  it('swaps the scales for the counter-shading hook, keeping the plasma glow, rim and the procedural eye', () => {
+    expect(mats.skin.customProgramCacheKey()).toContain('dragonfacet');
+    expect(mats.skin.customProgramCacheKey()).not.toContain('dragonskin');
+    expect(mats.membrane.customProgramCacheKey()).toContain('dragonfacet-membrane');
+    for (const s of [patch(mats.skin), patch(mats.membrane)]) {
+      expect(s.vertexShader).toContain('vBerkMask = _mask');
+      expect(s.fragmentShader).not.toContain('berkScaleHeight');
+      for (const marker of ['berkBelly, smoothstep', 'berkPlates, smoothstep', 'vBerkMask.z * berkPlasmaGlow', 'fres * facing']) {
+        expect(s.fragmentShader, marker).toContain(marker);
+      }
+    }
+    expect(patch(mats.eye).fragmentShader).toContain('berkEyeGlow * berkEyeGlowGain');
+    expect(mats.uniforms.eyeGlowGain.value).toBeGreaterThan(1);
+  });
+});

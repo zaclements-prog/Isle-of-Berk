@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 import { addCompileHook } from '../../render/materials';
+import type { DragonLook } from './facet';
 
 /**
  * The engine's own materials for the dragon GLB (whose materials are placeholders), one per GLB material name.
  * Film look (spec §4.5, §5.7, §5.8): near-black skin with procedural scales, vertex AO from `_mask`, a cool rim and
- * sheen; procedural eyes; a plasma-glow hook on the dorsal plates. Tunables are shared uniforms (`uniforms`).
+ * sheen; procedural eyes; a plasma-glow hook on the dorsal plates. Faceted look (the default, see facet.ts): flat
+ * shaded slate planes, two-tone counter-shading from the baked underside mask, darker dorsal plates and a sky rim on
+ * the silhouette, with the same procedural eyes (brighter) and plasma glow. Tunables are shared uniforms (`uniforms`).
  */
 export interface DragonMaterials {
   skin: THREE.MeshPhysicalMaterial;
@@ -21,6 +24,10 @@ export interface DragonMaterials {
     rimColor: { value: THREE.Color }; rimStrength: { value: number }; scaleBump: { value: number };
     plasmaGlow: { value: number }; pupil: { value: number }; eyeGlow: { value: number }; irisDepth: { value: number };
     sunDir: { value: THREE.Vector3 };
+    /** Multiplies eyeGlow (the face drives eyeGlow; the look sets how far it carries). */
+    eyeGlowGain: { value: number };
+    /** Faceted look: the underside colour, how far the underside mask blends to it, and the dorsal plates' colour. */
+    bellyColor: { value: THREE.Color }; bellyMix: { value: number }; plateColor: { value: THREE.Color };
     /** Iris offset in eye-UV units (x toward the dragon's left, y down): the eyes' gaze (M6). */
     gaze: { value: THREE.Vector2 };
   };
@@ -105,14 +112,56 @@ function skinHook(m: THREE.Material, u: DragonMaterials['uniforms'], key: keyof 
   });
 }
 
+/**
+ * The faceted look's skin and membrane hook (keys 'dragonfacet' / 'dragonfacet-membrane'): no scales. Flat shading
+ * makes `normal` the face normal, so lighting, rim and AO all step per plane.
+ */
+function facetHook(m: THREE.Material, u: DragonMaterials['uniforms'], key: 'dragonfacet' | 'dragonfacet-membrane'): void {
+  const isMembrane = key === 'dragonfacet-membrane';
+  addCompileHook(m, key, (shader) => {
+    shader.uniforms.berkRimColor = u.rimColor;
+    shader.uniforms.berkRimStrength = u.rimStrength;
+    shader.uniforms.berkPlasmaGlow = u.plasmaGlow;
+    shader.uniforms.berkSunDirW = u.sunDir;
+    shader.uniforms.berkBelly = u.bellyColor;
+    shader.uniforms.berkBellyMix = u.bellyMix;
+    shader.uniforms.berkPlates = u.plateColor;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 _mask;\nvarying vec3 vBerkMask;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBerkMask = _mask;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vBerkMask;\nuniform vec3 berkRimColor;\nuniform float berkRimStrength;\nuniform float berkPlasmaGlow;\nuniform vec3 berkSunDirW;\nuniform vec3 berkBelly;\nuniform float berkBellyMix;\nuniform vec3 berkPlates;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        // _mask: x = baked AO, y = underside, z = dorsal plates. Two-tone: a lighter underside (counter-shading, so he
+        // separates from dark forest from below) and darker plates along the spine
+        diffuseColor.rgb = mix(diffuseColor.rgb, berkBelly, smoothstep(0.2, 0.8, vBerkMask.y) * berkBellyMix${isMembrane ? ' * 0.5' : ''});
+        diffuseColor.rgb = mix(diffuseColor.rgb, berkPlates, smoothstep(0.3, 0.7, vBerkMask.z));`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.25, 0.55, 1.6) * vBerkMask.z * berkPlasmaGlow;')   // dorsal plates glow during plasma charge
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        {
+          float berkAO = mix(1.0, vBerkMask.x, 0.7);
+          reflectedLight.indirectDiffuse *= berkAO;
+          reflectedLight.indirectSpecular *= berkAO;
+          // sky rim on the silhouette's planes: the brightest on the side away from the sun, like a back-lit edge
+          vec3 V = normalize(vViewPosition);
+          float fres = pow(1.0 - saturate(abs(dot(normal, V))), 3.0);
+          vec3 sunV = normalize((viewMatrix * vec4(berkSunDirW, 0.0)).xyz);
+          float facing = saturate(dot(normal, sunV) * 0.4 + 0.7);
+          reflectedLight.directSpecular += berkRimColor * fres * facing * berkRimStrength * berkAO${isMembrane ? ' * 0.4' : ''};
+          ${isMembrane ? 'reflectedLight.indirectDiffuse += vec3(0.05, 0.028, 0.02) * saturate(dot(-normal, sunV));' : ''}
+        }`);
+  });
+}
+
 function eyeHook(m: THREE.Material, u: DragonMaterials['uniforms']): void {
   addCompileHook(m, 'dragoneye', (shader) => {
     shader.uniforms.berkPupil = u.pupil;
     shader.uniforms.berkEyeGlow = u.eyeGlow;
+    shader.uniforms.berkEyeGlowGain = u.eyeGlowGain;
     shader.uniforms.berkIrisDepth = u.irisDepth;
     shader.uniforms.berkEyeGaze = u.gaze;
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float berkPupil;\nuniform float berkEyeGlow;\nuniform float berkIrisDepth;\nuniform vec2 berkEyeGaze;\nvec3 berkEyeIris; float berkEyeIrisMask;')
+      .replace('#include <common>', '#include <common>\nuniform float berkPupil;\nuniform float berkEyeGlow;\nuniform float berkEyeGlowGain;\nuniform float berkIrisDepth;\nuniform vec2 berkEyeGaze;\nvec3 berkEyeIris; float berkEyeIrisMask;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // parallax: the iris sits behind the cornea, so shift its lookup against the view direction (cotangent frame)
@@ -143,7 +192,7 @@ function eyeHook(m: THREE.Material, u: DragonMaterials['uniforms']): void {
             diffuseColor.rgb = mix(col, vec3(0.004), pupil);
           }
         }`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += berkEyeIris * berkEyeIrisMask * berkEyeGlow;');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += berkEyeIris * berkEyeIrisMask * berkEyeGlow * berkEyeGlowGain;');
   });
 }
 
@@ -152,13 +201,51 @@ export const DRAGON_MATERIAL_NAMES: readonly string[] = [
   'skin', 'membrane', 'eye', 'mouth', 'teeth', 'claw', 'prosthetic', 'leather', 'metal',
 ];
 
-export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m: THREE.Material) => void }): DragonMaterials {
+/**
+ * The faceted look's palette (from the style lab's "Faceted body, bold light" pick): slate body and wings, a
+ * blue-grey underside, near-black plates, his red tail fin, and bright gold-green eyes.
+ */
+export const FACET_PALETTE = {
+  body: 0x2a3446, belly: 0x56698a, plates: 0x161b27, membrane: 0x34425c, mouth: 0x8a3a44, bone: 0xe6dccb,
+  accent: 0xb02a1a, tack: 0x6b4428, metal: 0x8d9096,
+};
+
+export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m: THREE.Material) => void; look?: DragonLook }): DragonMaterials {
+  const faceted = (opts.look ?? 'film') === 'faceted';
+  const P = FACET_PALETTE;
   const uniforms = {
     // scaleBump: bump height in metres. 1.5 mm keeps the ~2.6 cm scales a fine texture; 3 mm read as beads.
-    rimColor: { value: new THREE.Color(0.55, 0.68, 0.95) }, rimStrength: { value: 0.35 }, scaleBump: { value: 0.0015 },
+    rimColor: { value: faceted ? new THREE.Color(0.62, 0.76, 1.0) : new THREE.Color(0.55, 0.68, 0.95) }, rimStrength: { value: faceted ? 0.5 : 0.35 },
+    scaleBump: { value: 0.0015 },
     plasmaGlow: { value: 0 }, pupil: { value: 0.15 }, eyeGlow: { value: 0.35 }, irisDepth: { value: 0.08 }, sunDir: { value: opts.sunDir },
     gaze: { value: new THREE.Vector2() },
+    eyeGlowGain: { value: faceted ? 2.4 : 1 },
+    bellyColor: { value: new THREE.Color(P.belly) }, bellyMix: { value: 0.8 }, plateColor: { value: new THREE.Color(P.plates) },
   };
+  const mats = faceted ? facetedMaterials() : filmMaterials();
+  for (const m of Object.values(mats)) opts.prepare(m);    // CSM + fog first (CSM overwrites onBeforeCompile)
+  if (faceted) {
+    facetHook(mats.skin, uniforms, 'dragonfacet');
+    facetHook(mats.membrane, uniforms, 'dragonfacet-membrane');
+  } else {
+    skinHook(mats.skin, uniforms, 'dragonskin');
+    skinHook(mats.membrane, uniforms, 'dragonskin-membrane');
+  }
+  eyeHook(mats.eye, uniforms);
+  const byNameMap = new Map<string, THREE.Material>(Object.entries(mats));
+  return { ...mats, byName: (n) => byNameMap.get(n), uniforms };
+}
+
+const std = (name: string, color: number, roughness: number, extra: THREE.MeshStandardMaterialParameters = {}) =>
+  new THREE.MeshStandardMaterial({ name, color, roughness, ...extra });
+
+function proceduralEye(): THREE.MeshPhysicalMaterial {
+  const eye = new THREE.MeshPhysicalMaterial({ name: 'eye', color: 0xffffff, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x000000 });
+  eye.defines = { ...(eye.defines ?? {}), USE_UV: '' };
+  return eye;
+}
+
+function filmMaterials() {
   // Half the dielectric reflectance (specularIntensity 0.5 → F0 0.02, F90 0.5): at full F0 the sky reflection alone
   // lifts the lit near-black skin to slate grey (tuned in the viewer under the Neutral curve at exposure 1.8).
   const skin = new THREE.MeshPhysicalMaterial({
@@ -169,12 +256,8 @@ export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m
     name: 'membrane', color: 0x1b1e26, roughness: 0.78, metalness: 0, specularIntensity: 0.5,
     sheen: 0.3, sheenColor: new THREE.Color(0x2a3550), side: THREE.DoubleSide,
   });
-  const eye = new THREE.MeshPhysicalMaterial({ name: 'eye', color: 0xffffff, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x000000 });
-  eye.defines = { ...(eye.defines ?? {}), USE_UV: '' };
-  const std = (name: string, color: number, roughness: number, extra: THREE.MeshStandardMaterialParameters = {}) =>
-    new THREE.MeshStandardMaterial({ name, color, roughness, ...extra });
-  const mats = {
-    skin, membrane, eye,
+  return {
+    skin, membrane, eye: proceduralEye(),
     mouth: std('mouth', 0x9c4450, 0.38),
     teeth: std('teeth', 0xf1ede2, 0.3),
     claw: std('claw', 0xd9d0c0, 0.42),
@@ -182,10 +265,21 @@ export function createDragonMaterials(opts: { sunDir: THREE.Vector3; prepare: (m
     leather: std('leather', 0x5a3a22, 0.78),
     metal: std('metal', 0x8d9096, 0.35, { metalness: 0.9 }),
   };
-  for (const m of Object.values(mats)) opts.prepare(m);    // CSM + fog first (CSM overwrites onBeforeCompile)
-  skinHook(skin, uniforms, 'dragonskin');
-  skinHook(membrane, uniforms, 'dragonskin-membrane');
-  eyeHook(eye, uniforms);
-  const byNameMap = new Map<string, THREE.Material>(Object.entries(mats));
-  return { ...mats, byName: (n) => byNameMap.get(n), uniforms };
+}
+
+/** Flat-shaded matte planes; the eye stays smooth so the procedural iris reads. */
+function facetedMaterials() {
+  const P = FACET_PALETTE;
+  const flat = { flatShading: true };
+  return {
+    skin: new THREE.MeshPhysicalMaterial({ name: 'skin', color: P.body, roughness: 0.82, metalness: 0, specularIntensity: 0.5, ...flat }),
+    membrane: new THREE.MeshPhysicalMaterial({ name: 'membrane', color: P.membrane, roughness: 0.88, metalness: 0, specularIntensity: 0.4, side: THREE.DoubleSide, ...flat }),
+    eye: proceduralEye(),
+    mouth: std('mouth', P.mouth, 0.6, flat),
+    teeth: std('teeth', P.bone, 0.5, flat),
+    claw: std('claw', P.bone, 0.55, flat),
+    prosthetic: std('prosthetic', P.accent, 0.75, { side: THREE.DoubleSide, ...flat }),
+    leather: std('leather', P.tack, 0.85, flat),
+    metal: std('metal', P.metal, 0.4, { metalness: 0.8, ...flat }),
+  };
 }
