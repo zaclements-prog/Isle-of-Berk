@@ -78,3 +78,42 @@ The engine has to be set up for all of this before detail art goes on top.
   - each damage handler on a flat test world;
   - performance budgets per blast: crater rebuild under 8 ms, felling a tree under 1 ms.
 - Captures on the island for each milestone.
+
+## Status (2026-11-01): M1–M5 in, ready to review on a GPU machine
+
+All five milestones are implemented, with 599 unit tests green (`npx vitest run --exclude 'tests/_scratch/**'`).
+They have not been visually reviewed yet: software-GL captures in the cloud box were too slow. Review them on a real
+GPU with `npm run dev`, then open the game page.
+
+| Milestone | Where | What to look at |
+|---|---|---|
+| M1 force field | `src/world/events.ts`, `src/world/forceField.ts`; hooks in `island/grass.ts`, `island/props.ts`, `island/ocean.ts` | Fly low (under ~16 m) over grass, trees and water: the downwash flattens grass in pulses, trees lean, and water ripples and foams. Passing trees fast bends them away from the path. Blasts send a shock ring through grass, trees and water. |
+| M2 layered collision | `src/world/collision.ts` (`CollisionLayer`, `CollisionSet`); `IslandRegion.createCollisionWorld` | Behaviour should be identical to before (it is tested to be). |
+| M3 foliage | `src/world/damage/burnMask.ts`, `src/world/damage/trees.ts` | A blast chars the ground, burns grass to stubble and flattens it further out. Nearby trees scorch; close ones fall away from the blast, lie as logs (with collision) and crumble to stumps after ~45 s. |
+| M4 craters | `src/world/damage/craters.ts`, `Terrain.refresh` | A bowl with a raised lip. Repeated blasts dig deeper, and rock gives less. Chunks, collision and water depth follow. |
+| M5 buildings | `src/world/damage/structures.ts`, `src/world/damage/debris.ts`; `BerkLandmarks.breakables` | Houses (100 HP), the hall (600 HP) and piers (120 HP) break into wall, roof and plank debris. The debris tumbles, settles and becomes walkable rubble. |
+
+**Play-check hooks** (browser console):
+- `berk.world.stats()`: grass, tree states, broken structures, debris, layers and downwash.
+- `berk.world.blast(x, z, power?)`: a blast on the ground; power 1 also plays the plasma explosion.
+- `berk.world.probe()`: camera and force-field uniforms.
+- `berk.toothless.fire()`: a real plasma shot along the camera.
+
+**Good test spots:**
+- (200, 100): dense grass with trees.
+- The village by the spawn point (`terrain.json` `spawn[0]`): houses.
+
+**Tuning:**
+- `plasma.blastPower` and `plasma.blastRadius` in `motion-tuning.json` scale every effect.
+- Per-system defaults: `DEFAULT_FORCE_TUNING`, `DEFAULT_BURN_TUNING`, `DEFAULT_TREE_DAMAGE`, `DEFAULT_CRATER`,
+  `DEFAULT_STRUCTURE` and `DEFAULT_DEBRIS`.
+
+**Known gaps and next steps:**
+- Boulders and props on a crater's rim are not re-seated.
+- Debris does not collide with other moving debris, only with settled debris.
+- Structures show damage only as a darker tint before they collapse; nothing comes loose part by part yet.
+- No fire spread (`burn` event) and no embers or smoke trails.
+- The per-blast budgets (crater < 8 ms, felling a tree < 1 ms) are only checked loosely in CI; measure them in
+  the browser.
+- Headless swiftshader sometimes returns black frames. This predates this work, so retake those frames in capture
+  scripts.
