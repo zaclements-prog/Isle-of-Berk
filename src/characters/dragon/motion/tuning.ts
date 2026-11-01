@@ -5,6 +5,8 @@ export interface MotionTuning {
     accel: number; gallopAccel: number; brake: number;
     turnRateSlowDeg: number; turnRateFastDeg: number; slowTurnSpeed: number;
     inPlaceTurnRateDeg: number; inPlaceSpeed: number; turnGain: number; turnInPlaceAngleDeg: number;
+    /** Space held this long (s) from a stand (speed ≤ flyStandSpeed) is a standing takeoff; a shorter press jumps. */
+    flyHold: number; flyStandSpeed: number;
   };
   gait: { hysteresis: number; blendTime: number; stopSpeed: number; turnStepRadius: number; maxCadence: number; strideFrac: number };
   planner: {
@@ -227,11 +229,40 @@ export interface MotionTuning {
     /** Speed (m/s) a landing keeps when no direction is held. */
     landCarry: number;
   };
+  /**
+   * Flight (Phase 2): the camera-steered path and the clip hand-offs. Speeds m/s, angles deg, rates deg/s, times s,
+   * heights m (pelvis above the ground).
+   */
+  flight: {
+    /** A Space press at or above this speed (m/s) is a running takeoff; slower, the jump. */
+    runTakeoffSpeed: number;
+    /** Level cruise speed flapping, the glide's best speed, the slowest he flies (below it he noses down), the top. */
+    flapSpeed: number; glideSpeed: number; minSpeed: number; maxSpeed: number;
+    /** Flapping thrust (m/s²) at rest air; drag sets the level cruise at flapSpeed. brakeDrag: extra drag (1/s) on S. */
+    flapThrust: number; brakeDrag: number;
+    /** The glide's sink: its path angle never rises above −glideSinkDeg unless it trades speed above glideSpeed. */
+    glideSinkDeg: number;
+    /** Path angle from the camera: (neutral − camera pitch) · gain, clamped to [−diveDeg, climbDeg]. */
+    neutralPitchDeg: number; pitchGain: number; climbDeg: number; diveDeg: number;
+    /** Steering springs (rad/s) and the turn-rate cap; the bank is the coordinated one, capped. */
+    pathOmega: number; headingGain: number; maxTurnRateDeg: number; maxBankDeg: number; bankOmega: number;
+    /** Terrain: the lowest pelvis height kept over the ground (it pulls up below it), the look-ahead (s). */
+    minClearance: number; clearLookahead: number;
+    /** Layers: the takeoff hand-off to the cruise, flap↔glide cross-fades, the glide's entry phase into the flap. */
+    handoff: number; flapToGlide: number; glideToFlap: number; flapEntryPhase: number; flapStopPhase: number;
+    /** The running takeoff's layer fade from the gallop (s), and how long its height / speed offsets take to close. */
+    runBlend: number; runOffsetTime: number;
+    /** A landing is a running one at or above this speed (m/s); its clip starts no higher than maxLandHeight above
+     *  the ground, after a descent at descendDeg. The flight's body roll / pitch blend out over settle (s). */
+    runLandSpeed: number; maxLandHeight: number; descendDeg: number; settle: number;
+  };
   /** The plasma blast (M6, spec §6.13): deg, s, m/s, m. recoilDrop: suspension dip (m/s); recoilKick: head (rad/s). */
   plasma: {
     turnFirstDeg: number; chargeFacingDeg: number; turnTimeout: number; chargeTime: number; cooldown: number;
     recoilDrop: number; recoilKick: number; skidSpeed: number; skidDecay: number; lingerAggro: number;
     boltSpeed: number; boltRadius: number; boltRange: number; shake: number; shakeTime: number;
+    /** A blast's power (1 = the standard blast: it scales every world effect) and its radius (m). */
+    blastPower: number; blastRadius: number;
   };
   /** Interest-point attention (M6, spec §6.8): distances m, cones deg, times s. */
   attention: {
@@ -245,6 +276,8 @@ export interface MotionTuning {
     fadeNear: number; fadeFar: number; chestHeight: number;
     /** Natural frequency (rad/s) of the critically damped spring that raises the pitch while he climbs. */
     climbPitchOmega: number;
+    /** Flying: extra distance (m) the camera backs off, and its spring (rad/s). */
+    flightExtra: number; flightOmega: number;
   };
 }
 
@@ -252,7 +285,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   controller: {
     trotSpeed: 3.2, prowlSpeed: 1.4, gallopSpeed: 10, accel: 5, gallopAccel: 8, brake: 12,
     turnRateSlowDeg: 200, turnRateFastDeg: 80, slowTurnSpeed: 1.5, inPlaceTurnRateDeg: 120, inPlaceSpeed: 0.3,
-    turnGain: 6, turnInPlaceAngleDeg: 100,
+    turnGain: 6, turnInPlaceAngleDeg: 100, flyHold: 0.35, flyStandSpeed: 0.5,
   },
   gait: { hysteresis: 0.3, blendTime: 0.3, stopSpeed: 0.05, turnStepRadius: 0.8, maxCadence: 3, strideFrac: 0.85 },
   planner: {
@@ -315,10 +348,20 @@ export const DEFAULT_TUNING: MotionTuning = {
     tuckAt: 0.3, releaseTime: 0.28, landLead: 0.3, frontLag: 0.02, hindLag: 0.1, minLift: 0.25,
     landImpulse: 1.2, recoverHold: 0.2, recoverTime: 0.35, cooldown: 0.3, rearExtent: 1.1, clearance: 0.1, landCarry: 0.8,
   },
+  flight: {
+    runTakeoffSpeed: 6.5, flapSpeed: 12, glideSpeed: 15, minSpeed: 7, maxSpeed: 26,
+    flapThrust: 6, brakeDrag: 0.6, glideSinkDeg: 4,
+    neutralPitchDeg: 18, pitchGain: 1.2, climbDeg: 28, diveDeg: 40,
+    pathOmega: 2.5, headingGain: 1.6, maxTurnRateDeg: 70, maxBankDeg: 40, bankOmega: 4,
+    minClearance: 3, clearLookahead: 1.2,
+    handoff: 0.5, flapToGlide: 0.4, glideToFlap: 0.3, flapEntryPhase: 0.74, flapStopPhase: 0.26,
+    runBlend: 0.45, runOffsetTime: 0.6,
+    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4,
+  },
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,
     recoilDrop: 1.2, recoilKick: 3, skidSpeed: 0.8, skidDecay: 8, lingerAggro: 1.5,
-    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35,
+    boltSpeed: 45, boltRadius: 0.12, boltRange: 120, shake: 0.12, shakeTime: 0.35, blastPower: 1, blastRadius: 6,
   },
   attention: {
     maxDist: 15, near: 2, movingSpeed: 0.3, moveCone: 55, stillCone: 150, movingFactor: 0.6, motionBonus: 1.5,
@@ -328,6 +371,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     distance: 8, minDistance: 4, maxDistance: 18, pitchDeg: 18, minPitchDeg: -10, maxPitchDeg: 70, sensitivity: 0.0025,
     wheelScale: 0.0012, followOmega: 8, lookAhead: 0.25, recentreDelay: 2, recentreOmega: 1.5, climbPitchDeg: 15,
     radius: 0.3, easeOutOmega: 2, fadeNear: 0.5, fadeFar: 1.2, chestHeight: 1.25, climbPitchOmega: 3,
+    flightExtra: 7, flightOmega: 1.5,
   },
 };
 

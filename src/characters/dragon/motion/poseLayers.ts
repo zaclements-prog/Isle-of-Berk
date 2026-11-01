@@ -34,6 +34,43 @@ export interface PoseClipMeta {
   face?: Record<string, FaceCurve>;
   /** An authored locomotion cycle (Plan 5): the LocomotionDriver plays it additively, synced to the gait phase. */
   locomotion?: LocoCycleMeta;
+  /** An authored flight clip (Phase 2): the FlightAction plays it and places the pelvis from its curves. */
+  flight?: FlightClipMeta;
+}
+
+/**
+ * How a flight clip was authored (pipeline/blender/toothless/flight_export.py). Curves hold one value per frame at
+ * 30 fps (frame k at t = k / 30). The clip's glTF carries no pelvis: the engine places it from these.
+ */
+export interface FlightClipMeta {
+  kind: 'flap' | 'glide' | 'takeoff' | 'runtakeoff_wings' | 'runtakeoff' | 'land' | 'runland';
+  /** Pelvis head height (m): one-shots above the ground plane they were authored on; loops about `meanHeight`. */
+  height: number[];
+  /** Body pitch (rad, + nose up). */
+  pitch: number[];
+  /** One-shots: forward travel from the clip's start (m). */
+  x?: number[];
+  meanHeight?: number;
+  /** Loops: their authored speed (m/s) and beat period (s); the flap's downstroke share. */
+  speed?: number;
+  period?: number;
+  down?: number;
+  basePitch?: number;
+  /** Markers (s from the clip's start). */
+  push?: number;
+  liftoff?: number;
+  touchdown?: number;
+  frontTouchdown?: number;
+  flare?: number;
+  handoff?: number;
+  /** Speeds (m/s): at the clip's start, the run a running landing hands to. */
+  speed0?: number;
+  runSpeed?: number;
+  /** Takeoffs: their climbing beat (s) and the beat phase (0 = top of the stroke) on their last frame. */
+  beatPeriod?: number;
+  beatEnd?: number;
+  /** The running takeoff's wings: the raise to the stroke's top over the clip's last `raise` s. */
+  raise?: number;
 }
 
 /** How a locomotion cycle was authored; its curves hold one value per frame over one loop (frame k at phase k / n). */
@@ -85,6 +122,13 @@ export function parsePosesMeta(raw: unknown): PosesMeta {
       const curves = [loco.rootBob, loco.wingLift];
       if (typeof loco.gait !== 'string' || !(loco.stride > 0) || !curves.every((c) => Array.isArray(c) && c.length > 0 && c.every(Number.isFinite))) {
         throw new Error(`poses.json: clip '${name}' locomotion needs gait, stride > 0 and rootBob / wingLift curves`);
+      }
+    }
+    const fl = m!.flight;
+    if (fl !== undefined) {
+      const curves = [fl.height, fl.pitch, ...(fl.x ? [fl.x] : [])];
+      if (typeof fl.kind !== 'string' || !curves.every((c) => Array.isArray(c) && c.length > 0 && c.every(Number.isFinite))) {
+        throw new Error(`poses.json: clip '${name}' flight needs kind and height / pitch (/ x) curves`);
       }
     }
     for (const [channel, curve] of Object.entries(m!.face ?? {})) {
@@ -239,17 +283,27 @@ export class PoseLayerStack {
     return this.sorted;
   }
 
-  /** Per leg (LEG_KEYS order): the largest weight of a layer that owns it (0 = the leg IK drives it alone). */
+  /**
+   * Per leg (LEG_KEYS order): the largest weight of a layer that owns it (0 = the leg IK drives it alone). Flight clips
+   * cross-fade into each other (takeoff → flap, flap ↔ glide, flap → landing) and own the legs together: their weights
+   * add (to 1), so a cross-fade never hands the legs to the IK halfway through.
+   */
   legOwnership(out: number[]): number[] {
     out.fill(0, 0, LEG_KEYS.length);
+    const flight = this.flightOwn;
+    flight.fill(0);
     for (const l of this.sorted) {
       for (const key of l.meta.ownsLegs ?? []) {
         const i = LEG_KEYS.indexOf(key);
-        out[i] = Math.max(out[i], l.weight);
+        if (l.meta.flight) flight[i] += l.weight;
+        else out[i] = Math.max(out[i], l.weight);
       }
     }
+    for (let i = 0; i < LEG_KEYS.length; i++) out[i] = Math.max(out[i], Math.min(1, flight[i]));
     return out;
   }
+
+  private readonly flightOwn = [0, 0, 0, 0];
 
   apply(s: RigSkeleton): void {
     for (const l of this.sorted) {

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FlightAction } from './actions/flight';
 import { JumpAction } from './actions/jump';
 import { PlasmaAction } from './actions/plasma';
 import { DragonBrain } from './behaviour/brain';
@@ -16,6 +17,7 @@ export interface ToothlessBrain {
   readonly brain: DragonBrain;
   readonly jump: JumpAction;
   readonly plasma: PlasmaAction;
+  readonly flight: FlightAction;
 }
 
 /** Straight ahead of his head, 30 m out. */
@@ -24,10 +26,12 @@ function aheadAim(d: DragonCharacter, out: THREE.Vector3): THREE.Vector3 {
   return out.set(out.x + Math.sin(d.kin.heading) * 30, out.y, out.z + Math.cos(d.kin.heading) * 30);
 }
 
-/** Toothless's M6 layer on a DragonCharacter: the brain with the jump and plasma actions (lab, game, tests). */
+/** Toothless's M6 layer on a DragonCharacter: the brain with the flight, jump and plasma actions (lab, game, tests). The
+ * flight steps first, so a Space it takes (a running takeoff) is not also a jump. */
 export function createToothlessBrain(d: DragonCharacter, rig: MotionRig, o: ToothlessBrainOptions = {}): ToothlessBrain {
+  const flight = new FlightAction(d.tuning.flight);
   const jump = new JumpAction(d.tuning.jump);
   const plasma = new PlasmaAction(rig, d, d.tuning.plasma, o.aimAt ?? aheadAim);
-  const brain = new DragonBrain(d, { rig, seed: o.seed, sunDir: o.sunDir, actions: [jump, plasma] });
-  return { brain, jump, plasma };
+  const brain = new DragonBrain(d, { rig, seed: o.seed, sunDir: o.sunDir, actions: [flight, jump, plasma] });
+  return { brain, jump, plasma, flight };
 }

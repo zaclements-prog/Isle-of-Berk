@@ -1,6 +1,6 @@
 """Build the Toothless armature from anatomy.bone_specs() and small posing helpers."""
 import bpy
-from mathutils import Vector, Matrix
+from mathutils import Matrix, Quaternion, Vector
 import anatomy as A
 
 
@@ -68,10 +68,18 @@ def _rib_back(i):
     return (0.07 + 0.012 * i, 0.99, -0.10 - 0.025 * i)
 
 
-def _rib_forward(i):
-    """Outer half of a doubled rib: forward over the bundle. It rises more steeply than its inner half falls, so the
-    hinge turns < 180 deg over the top (a clip blend's shortest path goes over, never down through the legs)."""
-    return (0.03 + 0.01 * i, -0.99, 0.14 + 0.03 * i)
+TIP_FOLD_DEG = 172.0
+TIP_FOLD_DIR = 1         # sweep direction within the membrane plane (the other way folds wider than the gates allow)
+
+
+def tip_fold(inner_q, s, hinge):
+    """The outer half of a doubled rib, folded back along its inner half WITHIN the membrane plane (a rotation about
+    the inner half's membrane normal, local Z), by hinge 0 (straight) .. 1 (doubled, TIP_FOLD_DEG): like a bat's finger
+    flexing, the tip sweeps through the wing surface instead of flipping over or under it, and it folds relative to its
+    inner half, so mid-unfold it opens with the wing instead of reaching for a fixed direction. s: +1 left, -1 right
+    (the mirrored frames' handedness flips)."""
+    import math
+    return inner_q @ Quaternion((0.0, 0.0, 1.0), s * TIP_FOLD_DIR * math.radians(TIP_FOLD_DEG) * hinge)
 
 
 def fold_wings(rig, amount):
@@ -79,7 +87,8 @@ def fold_wings(rig, amount):
 
     0 -> 0.5: the arm folds (humerus back along the flank, forearm forward over it) while every rib swings back with
     its joint straight, so the membrane closes like a hand fan. 0.5 -> 1: the outer halves of the four long leading
-    ribs hinge forward over the top of the bundle, keeping the fold between shoulder and tail base. The hinge keeps
+    ribs fold back along their inner halves within the membrane plane (tip_fold: like a bat's finger flexing, not
+    flipped over or under the wing), keeping the fold between shoulder and tail base. The hinge keeps
     each rib's lateral axis (a yaw would flip it), so the membrane between a doubled rib and a straight one lies along
     the flank instead of flipping out as a sail; the short rear ribs fold straight back so the inner membrane
     (body -> last rib) collapses instead of being dragged forward into a skirt.
@@ -99,8 +108,7 @@ def fold_wings(rig, amount):
             back = mix(inner, side(_rib_back(i)))
             aim(rig, inner, back)
             if i < DOUBLED_RIBS:
-                straight = _frame(back, up).to_quaternion()
-                q = straight.slerp(_frame(side(_rib_forward(i)), -up).to_quaternion(), hinge)
+                q = tip_fold(_frame(back, up).to_quaternion(), s, hinge)
                 aim(rig, outer, q @ Vector((0, 1, 0)), up=q @ Vector((0, 0, 1)))
             else:
                 aim(rig, outer, back)

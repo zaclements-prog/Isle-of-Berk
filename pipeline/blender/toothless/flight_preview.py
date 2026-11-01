@@ -5,7 +5,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(os.path.dirname(HERE), "lib"), HERE]
 import bpy
 from mathutils import Vector
-import flight as F, flight_loops as FL, flight_chain as FC, qa_render as QR
+import flight as F, flight_loops as FL, flight_chain as FC, flight_seq as FS, qa_render as QR
 argv = sys.argv[sys.argv.index("--") + 1:]
 out, view, first, count = argv[0], argv[1], int(argv[2]), int(argv[3])
 res = (int(argv[4]), int(argv[5])) if len(argv) > 5 else (960, 540)
@@ -15,9 +15,15 @@ rig = bpy.data.objects["ToothlessRig"]
 QR.setup_clay(sc)
 sc.display.shading.show_shadows = True
 CLIP = os.environ.get("CLIP", "takeoff")       # takeoff | flap | glide, each also _chain (the shoulder-hung physics
-CHAIN = CLIP.endswith("_chain")                 # chain body); loops: env CYCLES of them back to back
-CLIP = CLIP.replace("_chain", "")
-if CLIP == "takeoff":
+CHAIN = CLIP.endswith("_chain")                 # chain body); loops: env CYCLES of them back to back;
+CLIP = CLIP.replace("_chain", "")               # flap2glide | glide2flap | land: the transitions and the landing
+SEQ = CLIP in FS.CLIPS
+if SEQ:
+    seq_all = FS.CLIPS[CLIP]()
+    folded = F.folded_wing_basis(rig)
+    seq_hook = FS.body_hook(seq_all)
+    frames = seq_all[seq_all[0]["clipStart"]:]
+elif CLIP == "takeoff":
     frames = F.takeoff_frames()
     folded = F.folded_wing_basis(rig)
     if CHAIN:
@@ -59,7 +65,9 @@ VIEWS = {"side": (Vector((17.0, -1.0, 2.5)), Vector((0, -1.0, 1.6)), 30),
          "head": (Vector((0.0, -18.0, 2.0)), Vector((0, -0.5, 2.0)), 26),
          "tq": (Vector((-11.0, -10.0, 4.0)), Vector((0, 0.0, 1.6)), 28),
          "back": (Vector((3.0, 14.0, 3.0)), Vector((0, -1.0, 1.8)), 30),
-         "close": (Vector((7.0, -1.2, 2.2)), Vector((0, -0.8, 1.9)), 45)}
+         "close": (Vector((7.0, -1.2, 2.2)), Vector((0, -0.8, 1.9)), 45),
+         "ground": (Vector((8.0, -0.4, 1.1)), Vector((0, -0.4, 0.95)), 38),
+         "wingtop": (Vector((-5.0, -3.5, 6.5)), Vector((0, 0.3, 1.5)), 30)}
 loc, tgt, lens = VIEWS[view]
 os.makedirs(out, exist_ok=True)
 t0 = time.time()
@@ -67,7 +75,9 @@ cam_h = None
 step = int(os.environ.get("STEP", "1"))
 for f in range(first, min(first + count, len(frames)), step):
     fr = frames[f]
-    if CLIP == "takeoff":
+    if SEQ:
+        F.apply_frame(rig, fr, folded, None, seq_hook)
+    elif CLIP == "takeoff":
         F.apply_frame(rig, fr, folded, frames, body_fn if CHAIN else None)
     else:
         FL.apply_loop_frame(rig, loop[fr["_k"]], loop, cfg, lbody_fn if CHAIN else None)
@@ -75,6 +85,6 @@ for f in range(first, min(first + count, len(frames)), step):
     bpy.context.view_layer.update()
     h = fr["root"][0] - 1.02
     cam_h = h if cam_h is None else cam_h + (h - cam_h) * 0.15     # the camera follows him up, a little behind
-    off = Vector((0, -fr["x"], (0.85 if CLIP == "takeoff" else 0.95) * cam_h))
+    off = Vector((0, -fr["x"], (0.85 if CLIP in ("takeoff", "land") else 0.95) * cam_h))
     QR.shoot(sc, out, f"f{f:04d}", tuple(loc + off), tuple(tgt + off), lens=lens, res=res)
 print("RENDER s/frame", round((time.time() - t0) / max(1, count // step), 2))

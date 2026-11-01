@@ -7,6 +7,11 @@ export interface CollisionBands {
   coarse: { radius: number; step: number };
 }
 export const COVE_COLLISION: CollisionBands = { fine: { radius: 80, step: 1 }, coarse: { radius: 200, step: 4 } };
+/**
+ * The island (1 m grid, ~500 m to the coast): full resolution over the village, the Kill Ring, the Cove and the plateau,
+ * 2 m out past the cliffs to the sea stacks.
+ */
+export const ISLAND_COLLISION: CollisionBands = { fine: { radius: 270, step: 1 }, coarse: { radius: 760, step: 2 } };
 
 /**
  * Non-indexed world-space triangles of the terrain for Plan 3's CollisionWorld. The grid is walked in coarse blocks:

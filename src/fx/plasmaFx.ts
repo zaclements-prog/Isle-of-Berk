@@ -13,6 +13,8 @@ export interface PlasmaFxOptions {
   prepare?: (m: THREE.Material) => void;
   /** Camera shake at an impact (amplitude m, duration s) — OrbitCamera.shake. */
   shake?: (amplitude: number, duration: number) => void;
+  /** Every impact, with the surface normal there (the game publishes it as a world `blast`). */
+  onImpact?: (point: THREE.Vector3, normal: THREE.Vector3) => void;
   seed?: number;
 }
 
@@ -274,10 +276,15 @@ export class PlasmaFx {
   }
 
   private impact(b: Bolt, at: THREE.Vector3): void {
-    this.impacts++;
     const hit = this.o.world.closestPoint(at, this.o.cfg.boltRadius * 3);
-    _n.copy(hit ? hit.normal : b.dir.clone().negate()).normalize();
     this.retire(b);
+    this.explode(at, hit ? hit.normal : b.dir.clone().negate());
+  }
+
+  /** A plasma explosion at `at` (flash, light, sparks, smoke, scorch, shake, onImpact) — a bolt's impact, or any blast. */
+  explode(at: THREE.Vector3, normal: THREE.Vector3): void {
+    this.impacts++;
+    _n.copy(normal).normalize();
     const f = this.flash;
     f.t = 0;
     f.sprite.position.copy(at).addScaledVector(_n, 0.2);
@@ -294,6 +301,7 @@ export class PlasmaFx {
     this.placeScorch(at, _n);
     const dist = this.camPos.distanceTo(at);
     this.o.shake?.(this.o.cfg.shake / Math.max(1, dist / 12), this.o.cfg.shakeTime);
+    this.o.onImpact?.(at, _n);
   }
 
   private hemisphere(n: THREE.Vector3): THREE.Vector3 {
@@ -313,14 +321,7 @@ export class PlasmaFx {
    */
   private patch(at: THREE.Vector3, halfSize: number): THREE.Mesh | null {
     _box.setFromCenterAndSize(at, _size.setScalar(2 * halfSize));
-    const pos: number[] = [];
-    this.o.world.bvh.shapecast({
-      intersectsBounds: (box) => box.intersectsBox(_box),
-      intersectsTriangle: (tri) => {
-        if (tri.intersectsBox(_box)) pos.push(tri.a.x, tri.a.y, tri.a.z, tri.b.x, tri.b.y, tri.b.z, tri.c.x, tri.c.y, tri.c.z);
-        return pos.length >= FX.maxPatchTris * 9;
-      },
-    });
+    const pos = this.o.world.trianglesInBox(_box, FX.maxPatchTris, []);
     if (!pos.length) return null;
     const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.computeVertexNormals();
