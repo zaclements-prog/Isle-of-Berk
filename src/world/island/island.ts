@@ -14,6 +14,7 @@ import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
 import { Craters } from '../damage/craters';
 import { DEFAULT_DEBRIS, Debris } from '../damage/debris';
+import { Ejecta } from '../damage/ejecta';
 import { StructureDamage } from '../damage/structures';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
@@ -153,6 +154,8 @@ export class IslandRegion implements Region {
   craters: Craters | null = null;
   debris: Debris | null = null;
   structures: StructureDamage | null = null;
+  /** The soil blasts throw (clods, dirt spray, dust). */
+  ejecta: Ejecta | null = null;
   trees: TreeDamage | null = null;
 
   /**
@@ -197,12 +200,27 @@ export class IslandRegion implements Region {
       this.root.add(this.debris.mesh);
     }
     this.structures = new StructureDamage(this.berk.breakables, collision?.structures ?? null, this.debris, events);
+    // the soil a blast throws: clods, a dirt spray and a dust cloud (none off a blast on the water)
+    const sea = this.header.seaLevel;
+    const P = this.header.cove.pond;
+    const n = new THREE.Vector3();
+    this.ejecta = new Ejecta({
+      height: (x, z) => hf.heightAt(x, z),
+      rock: (x, z) => (hf.heightAt(x, z) < sea || Math.hypot(x - P.x, z - P.z) < P.r ? 2 : THREE.MathUtils.smoothstep(1 - hf.normalAt(x, z, n).y, 0.15, 0.4)),
+    }, null);
+    events.on('blast', (e) => {
+      if (hf.heightAt(e.point.x, e.point.z) < sea || Math.hypot(e.point.x - P.x, e.point.z - P.z) < P.r) return;
+      this.ejecta!.blast(e);
+    });
+    app_prepare(this.app, this.ejecta.root);
+    this.root.add(this.ejecta.root);
   }
 
   update(dt: number, ctx: RegionUpdateContext): void {
     this.burn?.update(dt);
     this.trees?.update(dt);
     this.debris?.update(dt);
+    this.ejecta?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
     this.pond.update(dt);
@@ -214,6 +232,7 @@ export class IslandRegion implements Region {
     this.app.remove(this.root);
     this.terrain.dispose();
     this.terrain.material.dispose();
+    this.ejecta?.dispose();
     this.layers?.dispose();
     this.ocean.dispose();
     this.pond.dispose();
