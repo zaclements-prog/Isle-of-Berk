@@ -131,12 +131,16 @@ export function boulderGeometry(variant: number, detail = 2): THREE.BufferGeomet
   return flat;
 }
 
+const WHITE = new THREE.Color(1, 1, 1);
+
 export interface Props {
   root: THREE.Group;
   /** World-space collision meshes: trunk cylinders and boulder hulls. */
   collision: THREE.Object3D[];
   /** Each tree's trunk on its own (world-space triangles, keyed `tree:<index>`), for a dynamic collision set. */
   trunks: { key: string; index: number; positions: Float32Array }[];
+  /** Each tree's instance (by tree index): its mesh and slot, so damage can scorch, fell or remove it. */
+  treeInstances: { mesh: THREE.InstancedMesh; k: number }[];
   /** Advance the trees' wind sway. */
   update(dt: number): void;
   dispose(): void;
@@ -197,6 +201,7 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
   const rockMat = new THREE.MeshStandardMaterial({ name: 'boulder', vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
   disposables.push(pineMat, rockMat);
   const trunkParts: THREE.BufferGeometry[] = [];
+  const treeInstances: Props['treeInstances'] = [];
   const rockParts: THREE.BufferGeometry[] = [];
   const place = (list: readonly Placement[], geoOf: (v: number) => THREE.BufferGeometry, variants: number, mat: THREE.Material, name: string,
     sink: number, squashY: number, hull: (p: Placement, y: number, index: number) => THREE.BufferGeometry | null) => {
@@ -216,6 +221,10 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
         _s.set(p[3], p[3] * squashY, p[3]);
         _m.compose(_p.set(p[0], y, p[2]), _q, _s);
         mesh.setMatrixAt(k, _m);
+        if (name === 'pine') {
+          mesh.setColorAt(k, WHITE);
+          treeInstances[idx[k]] = { mesh, k };
+        }
         const h = hull(p, y, idx[k]);
         if (h) (name === 'pine' ? trunkParts : rockParts).push(h);
       });
@@ -258,6 +267,7 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
     root,
     collision,
     trunks,
+    treeInstances,
     update(dt: number) {
       sway.uTreeTime.value += dt;
     },

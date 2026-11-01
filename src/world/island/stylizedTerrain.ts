@@ -24,6 +24,14 @@ export interface StylizedTerrainUniforms {
   uStyleColors: { value: THREE.Color[] };
   /** 0…1: how faceted (low-poly) the shading is on gentle ground; rock always takes more. */
   uFacet: { value: number };
+  /** The burn mask (damage/burnMask): R scorch darkens the ground to char. Same mapping as uTerrainExtent. */
+  tTerrainBurn: { value: THREE.Texture | null };
+}
+
+function blankBurn(): THREE.DataTexture {
+  const t = new THREE.DataTexture(new Uint8Array(2), 1, 1, THREE.RGFormat, THREE.UnsignedByteType);
+  t.needsUpdate = true;
+  return t;
 }
 
 export function createStylizedUniforms(): StylizedTerrainUniforms {
@@ -34,6 +42,7 @@ export function createStylizedUniforms(): StylizedTerrainUniforms {
     uTerrainExtent: { value: new THREE.Vector4() },
     uStyleColors: { value: [P.grass, P.forest, P.moss, P.mud, P.pebbles, P.rock, P.grassAlt, P.rockLight].map((c) => new THREE.Color(c)) },
     uFacet: { value: 0.35 },
+    tTerrainBurn: { value: blankBurn() },
   };
 }
 
@@ -45,6 +54,7 @@ uniform sampler2D tTerrainSplatB;
 uniform vec4 uTerrainExtent;
 uniform vec3 uStyleColors[8];
 uniform float uFacet;
+uniform sampler2D tTerrainBurn;
 float styHash(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -87,6 +97,10 @@ float sAO;
   col *= 1.0 + w[4] * (0.28 * styNoise(p.xz / 0.7) + 0.14 * styNoise(p.xz / 0.23) - 0.21);
   float wet = sb.b;
   col *= mix(1.0, 0.62, wet);
+  // scorched by blasts: char, mottled with ash, browner toward the edge
+  float scorch = texture(tTerrainBurn, suv).r;
+  vec3 ash = mix(vec3(0.045, 0.04, 0.035), vec3(0.16, 0.13, 0.1), styNoise(p.xz / 0.9) * 0.7 + (1.0 - scorch) * 0.5);
+  col = mix(col, ash, smoothstep(0.02, 0.6, scorch));
   // faceted normal from the screen-space derivatives of the world position: the terrain triangles show as facets
   vec3 fn = normalize(cross(dFdx(p), dFdy(p)));
   if (dot(fn, n) < 0.0) fn = -fn;

@@ -182,6 +182,13 @@ ${FORCE_PARS}`)
   vec3 fa = forceAt(root);
   push.xz += fa.xz * 0.5;
   flat_ = max(flat_, fa.y);
+  // burnt and flattened by blasts: scorched tufts shrink to blackened stubble, flattened ones lie down
+  vec2 bw = worldBurn(root.xz);
+  flat_ = max(flat_, bw.g);
+  transformed *= 1.0 - 0.85 * smoothstep(0.15, 0.7, bw.r);
+#ifdef USE_COLOR
+  vColor.rgb *= mix(1.0, 0.18, smoothstep(0.05, 0.5, bw.r));
+#endif
   // the push is in world space: into the tuft's own (yawed, scaled) frame
   transformed += inverse(mat3(instanceMatrix)) * push * bend;
   transformed.y *= 1.0 - 0.65 * flat_ * bend;

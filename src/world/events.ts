@@ -11,7 +11,16 @@ export interface BlastEvent {
   readonly time: number;
 }
 
-export type WorldEvent = BlastEvent;
+/** A tree thrown over by a blast: its collision key, its base and the direction (yaw) it falls. */
+export interface FellEvent {
+  readonly type: 'fell';
+  readonly key: string;
+  readonly point: THREE.Vector3;
+  readonly yaw: number;
+  readonly time: number;
+}
+
+export type WorldEvent = BlastEvent | FellEvent;
 type Handler<E> = (e: E) => void;
 
 /**

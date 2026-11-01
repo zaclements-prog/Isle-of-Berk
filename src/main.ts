@@ -7,6 +7,7 @@ import { createIsland } from './world/island/island';
 import { createToothless } from './characters/dragon/toothless';
 import { WorldEvents } from './world/events';
 import { ForceField } from './world/forceField';
+import { debug } from './core/debug';
 
 const KEYS = 'click to control · WASD move · Shift gallop · C prowl · Space jump · hold Space (standing) or Space at a gallop: take off · '
   + 'flying: mouse steers, W flap, S brake, Space land · F / left click plasma · mouse look · wheel zoom';
@@ -42,7 +43,22 @@ async function start(): Promise<void> {
     const P = island.header.cove.pond;
     groundAt = (x, z) => Math.max(island.heightAt(x, z), sea, Math.hypot(x - P.x, z - P.z) < P.r ? P.level : -Infinity);
     // layered collision: terrain tiles that can be rebuilt, trees and buildings that can be removed
-    world = island.createCollisionWorld().world;
+    const collision = island.createCollisionWorld();
+    world = collision.world;
+    // blasts scorch the ground, burn and flatten the grass, and scorch and fell trees
+    island.enableDamage(events, collision, field.uniforms);
+    debug.register('world', {
+      /** Live counts: grass tufts and flowers in the ring, trees by state, collision layers and triangles. */
+      stats: () => ({
+        tufts: island.grass?.tufts.count ?? 0, flowers: island.grass?.flowers.count ?? 0, trees: island.trees?.census(),
+        layers: world.layers.length, triangles: world.triangles, downwash: +field.downwash.toFixed(3),
+      }),
+      /** Set off a blast on the ground at (x, z) (power 1 = his plasma), as a plasma impact would. */
+      blast: (x: number, z: number, power = 1) => events.emit({
+        type: 'blast', point: new THREE.Vector3(x, island.heightAt(x, z), z), normal: new THREE.Vector3(0, 1, 0),
+        power, radius: 6 * power, time: app.loop.simTime,
+      }),
+    });
     spawn = { ...island.spawnPoints[0] };
     const ctx = { time: app.loop.simTime, camera: app.camera, interactions };
     // the island's grass, trees and sea animate on simulation time, not wall-clock frame time: the same motion at any

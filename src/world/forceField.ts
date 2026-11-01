@@ -54,6 +54,16 @@ export interface ForceUniforms {
   uForceShock: { value: THREE.Vector4[] };
   uForceShockS: { value: THREE.Vector4[] };
   uForceTime: { value: number };
+  /** The burn mask (R scorch, G flattened; see damage/burnMask) and its (start x, z, 1/width, 1/depth) mapping. */
+  tWorldBurn: { value: THREE.Texture };
+  uWorldExtent: { value: THREE.Vector4 };
+}
+
+/** An all-clear 1×1 burn mask, until a world sets its own. */
+function clearBurn(): THREE.DataTexture {
+  const t = new THREE.DataTexture(new Uint8Array(2), 1, 1, THREE.RGFormat, THREE.UnsignedByteType);
+  t.needsUpdate = true;
+  return t;
 }
 
 /** GLSL declarations of the shared uniforms (paste into a vertex or fragment shader's preamble). */
@@ -67,6 +77,12 @@ uniform vec4 uForceWakeDir;
 uniform vec4 uForceShock[${MAX_SHOCKS}];
 uniform vec4 uForceShockS[${MAX_SHOCKS}];
 uniform float uForceTime;
+uniform sampler2D tWorldBurn;
+uniform vec4 uWorldExtent;
+// Scorch (r) and flattening (g) of the ground at world xz.
+vec2 worldBurn(vec2 xz) {
+  return texture2D(tWorldBurn, clamp((xz - uWorldExtent.xy) * uWorldExtent.zw, 0.0, 1.0)).rg;
+}
 // The horizontal push (xz) and the flattening (0…1) the field applies at a root on the ground at p.
 vec3 forceAt(vec3 p) {
   vec2 push = vec2(0.0);
@@ -114,6 +130,8 @@ export class ForceField {
     uForceShock: { value: Array.from({ length: MAX_SHOCKS }, () => new THREE.Vector4()) },
     uForceShockS: { value: Array.from({ length: MAX_SHOCKS }, () => new THREE.Vector4()) },
     uForceTime: { value: 0 },
+    tWorldBurn: { value: clearBurn() },
+    uWorldExtent: { value: new THREE.Vector4(0, 0, 1, 1) },
   };
   /** Spheres touching the world (paws, body), read every step. */
   readonly contacts: { center: THREE.Vector3; radius: number }[] = [];

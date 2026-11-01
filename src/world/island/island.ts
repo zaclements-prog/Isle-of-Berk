@@ -9,10 +9,13 @@ import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '..
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
 import { CollisionWorld, type CollisionSet } from '../collision';
+import type { WorldEvents } from '../events';
+import { BurnMask } from '../damage/burnMask';
+import { TreeDamage } from '../damage/trees';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
-import { createStylizedTerrainMaterial, createStylizedUniforms } from './stylizedTerrain';
+import { createStylizedTerrainMaterial, createStylizedUniforms, type StylizedTerrainUniforms } from './stylizedTerrain';
 import { buildBerk, type BerkLandmarks, type DockPlacement, type HousePlacement } from './berk';
 
 /** `public/assets/world/island/terrain.json` (pipeline/terrain/bakeIsland.mjs). */
@@ -46,6 +49,10 @@ export interface IslandCollision {
   world: CollisionWorld;
   trees: CollisionSet;
   structures: CollisionSet;
+}
+
+function app_prepare(app: App, root: THREE.Object3D): void {
+  app.materials.prepareTree(root);
 }
 
 /** See IslandRegion.createCollisionWorld. */
@@ -135,7 +142,40 @@ export class IslandRegion implements Region {
     return [];
   }
 
+  /** Blast damage, once enabled: the burn mask (scorch, flattened grass) and the trees' states. */
+  burn: BurnMask | null = null;
+  trees: TreeDamage | null = null;
+
+  /**
+   * Let blasts damage the island (world-interaction plan §4, milestone 3): scorch the ground and burn or flatten the
+   * grass (the burn mask, read by the terrain and the grass through the force uniforms), and scorch, fell and
+   * eventually reduce trees to stumps, with their collision in `collision.trees` following.
+   */
+  enableDamage(events: WorldEvents, collision: IslandCollision | null, force?: ForceUniforms): void {
+    const hf = this.hf;
+    const burn = new BurnMask(hf.size, hf.origin - hf.spacing / 2, hf.spacing);
+    this.burn = burn;
+    if (force) {
+      force.tWorldBurn.value = burn.texture;
+      force.uWorldExtent.value.copy(burn.extent);
+    }
+    const st = (this.terrain.material as THREE.Material & { userData: { stylised?: StylizedTerrainUniforms } }).userData.stylised;
+    if (st) st.tTerrainBurn.value = burn.texture;
+    events.on('blast', (e) => {
+      const above = e.point.y - hf.heightAt(e.point.x, e.point.z);
+      if (above > e.radius) return;
+      const k = 1 - Math.max(0, above) / e.radius;
+      burn.burn(e.point.x, e.point.z, e.radius * k, e.power * k);
+    });
+    const records = this.props.treeInstances.map((r, i) => ({ mesh: r.mesh, k: r.k, key: `tree:${i}` }));
+    this.trees = new TreeDamage(records, collision?.trees ?? null, (x, z) => hf.heightAt(x, z), events);
+    app_prepare(this.app, this.trees.root);
+    this.root.add(this.trees.root);
+  }
+
   update(dt: number, ctx: RegionUpdateContext): void {
+    this.burn?.update(dt);
+    this.trees?.update(dt);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
     this.pond.update(dt);
@@ -153,6 +193,8 @@ export class IslandRegion implements Region {
     this.berk.dispose();
     this.props.dispose();
     this.grass?.dispose();
+    this.burn?.dispose();
+    this.trees?.dispose();
     this.heightTexture.dispose();
     for (const t of this.splatTextures) t.dispose();
   }
@@ -188,6 +230,7 @@ export async function createIsland(app: App, opts: IslandOptions = {}): Promise<
     u.tTerrainSplatB.value = splatB;
     terrainUvTransform(hf, u.uTerrainExtent.value);
     material = createStylizedTerrainMaterial(u);
+    material.userData.stylised = u;
   }
   const terrain = new Terrain(hf, material as THREE.MeshStandardMaterial, app.preset.lodDistanceScale, 1.5, ISLAND_COLLISION);
   const force = opts.force;
