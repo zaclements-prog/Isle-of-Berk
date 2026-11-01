@@ -108,7 +108,39 @@ export class FlightAction implements DragonAction {
   private fading: string | null = null;
   private fadeW = 0;
 
+  /** Plasma on the wing: the flap's beat held back by this share (0…1) while he charges (PlasmaBody.hitch). */
+  hitch = 0;
+  /** The plasma release's nose-up: amplitude (rad), and the time since it (s). */
+  private recoilA = 0;
+  private recoilT = Infinity;
+
   constructor(private readonly cfg: FlightTuning) {}
+
+  /** The path's velocity (m/s, world): speed along the heading at the path angle (no flap bob). */
+  velocity(out: THREE.Vector3): THREE.Vector3 {
+    if (!this.airborne) return out.set(0, 0, 0);
+    const h = Math.cos(this.gamma) * this.speed;
+    return out.set(Math.sin(this.heading) * h, Math.sin(this.gamma) * this.speed, Math.cos(this.heading) * h);
+  }
+
+  /** A plasma release on the wing: the nose pitches up by `pitch` (rad), easing in and out, and he loses some speed. */
+  recoil(pitch: number, speedLoss: number): void {
+    this.recoilA = pitch;
+    this.recoilT = 0;
+    if (this.phase === 'air' || this.phase === 'descend') this.speed = Math.max(this.cfg.minSpeed, this.speed - speedLoss);
+  }
+
+  /** The recoil's pitch now: up over 0.08 s, back over the next ~0.5 s (smooth: no pop in the pelvis). */
+  private recoilPitch(dt: number): number {
+    if (!Number.isFinite(this.recoilT)) return 0;
+    this.recoilT += dt;
+    const t = this.recoilT;
+    if (t > 0.6) {
+      this.recoilT = Infinity;
+      return 0;
+    }
+    return this.recoilA * smoothstep(0, 0.08, t) * (1 - smoothstep(0.08, 0.6, t));
+  }
 
   get active(): boolean {
     return this.phase !== 'idle';
@@ -129,6 +161,8 @@ export class FlightAction implements DragonAction {
 
   reset(d: DragonCharacter): void {
     this.tuckW = 0;
+    this.hitch = 0;
+    this.recoilT = Infinity;
     d.wings.tuck = 0;
     if (this.phase !== 'idle' || this.fading) {
       for (const n of FLIGHT_CLIPS) if (d.layers.has(n)) d.layers.set(n, 0);
@@ -355,7 +389,8 @@ export class FlightAction implements DragonAction {
     }
     if (this.mode === 'flap' && !this.stopping) this.glideW = Math.max(0, this.glideW - dt / c.glideToFlap);
     this.flapW = 1 - this.glideW;
-    this.flapU = fract(this.flapU + (this.flapRate * dt) / fp);
+    // a plasma charge holds the stroke back a little (the phase runs on, slower: the cycle never jumps)
+    this.flapU = fract(this.flapU + (this.flapRate * (1 - clamp(this.hitch, 0, 0.9)) * dt) / fp);
     this.glideU = fract(this.glideU + dt / gp);
     this.airW = Math.min(1, this.airW + dt / c.handoff);
     this.setLoops(d, 1);
@@ -512,7 +547,7 @@ export class FlightAction implements DragonAction {
     o.exact = true;
     o.snap = false;
     o.height = this.outH;
-    o.pitch = this.outP;
+    o.pitch = this.outP + this.recoilPitch(dt);
     o.roll = roll;
     const kin = d.kin;
     const dx = this.pos.x - kin.pos.x;

@@ -78,7 +78,7 @@ describe('PlasmaFx', () => {
     const camera = new THREE.PerspectiveCamera();
     const fx = new PlasmaFx({ world, cfg: DEFAULT_TUNING.plasma });
     fx.fire({ from: V(0, 5, 0), dir: V(0, 0.2, 1) });
-    for (let k = 0; k < 400 && fx.flying; k++) fx.update(DT, camera, 1080);
+    for (let k = 0; k < 900 && fx.flying; k++) fx.update(DT, camera, 1080);   // boltRange at boltSpeed: ~7 s
     expect(fx.flying).toBe(0);
     expect(fx.impacts).toBe(0);
     const lightsBefore = fx.root.children.filter((c) => (c as THREE.PointLight).isPointLight).length;

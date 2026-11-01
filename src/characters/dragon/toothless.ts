@@ -70,10 +70,12 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
   const cam = new OrbitCamera(tuning.camera, world);
   const hold = { chest: new THREE.Vector3() };
   cam.reset(cameraFollow(dragon, hold));
+  // the aim ray reaches as far as a bolt flies (plasma.boltRange): from 60 m up a shallow aim still finds the ground
+  const reach = tuning.plasma.boltRange;
   const aimAt = (_d: DragonCharacter, out: THREE.Vector3): THREE.Vector3 => {
     _dir.subVectors(cam.target, cam.position).normalize();
-    const hit = world.raycast(cam.position, _dir, 120, _hit);
-    return hit ? out.copy(hit.point) : out.copy(cam.position).addScaledVector(_dir, 120);
+    const hit = world.raycast(cam.position, _dir, reach, _hit);
+    return hit ? out.copy(hit.point) : out.copy(cam.position).addScaledVector(_dir, reach);
   };
   const tb = createToothlessBrain(dragon, asset.rig, { seed: o.seed ?? 1, sunDir: app.lighting.sunDir, aimAt });
   for (const list of o.interest ?? []) tb.brain.interest.addList(list);
@@ -89,6 +91,7 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
   const canvas = app.renderer.domElement;
   const input = new KeyboardMouseInput(window, () => document.pointerLockElement === canvas);
   canvas.addEventListener('click', () => void canvas.requestPointerLock());
+  const reticle = createReticle(canvas.parentElement);
   /**
    * A review camera (berk.cam.review): the camera recentres review.yaw off his heading and the controls read its yaw
    * less that offset, so it can watch him from the side while he flies (or walks) as if it were behind him.
@@ -115,6 +118,7 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
     app.camera.position.lerpVectors(prevCam, curCam, alpha);
     app.camera.lookAt(cam.target);
     fx.update(frameDt, app.camera, canvas.height);
+    reticle?.update(document.pointerLockElement === canvas, tb.flight.airborne, tb.plasma.phase === 'charge');
   }, 0);
   const tp = (x: number, z: number, heading = dragon.kin.heading) => {
     dragon.spawn(x, z, heading);
@@ -181,4 +185,39 @@ export async function createToothless(o: ToothlessOptions): Promise<Toothless> {
     return src;
   };
   return { ...tb, asset, dragon, cam, fx, tp, forceSource };
+}
+
+/**
+ * The aim reticle: a small ring at the screen centre, where the camera's aim ray (and so the plasma) goes. Shown while
+ * the pointer is locked (in control): faint on the ground, clearer on the wing (there the camera is well behind him
+ * and the aim is not on his head), and tightening in plasma blue while he charges.
+ */
+function createReticle(parent: HTMLElement | null): { update(locked: boolean, flying: boolean, charging: boolean): void } | null {
+  if (!parent || typeof document === 'undefined') return null;
+  const el = document.createElement('div');
+  el.className = 'berk-reticle';
+  Object.assign(el.style, {
+    position: 'absolute', left: '50%', top: '50%', width: '18px', height: '18px', margin: '-10px 0 0 -10px',
+    border: '1.5px solid rgba(235, 242, 248, 0.85)', borderRadius: '50%', pointerEvents: 'none', opacity: '0',
+    boxShadow: '0 0 0 1px rgba(8, 14, 22, 0.35), inset 0 0 0 1px rgba(8, 14, 22, 0.25)',
+    transition: 'opacity 0.25s, transform 0.12s, border-color 0.12s',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const dot = document.createElement('div');
+  Object.assign(dot.style, {
+    position: 'absolute', left: '50%', top: '50%', width: '3px', height: '3px', margin: '-1.5px 0 0 -1.5px',
+    borderRadius: '50%', background: 'rgba(235, 242, 248, 0.95)',
+  } satisfies Partial<CSSStyleDeclaration>);
+  el.appendChild(dot);
+  parent.appendChild(el);
+  let last = '';
+  return {
+    update(locked, flying, charging) {
+      const key = `${locked}${flying}${charging}`;
+      if (key === last) return;
+      last = key;
+      el.style.opacity = !locked ? '0' : flying || charging ? '0.9' : '0.4';
+      el.style.transform = charging ? 'scale(0.7)' : 'scale(1)';
+      el.style.borderColor = charging ? 'rgba(140, 190, 255, 0.95)' : 'rgba(235, 242, 248, 0.85)';
+    },
+  };
 }
