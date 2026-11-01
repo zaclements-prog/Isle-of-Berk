@@ -3,7 +3,8 @@ import type { DragonAction } from '../behaviour/brain';
 import type { DragonCharacter } from '../motion/dragon';
 import type { RayHit } from '../../../world/collision';
 import type { MotionTuning } from '../motion/tuning';
-import { lerp, rotY, smoothstep } from '../motion/math';
+import { clamp, lerp, rotY, smoothstep } from '../motion/math';
+import { stepSpring, type SpringState } from '../motion/springs';
 
 type JumpTuning = MotionTuning['jump'];
 const UP = new THREE.Vector3(0, 1, 0);
@@ -21,6 +22,12 @@ const _hit: RayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), 
  * the body solver's override, every paw takes one forced step from its takeoff spot to its landing spot (front paws a
  * little early, hind a little late) while the launch and tuck poses own the legs; before touchdown the legs go back to
  * the IK, which reaches them down onto their landing spots.
+ *
+ * Every hand-off is continuous: the push takes the pelvis from the crouch (its height and speed) onto the arc over
+ * pushTime instead of snapping it to the arc; the pitch follows its own spring through the air and hands its speed
+ * back; touchdown keeps the fall going into an absorb as deep as the impact is fast (the body's height spring sinks
+ * and recovers); a press while he is still landing or cooling down is buffered, and a re-jump crouches straight out
+ * of the landing pose.
  */
 export class JumpAction implements DragonAction {
   readonly name = 'jump';
@@ -36,6 +43,20 @@ export class JumpAction implements DragonAction {
   private vy = 0;
   private landY = 0;
   private cool = 0;
+  /** A Space press waiting for the jump to be free (s left). */
+  private buffer = 0;
+  /** The pelvis's offset from the arc at launch (m) and its speed relative to the arc (m/s), closed over the push. */
+  private offH = 0;
+  private offV = 0;
+  /** The body pitch through the air (its own spring: the override is exact, so the solver's springs sleep). */
+  private readonly pitch: SpringState = { x: 0, v: 0 };
+  /** The pelvis height of the last two steps (to carry its speed into the launch). */
+  private h1 = 0;
+  private h0 = 0;
+  /** The landing pose's weight as a re-jump's crouch takes over from it. */
+  private landFrom = 0;
+  /** When (s into the arc) the tuck has handed the legs back to the IK. */
+  private release = 0;
 
   constructor(private readonly cfg: JumpTuning) {}
 
@@ -57,30 +78,47 @@ export class JumpAction implements DragonAction {
       d.climb.suspended = false;
       d.body.override.active = false;
       d.body.override.snap = false;
+      d.body.override.exact = false;
       d.mods.scripted = false;
       d.planner.autoStep = true;
     }
     this.phase = 'idle';
     this.t = 0;
     this.cool = 0;
+    this.buffer = 0;
   }
 
   step(d: DragonCharacter, dt: number, standing: boolean): void {
     const c = this.cfg;
     this.cool = Math.max(0, this.cool - dt);
+    this.buffer = Math.max(0, this.buffer - dt);
     this.t += dt;
+    this.h0 = this.h1;
+    this.h1 = d.body.pose.pelvisPos.y;
     const L = d.layers;
     const set = (name: string, w: number, time = 0) => {
       if (L.has(name)) L.set(name, w, time, false, ORDER);
     };
+    // a press the jump cannot take yet (still landing, recovering, cooling down, the posture still settling) waits a
+    // moment for it rather than being lost; one at a gallop's speed is the flight's (a running takeoff)
+    if (d.intent.jump && (this.phase !== 'idle' || this.cool > 0 || !standing)) this.buffer = c.bufferTime;
+    const want = d.intent.jump || this.buffer > 0;
+    const free = !d.mods.scripted && d.climb.mode === 'ground' && d.kin.speed < d.tuning.flight.runTakeoffSpeed;
     if (this.phase === 'idle') {
-      if (!d.intent.jump || !standing || this.cool > 0 || d.mods.scripted || d.climb.mode !== 'ground') return;
-      this.phase = 'crouch';
-      this.t = 0;
+      if (!want || !standing || this.cool > 0 || !free) return;
+      this.startCrouch(0);
+    } else if (this.phase === 'land' && want && free && this.t >= c.rejumpAfter) {
+      // straight out of the landing into the next crouch (the landing pose hands over to it)
+      this.startCrouch(L.weight('jump_land'));
+      d.body.override.active = false;
+      d.body.override.exact = false;
     }
     if (this.phase === 'crouch') {
-      set('jump_crouch', smoothstep(0, c.crouchTime, this.t));
-      if (this.t >= c.crouchTime) this.takeoff(d);
+      const k = smoothstep(0, c.crouchTime, this.t);
+      set('jump_crouch', k);
+      if (this.landFrom > 0) set('jump_land', this.landFrom * (1 - k));
+      d.wings.demand('jump', { flare: 1 }, this.landFrom * (1 - k));
+      if (this.t >= c.crouchTime) this.takeoff(d, dt);
       return;
     }
     if (this.phase === 'air') {
@@ -94,21 +132,39 @@ export class JumpAction implements DragonAction {
       // layers: crouch out; launch → tuck crossfade; tuck (the legs' owner) hands the legs back to the IK before touchdown
       set('jump_crouch', 1 - smoothstep(0, 0.1, this.t));
       set('jump_launch', smoothstep(0, 0.06, this.t) * (1 - smoothstep(c.tuckAt, c.tuckAt + 0.15, f)));
-      const release = this.flight - c.releaseTime;
+      const release = this.release;
       set('jump_tuck', smoothstep(c.tuckAt - 0.1, c.tuckAt + 0.05, f) * (1 - smoothstep(release - 0.12, release, this.t)));
       set('jump_land', smoothstep(this.flight - c.landLead, this.flight - c.landLead + 0.12, this.t));
-      d.body.override.active = true;
-      d.body.override.snap = true;
-      d.body.override.height = Math.max(y, this.landY) + d.body.hipHeight;
-      d.body.override.pitch = lerp(this.pitchOf(d, 'jump_launch'), this.pitchOf(d, 'jump_land'), smoothstep(0.35, 1, f));
+      // the push: the pelvis leaves the crouch at its own height and speed and meets the arc pushTime later (a cubic
+      // that closes the offset and its speed together)
+      const u = clamp(this.t / Math.max(c.pushTime, 1e-3), 0, 1);
+      const T = Math.max(c.pushTime, 1e-3);
+      const off = u >= 1 ? 0 : this.offH * (2 * u * u * u - 3 * u * u + 1) + this.offV * T * (u * u * u - 2 * u * u + u);
+      const o = d.body.override;
+      o.active = true;
+      o.exact = true;
+      o.snap = false;
+      o.bob = 0;
+      o.height = Math.max(y, this.landY) + d.body.hipHeight + off;
+      stepSpring(this.pitch, lerp(this.pitchOf(d, 'jump_launch'), this.pitchOf(d, 'jump_land'), smoothstep(0.35, 1, f)), d.tuning.body.tiltOmega, 1, dt);
+      o.pitch = this.pitch.x;
+      o.roll = 0;
       d.wings.demand('jump', { flare: 1 }, Math.min(smoothstep(0, 0.15, this.t), 1 - smoothstep(this.flight + 0.1, this.flight + 0.5, this.t)));
-      if (this.t >= this.flight) {
+      // touchdown on the step the arc meets the ground (it falls between steps: held at landY for a step, the pelvis
+      // would stop dead before the absorb)
+      if (this.t >= this.flight || (this.vy < c.gravity * this.t && y < this.landY)) {
         this.phase = 'land';
         this.t = 0;
-        d.body.override.active = false;
-        d.body.override.snap = false;
-        d.body.impulse(c.landImpulse);
-        // momentum carries on only if he is asked to keep going; otherwise the landing soaks it up
+        o.active = false;
+        o.exact = false;
+        // the absorb: the fall carries on into the height spring, which sinks as deep as the impact was fast and comes
+        // back up (a critically damped spring from rest with speed V bottoms out at V / (ω·e))
+        const vi = Math.max(0, -(this.vy - c.gravity * this.flight));
+        const depth = clamp(c.absorbPerSpeed * vi, c.absorbMin, c.absorbMax);
+        const sink = Math.max(c.landImpulse, depth * d.tuning.body.heightOmega * Math.E);
+        d.body.impulse(sink + d.body.heightSpeed);
+        // momentum carries on only if he is asked to keep going; otherwise the landing soaks it up (the paws were
+        // planted for the arc's landing spot: sliding on past it would trail them and pull the body down a stride)
         const carry = d.intent.hasDir ? this.v.length() : Math.min(this.v.length(), c.landCarry);
         d.kin.velocity.copy(this.v).setLength(carry);
         d.kin.speed = carry;
@@ -129,6 +185,13 @@ export class JumpAction implements DragonAction {
       this.phase = 'idle';
       this.cool = c.cooldown;
     }
+  }
+
+  private startCrouch(landFrom: number): void {
+    this.phase = 'crouch';
+    this.t = 0;
+    this.buffer = 0;
+    this.landFrom = landFrom;
   }
 
   /** First time on the way down that the arc meets the ground under it. */
@@ -173,17 +236,24 @@ export class JumpAction implements DragonAction {
   }
 
   /** Launch: ballistic speeds, the landing found along the arc, one forced step per paw to its landing spot. */
-  private takeoff(d: DragonCharacter): void {
+  private takeoff(d: DragonCharacter, dt: number): void {
     const c = this.cfg;
     const k = d.kin;
     this.phase = 'air';
     this.t = 0;
+    this.landFrom = 0;
+    d.wings.demand('jump', null);
     this.v.set(k.velocity.x, 0, k.velocity.z);
     const fwd = _dir.set(Math.sin(k.heading), 0, Math.cos(k.heading));
     const along = this.v.dot(fwd);
     if (along < c.minForward) this.v.addScaledVector(fwd, c.minForward - along);
     this.vy = Math.sqrt(2 * c.gravity * c.apex);
     this.y0 = k.pos.y;
+    // where the crouch has the pelvis (and how fast it moves) against the arc's start: the push closes the gap
+    this.offH = this.h1 - (this.y0 + d.body.hipHeight);
+    this.offV = (this.h1 - this.h0) / dt - this.vy;
+    this.pitch.x = d.body.pose.pitch;
+    this.pitch.v = d.body.pitchSpeed;
     // stop short of a wall in the flight path: the body reaches frontExtent ahead of the origin (the muzzle)
     const dist = this.v.length() * (2 * this.vy) / c.gravity;
     if (dist > 1e-3) {
@@ -203,6 +273,12 @@ export class JumpAction implements DragonAction {
       this.findLanding(d);
     }
     this.landing.copy(k.pos).addScaledVector(this.v, this.flight).setY(this.landY);
+    // the legs go back to the IK (which reaches them for their landing spots) releaseTime before touchdown, but not
+    // while the body is still more than reachExtra above its landing height: from higher up the IK can only hang them
+    // straight down at the ground for the rest of the fall
+    const disc = this.vy * this.vy - 2 * c.gravity * (this.landY + c.reachExtra - this.y0);
+    const reach = disc >= 0 ? (this.vy + Math.sqrt(disc)) / c.gravity : 0;
+    this.release = Math.min(this.flight, Math.max(this.flight - c.releaseTime, reach));
     for (let i = 0; i < 4; i++) {
       const front = i === 1 || i === 3;
       rotY(d.planner.neutral[i], k.heading, _t).add(this.landing);
