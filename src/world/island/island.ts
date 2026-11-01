@@ -8,6 +8,8 @@ import { createSplatMaterial, createSplatUniforms, type SplatUniforms } from '..
 import { createHeightTexture, terrainUvTransform } from '../terrain/heightTexture';
 import { Ocean } from './ocean';
 import { buildProps, type Placement, type Props } from './props';
+import { Grass } from './grass';
+import { createStylizedTerrainMaterial, createStylizedUniforms } from './stylizedTerrain';
 
 /** `public/assets/world/island/terrain.json` (pipeline/terrain/bakeIsland.mjs). */
 export interface IslandHeader extends GridHeader {
@@ -30,6 +32,11 @@ export interface IslandHeader extends GridHeader {
 export interface IslandOptions {
   /** Where `world/island/` and `textures/terrain/` live. */
   baseUrl?: string;
+  /**
+   * 'stylised' (default): the palette terrain, grass and flowers — the game's look. 'photo': the Cove's photo-texture
+   * splat, no grass (kept for comparison).
+   */
+  look?: 'stylised' | 'photo';
 }
 
 /**
@@ -50,10 +57,12 @@ export class IslandRegion implements Region {
     readonly header: IslandHeader,
     readonly hf: Heightfield,
     readonly terrain: Terrain,
-    readonly splat: SplatUniforms,
-    readonly layers: LayerArrays,
+    readonly splat: SplatUniforms | null,
+    readonly layers: LayerArrays | null,
     readonly ocean: Ocean,
     readonly props: Props,
+    readonly grass: Grass | null,
+    private readonly splatTextures: THREE.Texture[],
   ) {
     this.root.name = 'Island';
     const half = ((hf.size - 1) * hf.spacing) / 2;
@@ -62,6 +71,7 @@ export class IslandRegion implements Region {
     this.heightTexture = ocean.uniforms.tOceanHeight.value as THREE.DataTexture;
     for (const s of header.stacks) this.interestPoints.push({ id: `stack-${s.x}`, kind: 'view', position: new THREE.Vector3(s.x, s.h, s.z), weight: 0.2 });
     this.root.add(terrain.root, ocean.mesh, props.root);
+    if (grass) this.root.add(grass.root);
   }
 
   heightAt(x: number, z: number): number {
@@ -83,47 +93,86 @@ export class IslandRegion implements Region {
   update(dt: number, ctx: RegionUpdateContext): void {
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
+    this.grass?.update(dt, ctx.camera);
   }
 
   dispose(): void {
     this.app.remove(this.root);
     this.terrain.dispose();
     this.terrain.material.dispose();
-    this.layers.dispose();
+    this.layers?.dispose();
     this.ocean.dispose();
     this.props.dispose();
+    this.grass?.dispose();
     this.heightTexture.dispose();
-    this.splat.tTerrainSplatA.value?.dispose();
-    this.splat.tTerrainSplatB.value?.dispose();
+    for (const t of this.splatTextures) t.dispose();
   }
 }
 
 /** Loads and assembles the Test Isle, adds it to the app, sets its sun and compiles every shader before resolving. */
 export async function createIsland(app: App, opts: IslandOptions = {}): Promise<IslandRegion> {
   const base = opts.baseUrl ?? 'assets/';
+  const look = opts.look ?? 'stylised';
   const header = (await (await fetch(`${base}world/island/terrain.json`)).json()) as IslandHeader;
   const low = app.preset.name === 'low';
-  const [heightBuf, layers, splatA, splatB] = await Promise.all([
+  const [heightBuf, splatA, splatB, layers] = await Promise.all([
     fetch(`${base}world/island/${header.files.height}`).then((r) => r.arrayBuffer()),
-    loadLayerArrays(`${base}textures/terrain/`, COVE_LAYERS, low ? 512 : 1024),
     loadSplatTexture(`${base}world/island/${header.files.splatA}`),
     loadSplatTexture(`${base}world/island/${header.files.splatB}`),
+    look === 'photo' ? loadLayerArrays(`${base}textures/terrain/`, COVE_LAYERS, low ? 512 : 1024) : Promise.resolve(null),
   ]);
   const hf = Heightfield.fromUint16LE(header, heightBuf);
-  const splat = createSplatUniforms();
-  splat.tTerrainAlbedo.value = layers.albedo;
-  splat.tTerrainNormal.value = layers.normal;
-  splat.tTerrainArmh.value = layers.armh;
-  splat.tTerrainSplatA.value = splatA;
-  splat.tTerrainSplatB.value = splatB;
-  terrainUvTransform(hf, splat.uTerrainExtent.value);
-  const terrain = new Terrain(hf, createSplatMaterial(splat, low), app.preset.lodDistanceScale);
+  let splat: SplatUniforms | null = null;
+  let material: THREE.Material;
+  if (layers) {
+    splat = createSplatUniforms();
+    splat.tTerrainAlbedo.value = layers.albedo;
+    splat.tTerrainNormal.value = layers.normal;
+    splat.tTerrainArmh.value = layers.armh;
+    splat.tTerrainSplatA.value = splatA;
+    splat.tTerrainSplatB.value = splatB;
+    terrainUvTransform(hf, splat.uTerrainExtent.value);
+    material = createSplatMaterial(splat, low);
+  } else {
+    const u = createStylizedUniforms();
+    u.tTerrainSplatA.value = splatA;
+    u.tTerrainSplatB.value = splatB;
+    terrainUvTransform(hf, u.uTerrainExtent.value);
+    material = createStylizedTerrainMaterial(u);
+  }
+  const terrain = new Terrain(hf, material as THREE.MeshStandardMaterial, app.preset.lodDistanceScale);
   const ocean = new Ocean({ seaLevel: header.seaLevel, heightTexture: createHeightTexture(hf), extent: terrainUvTransform(hf) });
   const props = buildProps(header.trees, header.rocks, (x, z) => hf.heightAt(x, z));
-  const island = new IslandRegion(app, header, hf, terrain, splat, layers, ocean, props);
+  const grass = look === 'stylised' ? new Grass(islandGrassField(header, hf), low ? { radius: 28, cell: 0.6 } : { radius: 46, cell: 0.5 }) : null;
+  const island = new IslandRegion(app, header, hf, terrain, splat, layers, ocean, props, grass, [splatA, splatB]);
   app.materials.prepareTree(island.root);
   app.scene.add(island.root);
   app.setSun(header.sun.azimuth, header.sun.elevation);
   await app.renderer.compileAsync(app.scene, app.camera);
   return island;
+}
+
+/**
+ * Where the island's grass grows: above the shingle, on ground gentle enough, in drifting patches (denser on the
+ * meadow); flowers on the meadow and thinly elsewhere.
+ */
+export function islandGrassField(header: IslandHeader, hf: Heightfield): import('./grass').GrassField {
+  const n = new THREE.Vector3();
+  const m = header.meadow;
+  const meadow = (x: number, z: number) => {
+    const q = Math.hypot((x - m.x) / m.rx, (z - m.z) / m.rz);
+    return 1 - Math.min(1, Math.max(0, (q - 0.8) / 0.4));
+  };
+  const patch = (x: number, z: number) => 0.5 + 0.5 * Math.sin(x * 0.11 + Math.sin(z * 0.07) * 2) * Math.sin(z * 0.09 + Math.sin(x * 0.05) * 2);
+  return {
+    height: (x, z) => hf.heightAt(x, z),
+    upness: (x, z) => hf.normalAt(x, z, n).y,
+    density: (x, z) => {
+      const h = hf.heightAt(x, z);
+      if (h < header.seaLevel + 2.4) return 0;
+      const shore = Math.min(1, (h - header.seaLevel - 2.4) / 2.5);
+      return shore * Math.min(1, 0.35 + 0.65 * patch(x, z) + 0.4 * meadow(x, z));
+    },
+    flowers: (x, z) => 0.15 + 0.85 * meadow(x, z),
+  };
 }

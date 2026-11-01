@@ -10,7 +10,7 @@ const KEYS = 'click to control · WASD move · Shift gallop · C prowl · Space 
 
 /**
  * The game page. The Test Isle by default (docs/superpowers/plans/2026-11-01-test-isle.md); `?scene=test` keeps the
- * M1 look-dev plane with its swatches and blocks.
+ * M1 look-dev plane with its swatches and blocks; `?look=photo` shows the island in the Cove's photo-texture look.
  */
 const app = createApp(document.getElementById('app')!);
 const hud = document.getElementById('hud')!;
@@ -26,7 +26,8 @@ async function start(): Promise<void> {
     world = CollisionWorld.fromObjects([test.root]);
   } else {
     hud.textContent = 'Loading the island…';
-    const island = await createIsland(app);
+    const look = new URLSearchParams(location.search).get('look') === 'photo' ? 'photo' : 'stylised';
+    const island = await createIsland(app, { look });
     world = CollisionWorld.fromObjects(island.collisionRoots());
     spawn = { ...island.spawnPoints[0] };
     const ctx = { time: 0, camera: app.camera, interactions: [] };

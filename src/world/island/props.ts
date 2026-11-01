@@ -28,6 +28,34 @@ function colored(g: THREE.BufferGeometry, c: THREE.Color, jitter: number, rnd: (
   return geo;
 }
 
+/** Per-face colours from `lo` at height y0 to `hi` at y1 (by face centroid), each face's shade jittered a little. */
+function gradient(g: THREE.BufferGeometry, lo: THREE.Color, hi: THREE.Color, y0: number, y1: number, jitter: number, rnd: () => number): THREE.BufferGeometry {
+  const geo = g.index ? g.toNonIndexed() : g;
+  const pos = geo.attributes.position;
+  const n = pos.count;
+  const col = new Float32Array(n * 3);
+  const c = new THREE.Color();
+  for (let v = 0; v < n; v += 3) {
+    const y = (pos.getY(v) + pos.getY(v + 1) + pos.getY(v + 2)) / 3;
+    c.copy(lo).lerp(hi, Math.min(1, Math.max(0, (y - y0) / (y1 - y0))));
+    const k = 1 + (rnd() - 0.5) * jitter;
+    for (let w = 0; w < 3; w++) {
+      col[(v + w) * 3] = c.r * k;
+      col[(v + w) * 3 + 1] = c.g * k;
+      col[(v + w) * 3 + 2] = c.b * k;
+    }
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
+/** Stylised foliage colours (sRGB): pine needles dark at the base of a tier to sunlit at its tip; broadleaf canopy. */
+const PINE_DARK = new THREE.Color(0x1e3a22);
+const PINE_LIGHT = new THREE.Color(0x4f7d3c);
+const LEAF_DARK = new THREE.Color(0x3c6a2a);
+const LEAF_LIGHT = new THREE.Color(0x8bb34c);
+const BARK = new THREE.Color(0x4a3424);
+
 /**
  * A stylised northern pine (variant 0…2): a tapering trunk under stacked, slightly drooping cone tiers, about 9 m
  * at scale 1, base at the origin. Flat-shaded faceted cones with per-face shade jitter read as needle clumps.
@@ -36,7 +64,7 @@ export function pineGeometry(variant: number): THREE.BufferGeometry {
   const rnd = mulberry32(101 + variant);
   const parts: THREE.BufferGeometry[] = [];
   const trunk = new THREE.CylinderGeometry(0.16, 0.32, 3.2, 6, 1).translate(0, 1.6, 0);
-  parts.push(colored(trunk, new THREE.Color(0.09, 0.06, 0.04), 0.25, rnd));
+  parts.push(colored(trunk, BARK, 0.25, rnd));
   const tiers = [[2.6, 3.0, 2.1], [2.2, 2.9, 2.0], [2.4, 2.7, 2.3]][variant] ?? [2.4, 2.8, 2.1];
   const count = 4 + variant % 2;
   let y = 2.0;
@@ -45,11 +73,34 @@ export function pineGeometry(variant: number): THREE.BufferGeometry {
     const r = tiers[0] * f + 0.35;
     const h = tiers[1] * (0.75 + 0.25 * f);
     const cone = new THREE.ConeGeometry(r, h, 7 + (k % 2), 1).translate(0, y + h / 2, 0).rotateY(rnd() * Math.PI);
-    const shade = new THREE.Color().setHSL(0.33 + (rnd() - 0.5) * 0.04, 0.32, 0.055 + 0.02 * k / count);
-    parts.push(colored(cone, shade, 0.35, rnd));
+    // each tier dark underneath to sunlit at its tip, and the whole tree a little lighter toward the top
+    const lift = 0.85 + 0.3 * (k / count);
+    parts.push(gradient(cone, PINE_DARK.clone().multiplyScalar(lift), PINE_LIGHT.clone().multiplyScalar(lift), y, y + h, 0.18, rnd));
     y += h * 0.52;
   }
   const out = mergeGeometries(parts, false)!;
+  out.computeVertexNormals();
+  return out;
+}
+
+/**
+ * A stylised broadleaf tree (variant 0…1): a short trunk under a cluster of faceted canopy blobs, dark underneath and
+ * light on top, about 8 m at scale 1.
+ */
+export function broadleafGeometry(variant: number): THREE.BufferGeometry {
+  const rnd = mulberry32(151 + variant);
+  const parts: THREE.BufferGeometry[] = [];
+  parts.push(colored(new THREE.CylinderGeometry(0.2, 0.36, 3.6, 6, 1).translate(0, 1.8, 0), BARK, 0.25, rnd));
+  const blobs = 4 + variant;
+  for (let k = 0; k < blobs; k++) {
+    const a = (k / blobs) * Math.PI * 2 + rnd();
+    const r = 1.5 + rnd() * 0.9;
+    const off = k === 0 ? 0 : 1.1 + rnd() * 0.5;
+    const b = new THREE.IcosahedronGeometry(r, 1);
+    b.scale(1, 0.8, 1).translate(Math.cos(a) * off, 4.6 + rnd() * 1.6 + (k === 0 ? 1.2 : 0), Math.sin(a) * off);
+    parts.push(gradient(b, LEAF_DARK, LEAF_LIGHT, 3.2, 7.8, 0.16, rnd));
+  }
+  const out = mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)), false)!;
   out.computeVertexNormals();
   return out;
 }
@@ -72,7 +123,7 @@ export function boulderGeometry(variant: number, detail = 2): THREE.BufferGeomet
     v.y *= 0.68;
     pos.setXYZ(i, v.x, v.y, v.z);
   }
-  const flat = colored(g, new THREE.Color(0.13, 0.125, 0.115), 0.35, rnd);
+  const flat = gradient(g, new THREE.Color(0x5e5a54), new THREE.Color(0x8c877d), -0.4, 0.4, 0.3, rnd);
   flat.computeVertexNormals();
   return flat;
 }
@@ -123,7 +174,13 @@ export function buildProps(trees: readonly Placement[], rocks: readonly Placemen
       root.add(mesh);
     }
   };
-  place(trees, pineGeometry, 3, pineMat, 'pine', 0.15, 1, (p, y) => new THREE.CylinderGeometry(0.35 * p[3], 0.4 * p[3], 4 * p[3], 6, 1)
+  // on the lower ground some trees are broadleaf (variants 3, 4), up the hill all pines
+  const hash = (x: number, z: number) => {
+    const h = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+    return h - Math.floor(h);
+  };
+  const kinds: Placement[] = trees.map((p) => (p[1] < 24 && hash(p[0], p[2]) < 0.4 ? [p[0], p[1], p[2], p[3], 3 + (p[4] % 2), p[5]] : p));
+  place(kinds, (v) => (v < 3 ? pineGeometry(v) : broadleafGeometry(v - 3)), 5, pineMat, 'pine', 0.15, 1, (p, y) => new THREE.CylinderGeometry(0.35 * p[3], 0.4 * p[3], 4 * p[3], 6, 1)
     .translate(p[0], y + 2 * p[3], p[2]));
   place(rocks, boulderGeometry, 4, rockMat, 'boulder', 0.12, 1, (p, y) => {
     const g = boulderGeometry(p[4], 1);
