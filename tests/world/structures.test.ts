@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { CollisionWorld } from '../../src/world/collision';
-import { Debris } from '../../src/world/damage/debris';
+import { DEFAULT_DEBRIS, Debris } from '../../src/world/damage/debris';
 import { StructureDamage, longhouseParts, type Structure } from '../../src/world/damage/structures';
 import { WorldEvents } from '../../src/world/events';
 import { buildBerk, type BerkSites } from '../../src/world/island/berk';
@@ -41,6 +41,36 @@ describe('debris', () => {
     // and it is now part of the world: something dropped onto it lands on top
     expect(world.groundAt(p.pos.x, p.pos.z, 5, 10)!.point.y).toBeGreaterThan(0.25);
     expect(set.size).toBe(1);
+    d.dispose();
+  });
+
+  it('climbs out of the ground it spawned inside, and rests on top', () => {
+    const { world, set } = flatWorld();
+    const d = new Debris(world, set, DEFAULT_DEBRIS, { ground: () => 0 });
+    const p = d.spawn(new THREE.Vector3(2, -1.2, 0), new THREE.Quaternion(), new THREE.Vector3(1.5, 0.2, 1),
+      new THREE.Color(), new THREE.Vector3(0, -2, 0), new THREE.Vector3());
+    for (let t = 0; t < 6 && !p.asleep; t += 1 / 60) d.update(1 / 60);
+    expect(p.asleep).toBe(true);
+    expect(p.pos.y).toBeGreaterThan(0.15);
+    expect(p.pos.y).toBeLessThan(0.3);
+    d.dispose();
+  });
+
+  it('floats wood half under the water instead of sinking, and keeps it out of the collision', () => {
+    const { world, set } = flatWorld(); // the floor at 0 is the seabed; the sea is 4 m deep
+    const d = new Debris(world, set, DEFAULT_DEBRIS, { ground: () => 0, water: () => 4 });
+    const p = d.spawn(new THREE.Vector3(0, 7, 0), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, 0, 0.2)),
+      new THREE.Vector3(1.2, 0.1, 0.3), new THREE.Color(), new THREE.Vector3(0, -4, 0), new THREE.Vector3(1, 0, 0));
+    let lowest = Infinity;
+    for (let t = 0; t < 15 && !p.asleep; t += 1 / 60) {
+      d.update(1 / 60);
+      lowest = Math.min(lowest, p.pos.y);
+    }
+    expect(lowest).toBeGreaterThan(1);            // plunges in, never to the bottom
+    expect(p.pos.y).toBeGreaterThan(3.8);
+    expect(p.pos.y).toBeLessThan(4.2);            // rides at the surface
+    expect(p.asleep).toBe(true);
+    expect(set.size).toBe(0);
     d.dispose();
   });
 

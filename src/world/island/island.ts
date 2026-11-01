@@ -13,13 +13,13 @@ import type { WorldEvents } from '../events';
 import { BurnMask } from '../damage/burnMask';
 import { TreeDamage } from '../damage/trees';
 import { Craters } from '../damage/craters';
-import { Debris } from '../damage/debris';
+import { DEFAULT_DEBRIS, Debris } from '../damage/debris';
 import { StructureDamage } from '../damage/structures';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
 import { createStylizedTerrainMaterial, createStylizedUniforms, type StylizedTerrainUniforms } from './stylizedTerrain';
-import { buildBerk, type BerkLandmarks, type DockPlacement, type HousePlacement } from './berk';
+import { buildBerk, levelHousePads, type BerkLandmarks, type DockPlacement, type HousePlacement } from './berk';
 
 /** `public/assets/world/island/terrain.json` (pipeline/terrain/bakeIsland.mjs). */
 export interface IslandHeader extends GridHeader {
@@ -187,7 +187,12 @@ export class IslandRegion implements Region {
     this.root.add(this.trees.root);
     // buildings break into debris that tumbles, settles and becomes rubble Toothless can walk on
     if (collision) {
-      this.debris = new Debris(collision.world, collision.world.createSet('debris', tile));
+      const sea = this.header.seaLevel;
+      const P = this.header.cove.pond;
+      this.debris = new Debris(collision.world, collision.world.createSet('debris', tile), DEFAULT_DEBRIS, {
+        ground: (x, z) => hf.heightAt(x, z),
+        water: (x, z) => Math.max(hf.heightAt(x, z) < sea ? sea : -Infinity, Math.hypot(x - P.x, z - P.z) < P.r ? P.level : -Infinity),
+      });
       app_prepare(this.app, this.debris.mesh);
       this.root.add(this.debris.mesh);
     }
@@ -238,6 +243,8 @@ export async function createIsland(app: App, opts: IslandOptions = {}): Promise<
     look === 'photo' ? loadLayerArrays(`${base}textures/terrain/`, COVE_LAYERS, low ? 512 : 1024) : Promise.resolve(null),
   ]);
   const hf = Heightfield.fromUint16LE(header, heightBuf);
+  // flat pads under the houses before the terrain, collision, grass, trees and water read the ground
+  levelHousePads(hf, header.houses);
   let splat: SplatUniforms | null = null;
   let material: THREE.Material;
   if (layers) {

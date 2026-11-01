@@ -15,10 +15,29 @@ export interface DebrisTuning {
   /** Most pieces moving at once (the oldest is put to sleep beyond it) and most kept in all (the oldest are removed). */
   maxActive: number;
   maxPieces: number;
+  /**
+   * A piece still awake after this long (s) and slower than 2 m/s is put to sleep anyway: moving pieces don't collide
+   * with each other, so one can be left inside rubble that settled around it and jitter there for ever.
+   */
+  maxAwake: number;
 }
 
+/**
+ * What the debris needs of the world beyond its collision. `ground` is a floor no corner may end below, whatever the
+ * contacts missed (a piece spawned inside a hill, or tunnelling a seam). `water` is the surface height at (x, z), or
+ * -Infinity where there's none: wood floats there, half under, instead of sinking to the seabed.
+ */
+export interface DebrisWorld {
+  ground?: (x: number, z: number) => number;
+  water?: (x: number, z: number) => number;
+}
+
+/** Water's density (kg/m³) and its drag (1/s) on a floating piece. */
+const WATER = 1000;
+const WATER_DRAG = 1.6;
+
 export const DEFAULT_DEBRIS: DebrisTuning = {
-  gravity: 9.81, restitution: 0.25, friction: 0.6, drag: 0.15, sleepSpeed: 0.25, sleepTime: 0.6, maxActive: 64, maxPieces: 240,
+  gravity: 9.81, restitution: 0.25, friction: 0.6, drag: 0.15, sleepSpeed: 0.25, sleepTime: 0.6, maxActive: 64, maxPieces: 240, maxAwake: 10,
 };
 
 /** One rigid box of debris. */
@@ -35,6 +54,10 @@ export interface Piece {
   asleep: boolean;
   still: number;
   slot: number;
+  /** Afloat at the last step (then it isn't added to the collision when it sleeps). */
+  afloat?: boolean;
+  /** Seconds awake. */
+  age?: number;
 }
 
 const _c = new THREE.Vector3();
@@ -63,6 +86,7 @@ export class Debris {
     private readonly world: CollisionWorld,
     private readonly set: CollisionSet | null,
     private readonly t: DebrisTuning = DEFAULT_DEBRIS,
+    private readonly env: DebrisWorld = {},
   ) {
     const geo = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
     const mat = new THREE.MeshStandardMaterial({ name: 'debris', flatShading: true, roughness: 0.9, metalness: 0 });
@@ -152,9 +176,56 @@ export class Debris {
       p.v.addScaledVector(_j, 1 / p.mass);
       p.w.addScaledVector(_s.crossVectors(_r, _j), p.invI);
     }
+    if (this.env.ground && this.keepAboveGround(p, this.env.ground, h)) touching = true;
+    p.afloat = this.env.water ? this.float(p, this.env.water(p.pos.x, p.pos.z), h) : false;
     const slow = p.v.length() < t.sleepSpeed && p.w.length() < t.sleepSpeed * 2;
-    p.still = touching && slow ? p.still + h : 0;
-    if (p.still > t.sleepTime || p.pos.y < -60) this.sleep(p);
+    p.still = (touching || p.afloat) && slow ? p.still + h : 0;
+    p.age = (p.age ?? 0) + h;
+    const stuck = p.age > t.maxAwake && p.v.length() < 2;
+    if (p.still > t.sleepTime || stuck || p.pos.y < -60) this.sleep(p);
+  }
+
+  /**
+   * Lift a piece whose lowest corner is under the ground there and stop it sinking further, as a contact with friction
+   * (the heightfield is smoother than the collision's triangles: small gaps are left to the contacts, and a lifted piece
+   * must still be able to come to rest). Returns whether it lifted.
+   */
+  private keepAboveGround(p: Piece, ground: (x: number, z: number) => number, h: number): boolean {
+    let deficit = 0;
+    for (const k of CORNERS) {
+      _c.set(k.x * p.half.x, k.y * p.half.y, k.z * p.half.z).applyQuaternion(p.q).add(p.pos);
+      deficit = Math.max(deficit, ground(_c.x, _c.z) - _c.y);
+    }
+    if (deficit <= 0.1) return false;
+    p.pos.y += deficit;
+    if (p.v.y < 0) p.v.y = 0;
+    const grip = Math.exp(-this.t.friction * 8 * h);
+    p.v.x *= grip;
+    p.v.z *= grip;
+    p.w.multiplyScalar(grip);
+    return true;
+  }
+
+  /**
+   * Buoyancy and drag from water whose surface is at `level`: lift by the submerged share of the box (its vertical
+   * extent under the surface), so wood (500 kg/m³) rides half under. Returns whether it is in the water.
+   */
+  private float(p: Piece, level: number, h: number): boolean {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const k of CORNERS) {
+      const y = _c.set(k.x * p.half.x, k.y * p.half.y, k.z * p.half.z).applyQuaternion(p.q).y + p.pos.y;
+      lo = Math.min(lo, y);
+      hi = Math.max(hi, y);
+    }
+    if (!(level > lo)) return false;
+    const under = Math.min(1, (level - lo) / Math.max(1e-3, hi - lo));
+    const volume = 8 * p.half.x * p.half.y * p.half.z;
+    p.v.y += ((WATER * volume * under) / p.mass) * this.t.gravity * h;
+    const damp = Math.exp(-WATER_DRAG * under * h);
+    p.v.multiplyScalar(damp);
+    p.w.multiplyScalar(damp);
+    return true;
   }
 
   private sleep(p: Piece): void {
@@ -163,7 +234,7 @@ export class Debris {
     p.w.set(0, 0, 0);
     this.draw(p);
     this.mesh.instanceMatrix.needsUpdate = true;
-    if (!this.set || p.pos.y < -50) return;
+    if (!this.set || p.pos.y < -50 || p.afloat) return;
     const g = new THREE.BoxGeometry(p.half.x * 2, p.half.y * 2, p.half.z * 2);
     g.applyMatrix4(_m.compose(p.pos, p.q, _s.set(1, 1, 1)));
     this.set.add(`debris:${p.id}`, geometryTriangles(g));
