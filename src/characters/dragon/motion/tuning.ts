@@ -354,7 +354,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     minClearance: 3, clearLookahead: 1.2,
     handoff: 0.5, flapToGlide: 0.4, glideToFlap: 0.3, flapEntryPhase: 0.74, flapStopPhase: 0.26,
     runBlend: 0.45, runOffsetTime: 0.6,
-    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 18, settle: 0.4,
+    runLandSpeed: 9, maxLandHeight: 3.6, descendDeg: 28, settle: 0.4,
   },
   plasma: {
     turnFirstDeg: 100, chargeFacingDeg: 35, turnTimeout: 1.5, chargeTime: 0.3, cooldown: 0.7,

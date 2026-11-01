@@ -303,8 +303,12 @@ export class FlightAction implements DragonAction {
     const k = lerp(kGlide, kFlap, this.flapW);
     let a = -G * Math.sin(this.gamma) + c.flapThrust * this.flapW * (throttle >= 0 ? 1 : 0) - k * this.speed * this.speed;
     if (throttle < 0) a -= c.brakeDrag * this.speed;
-    // a slow (standing) landing's descent keeps braking: diving would win the speed back
-    if (this.phase === 'descend' && !this.landRun) a = Math.min(a, -c.brakeDrag * Math.max(0, this.speed - 0.8 * c.runLandSpeed));
+    // the descent brakes against the dive: a slow (standing) landing holds its slow speed, a running one stays near the
+    // glide's (a long dive from height would otherwise run away)
+    if (this.phase === 'descend') {
+      const cap = this.landRun ? c.glideSpeed : 0.8 * c.runLandSpeed;
+      a = Math.min(a, -2 * c.brakeDrag * Math.max(0, this.speed - cap));
+    }
     this.speed = clamp(this.speed + a * dt, 0.5 * c.minSpeed, c.maxSpeed);
     const h = Math.cos(this.gamma) * this.speed;
     this.pos.x += Math.sin(this.heading) * h * dt;

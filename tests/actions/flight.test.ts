@@ -173,6 +173,31 @@ describe.skipIf(!HAS_LIBRARY)('FlightAction (Toothless library)', () => {
     expect(r.accH).toBeLessThan(0.035);
   });
 
+  it('lands from high up: a steep descent that does not run away, then a running landing', { timeout: 60_000 }, async () => {
+    let topSpeed = 0;
+    const climb = (10 * Math.PI) / 180;                          // the camera a little low: he climbs
+    const a = await loadToothlessMotion();
+    const world = CollisionWorld.fromObjects([box(1600, 1, 1600, 0, -0.5, 0)]);
+    const d = new DragonCharacter({ rig: a.rig, world, clips: a.clips, posesMeta: a.posesMeta, seed: 1 });
+    d.spawn(0, -500, 0);
+    const tb = createToothlessBrain(d, a.rig, {});
+    const phases: string[] = [];
+    let maxAlt = 0;
+    for (let k = 0; k < Math.round(30 / DT); k++) {
+      const t = k * DT;
+      const keys = t < 1 ? [] : t < 1.5 ? ['Space'] : t < 12 ? ['KeyW'] : [];
+      const press = at(t, 1) || at(t, 12) ? ['Space'] : [];
+      d.update({ input: input(keys, press), cameraYaw: 0, cameraPitch: t < 12 ? climb : LEVEL, cameraPos: CAM }, DT);
+      if (phases[phases.length - 1] !== tb.flight.phase) phases.push(tb.flight.phase);
+      if (tb.flight.phase === 'descend') topSpeed = Math.max(topSpeed, tb.flight.speed);
+      maxAlt = Math.max(maxAlt, tb.flight.pos.y);
+    }
+    expect(maxAlt).toBeGreaterThan(12);
+    expect(phases).toEqual(['idle', 'takeoff', 'air', 'descend', 'landing', 'idle']);
+    expect(topSpeed).toBeLessThan(d.tuning.flight.glideSpeed + 3);
+    expect(d.nanResets).toBe(0);
+  });
+
   it('turns toward the camera and banks into the turn', { timeout: 60_000 }, async () => {
     let bank = 0;
     const r = await fly((t) => {
