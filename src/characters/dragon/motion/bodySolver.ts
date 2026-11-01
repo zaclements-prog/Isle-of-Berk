@@ -94,6 +94,8 @@ export class BodySolver {
   bobOffset = 0;
   /** How much lower (m) the authored cycles carry the shoulders (a chest-low prowl): through the pitch spring. */
   authoredCrouch = 0;
+  /** 0–1: how rough the ground ahead reads against the trot threshold (DragonCharacter): the uphill lead fades over it. */
+  rough = 0;
   /**
    * How far (m) a planted paw of each pair (hind, front) ended under its contact last step because its leg could not
    * fold any further (a joint at its limit as the body comes down onto it): the body rises by that at once, the
@@ -237,8 +239,22 @@ export class BodySolver {
       this.pitch.v = (pitchT - this.pitch.x) / dt;
       this.pitch.x = pitchT;
     } else {
+      // running up a smooth rise (not climbing, not over rough ground: steps are the paws' business), lead the spring
+      // by the ground's climb rate under him (body.heightLead), so a gallop up a hill doesn't drag his chest through it
+      const grade = Number.isFinite(groundFront) && Number.isFinite(groundHind) ? (groundFront - groundHind) / span : 0;
+      const rising = clamp((grade - 0.1) / 0.2, 0, 1) * (1 - cw) * (1 - clamp(this.rough, 0, 1));
+      this.height.x += t.heightLead * kin.speed * grade * rising * dt;
       stepSpring(this.height, heightT, t.heightOmega, 1, dt);
       stepSpring(this.pitch, pitchT, tiltOmega, 1, dt);
+      // and there, however it lags, never far under its target nor nose-down of it into the slope ahead
+      if (rising > 0.5 && this.height.x < heightT - t.maxSag) {
+        this.height.x = heightT - t.maxSag;
+        this.height.v = Math.max(this.height.v, 0);
+      }
+      if (rising > 0.5 && this.pitch.x < pitchT - deg(t.maxPitchLagDeg)) {
+        this.pitch.x = pitchT - deg(t.maxPitchLagDeg);
+        this.pitch.v = Math.max(this.pitch.v, 0);
+      }
       const [ph0, pf0] = this.pinch;
       if (ph0 > 0 || pf0 > 0) {
         const k = t.pinchRaise;

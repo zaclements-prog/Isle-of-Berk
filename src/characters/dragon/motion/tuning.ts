@@ -54,6 +54,14 @@ export interface MotionTuning {
     proxySkin: number;
     /** 0–1: ride on the paws' supports (0) or the terrain under the hips and shoulders (1); never below the terrain. */
     terrainFollow: number;
+    /**
+     * Rising ground at speed: the height spring alone lags 2v/ω behind a ramp (0.6 m galloping up a 26° slope, his chest
+     * in the hill). heightLead (0–1) feeds the terrain's climb rate under him forward into it; however it lags, the body
+     * never sags more than maxSag (m) below its target height, nor pitches more than maxPitchLagDeg nose-down of it.
+     */
+    heightLead: number;
+    maxSag: number;
+    maxPitchLagDeg: number;
     /** Spacing (m) of the three terrain probes along his heading under the hips and shoulders (stairs read as ramps). */
     terrainSpan: number;
     /** Share of a leg's reach a swing may land at (from the joint at touchdown) before the body lowers for it. */
@@ -194,7 +202,8 @@ export interface MotionTuning {
    * slopes are not rough). From roughTrot m he is held to trotCap m/s, and for roughHold s after the last rough
    * reading: he trots over rough ground rather than
    * gallop onto footholds his legs cannot keep. (One level only: a plane fit also reads a ramp's foot or a step's
-   * edge as rough, which a trot takes in its stride.)
+   * edge as rough, which a trot takes in its stride.) The fit is a plane across his path and a curve along it: a hill's
+   * rise and crest aren't rough, and he gallops up them.
    */
   rough: { roughAhead: number[]; roughLead: number; roughSpan: number; roughTrot: number; trotCap: number; roughHold: number };
   loco: {
@@ -299,6 +308,7 @@ export const DEFAULT_TUNING: MotionTuning = {
     heightOmega: 14, tiltOmega: 10, maxTiltDeg: 35, crouchWalk: 0.03, crouchTrot: 0.09, crouchGallop: 0.16,
     footfallImpulse: 0.12, bobWalk: 0.012, bobTrot: 0.02, rockGallopDeg: 3, flexGallopDeg: 6,
     leanGain: 0.8, maxLeanDeg: 18, accelPitchDeg: 0.5, maxAccelPitchDeg: 6, bendGain: 0.25, maxBendDeg: 25, shortfallLower: 1, pinchRaise: 1,
+    heightLead: 0, maxSag: 99, maxPitchLagDeg: 999,
     terrainLookahead: 0.15, wallNormalY: 0.64, bendShare: [0.2, 0.25, 0.3, 0.25], footfallFullSpeed: 5, footfallMinScale: 0.2,
     crouchFullSpeed: 1, rollFollow: 1, crouchRelease: 0.3, proxySkin: 0.04, terrainFollow: 1, terrainSpan: 0.4, landingReach: 0.95, terrainDrop: 1.0,
   },
@@ -329,7 +339,7 @@ export const DEFAULT_TUNING: MotionTuning = {
   },
   wings: { omega: 8, climbFlare: 0.8 },
   pose: { breathGainPosed: 0.5, groundGuard: 0.02 },
-  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.06, trotCap: 3.2, roughHold: 2 },
+  rough: { roughAhead: [1, 2, 3.5, 5], roughLead: 0.35, roughSpan: 0.5, roughTrot: 0.1, trotCap: 3.2, roughHold: 0.75 },
   loco: { fadeSpeedLo: 0.1, fadeSpeedHi: 0.6, blendTime: 0.35, bobGain: 1, gains: [1, 1, 1], adoptDutyOver: 0.08, turnCurveLo: 0.6, turnCurveHi: 1.4, roughLo: 0.03, roughHi: 0.1, raiseFade: 0.05,
     strainLo: 0.93, strainHi: 0.99, fallTime: 0.08, crouch: [0.08, 0.08, 0] },
   face: {

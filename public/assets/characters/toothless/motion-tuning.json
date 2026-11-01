@@ -84,6 +84,9 @@
     "crouchRelease": 0.3,
     "proxySkin": 0.04,
     "terrainFollow": 1,
+    "heightLead": 1,
+    "maxSag": 0.2,
+    "maxPitchLagDeg": 7,
     "terrainSpan": 0.4,
     "landingReach": 0.95,
     "terrainDrop": 1

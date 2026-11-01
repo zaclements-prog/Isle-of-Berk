@@ -151,6 +151,11 @@ export class FlightAction implements DragonAction {
       else if (d.intent.jump && d.kin.speed >= c.runTakeoffSpeed) {
         d.intent.jump = false;                                    // the jump must not take it too
         this.startPrep(d);
+      } else if (d.intent.jump && d.intent.gallop) {
+        // Shift + Space is always a takeoff: short of a gallop's speed (held to a trot on rough ground, still getting
+        // going) it's a standing one, not a hop that reads as a takeoff that failed
+        d.intent.jump = false;
+        this.startTakeoff(d, false);
       }
       return;
     }

@@ -315,6 +315,7 @@ export class DragonCharacter {
     this.poseBody();
     // a leg short of its target lowers the body; so does a swing landing out of reach, ahead of touchdown
     for (let i = 0; i < 4; i++) this.short[i] = Math.max(this.legs.shortfall[i], this.planner.landingShortfall(i, t.body.landingReach));
+    this.body.rough = this.roughness / t.rough.roughTrot;
     const pose = this.body.update(this.kin, this.planner, this.gait, this.short, this.mods.maxTiltDeg, dt,
       this.groundUnder(1, 3), this.groundUnder(0, 2), raise, this.climbRide());
     this.secondary.update({ yawRate: this.kin.yawRate, speed: this.kin.speed, verticalAccel: this.verticalAccel, gallopWeight: this.gait.gallopWeight }, dt);
@@ -397,19 +398,30 @@ export class DragonCharacter {
       this.roughHold = Math.max(0, this.roughHold - dt);
       return this.roughHold > 0 ? r.trotCap : Infinity;
     }
-    // least-squares plane h = c0 + c1·a + c2·l over the probes, then the largest residual
-    let sa = 0, sl = 0, sh = 0, saa = 0, sll = 0, sal = 0, sah = 0, slh = 0;
+    // least-squares surface h = c0 + c1·a + c2·l + c3·a² over the probes, then the largest residual. The a² term takes
+    // up a hill's curvature along his path (a plane read a smooth 50 m hill as 0.25 m rough and held him to a trot on
+    // every rise); rocks, logs and ledges stay local bumps no such smooth surface fits
+    // (too few probes for the curve, as by a wall: a plane)
+    const nb = n >= 6 ? 4 : 3;
+    const basis = (a: number, l: number) => [1, a, l, a * a].slice(0, nb);
+    const m = Array.from({ length: nb }, () => new Array<number>(nb).fill(0));
+    const v = new Array<number>(nb).fill(0);
     for (let k = 0; k < n; k++) {
       const [a, l, h] = pts[k];
-      sa += a; sl += l; sh += h; saa += a * a; sll += l * l; sal += a * l; sah += a * h; slh += l * h;
+      const b = basis(a, l);
+      for (let i = 0; i < nb; i++) {
+        v[i] += b[i] * h;
+        for (let j = 0; j < nb; j++) m[i][j] += b[i] * b[j];
+      }
     }
-    const m = [[n, sa, sl], [sa, saa, sal], [sl, sal, sll]];
-    const v = [sh, sah, slh];
-    const c = solve3(m, v);
+    const c = solveN(m, v);
     let rough = 0;
     for (let k = 0; k < n; k++) {
       const [a, l, h] = pts[k];
-      rough = Math.max(rough, Math.abs(h - (c[0] + c[1] * a + c[2] * l)));
+      const b = basis(a, l);
+      let fit = 0;
+      for (let i = 0; i < nb; i++) fit += c[i] * b[i];
+      rough = Math.max(rough, Math.abs(h - fit));
     }
     this.roughness = rough;
     // once over rough ground he keeps to the trot for roughHold s after the last rough reading: a flat stretch
@@ -730,11 +742,28 @@ export class DragonCharacter {
   }
 }
 
-/** Solve the 3×3 system m · x = v (Cramer's rule); a singular system gives a flat plane at the mean height. */
-function solve3(m: number[][], v: number[]): number[] {
-  const det = (a: number[][]) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
-    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
-  const d = det(m);
-  if (Math.abs(d) < 1e-9) return [v[0] / m[0][0], 0, 0];
-  return [0, 1, 2].map((k) => det(m.map((row, i) => row.map((x, j) => (j === k ? v[i] : x)))) / d);
+/**
+ * Solve the small normal equations m · x = v (Gaussian elimination, partial pivoting); a singular system gives a flat
+ * surface at the mean height.
+ */
+function solveN(m: number[][], v: number[]): number[] {
+  const n = v.length;
+  const a = m.map((row, i) => [...row, v[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(a[r][c]) > Math.abs(a[p][c])) p = r;
+    if (Math.abs(a[p][c]) < 1e-9) return [v[0] / m[0][0], ...new Array<number>(n - 1).fill(0)];
+    [a[c], a[p]] = [a[p], a[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = a[r][c] / a[c][c];
+      for (let k = c; k <= n; k++) a[r][k] -= f * a[c][k];
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = a[r][n];
+    for (let k = r + 1; k < n; k++) s -= a[r][k] * x[k];
+    x[r] = s / a[r][r];
+  }
+  return x;
 }
