@@ -169,10 +169,13 @@ export class BodySolver {
    * `climb`: climbing, the body rides on the face under its joints (see ClimbRide), pitches over the joints' real
    * spread, and its pelvis stands hipHeight along the climb's up axis from the face rather than straight above it (on
    * a 60° face, straight above leaves the body half its height from the surface).
+   * `floor`: the lowest the pelvis may go (m, world): whatever the springs or a scripted placement ask, the pelvis stops
+   * there and loses any downward speed (DragonCharacter keeps the trunk out of the ground with it). `pitchFloor`: the
+   * lowest pitch (rad, + nose up), likewise (DragonCharacter keeps the head out of the ground with it).
    */
   update(
     kin: BodyKinState, sup: SupportSource, gait: GaitEngine, shortfall: readonly number[], maxTiltDeg: number, dt: number,
-    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide,
+    groundFront = -Infinity, groundHind = -Infinity, frontRaise = 0, climb?: ClimbRide, floor = -Infinity, pitchFloor = -Infinity,
   ): BodyPose {
     const t = this.t;
     // ride on the terrain under the hips/shoulders: on a slope the supports' average is biased by the stance (a
@@ -264,6 +267,14 @@ export class BodySolver {
         this.pitch.x += dp;
         if (dp > 0) this.pitch.v = Math.max(this.pitch.v, 0);
       }
+    }
+    if (this.height.x < floor) {
+      this.height.x = floor;
+      this.height.v = Math.max(this.height.v, 0);
+    }
+    if (this.pitch.x < pitchFloor) {
+      this.pitch.x = pitchFloor;
+      this.pitch.v = Math.max(this.pitch.v, 0);
     }
     stepSpring(this.roll, rollT, tiltOmega, 1, dt);
 

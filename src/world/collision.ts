@@ -216,6 +216,7 @@ export class CollisionWorld {
   private readonly tileLayers = new Map<string, CollisionLayer>();
   private nextId = 1;
   private stamp = 0;
+  private edits = 0;
   private readonly cand: CollisionLayer[] = [];
   private readonly ray = new THREE.Ray();
   private readonly cpTarget = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
@@ -247,16 +248,28 @@ export class CollisionWorld {
     return n;
   }
 
+  /**
+   * Counts every change to the geometry (a layer added, removed, replaced or refit: a crater, a re-seated boulder, a
+   * felled tree, settling debris), pending set changes included. Whatever caches contacts with the world (his planted
+   * paws) compares it between steps and re-checks them when it moves.
+   */
+  get version(): number {
+    this.flush();
+    return this.edits;
+  }
+
   addLayer(name: string, positions: Float32Array): CollisionLayer {
     const l = new CollisionLayer(this.nextId++, name, positions);
     this.layers.push(l);
     this.file(l);
+    this.edits++;
     return l;
   }
 
   removeLayer(l: CollisionLayer): void {
     const k = this.layers.indexOf(l);
     if (k < 0) return;
+    this.edits++;
     this.unfile(l);
     this.layers.splice(k, 1);
     for (const [key, t] of this.tileLayers) if (t === l) this.tileLayers.delete(key);
@@ -267,6 +280,7 @@ export class CollisionWorld {
     this.unfile(l);
     l.set(positions);
     this.file(l);
+    this.edits++;
   }
 
   /** Move a layer's vertices in place and refit its BVH (same triangles); see `CollisionLayer.refit`. */
@@ -274,6 +288,7 @@ export class CollisionWorld {
     this.unfile(l);
     const changed = l.refit(mutate);
     this.file(l);
+    if (changed) this.edits++;
     return changed;
   }
 
