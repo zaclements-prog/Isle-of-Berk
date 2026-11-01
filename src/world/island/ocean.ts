@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { addCompileHook } from '../../render/materials';
 import { mulberry32 } from '../../core/rng';
-import { FORCE_PARS, ForceField, MAX_SHOCKS, type ForceUniforms } from '../forceField';
+import { FORCE_PARS, ForceField, MAX_SHOCKS, RIPPLE_PARS, type ForceUniforms } from '../forceField';
 
 export interface OceanOptions {
   seaLevel: number;
@@ -106,6 +106,7 @@ uniform vec3 uShallow;
 uniform vec3 uDeep;
 uniform vec3 uFoam;
 ${FORCE_PARS}
+${RIPPLE_PARS}
 // value noise for the churned spray: hashed lattice, smooth cells, two rotated octaves (no axis grid shows)
 float oceanHash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -149,6 +150,10 @@ vec3 oceanForce(vec2 xz) {
     slope += (dist > 1e-3 ? d / dist : vec2(1.0, 0.0)) * band * 0.8;
     foam = max(foam, band * 0.8);
   }
+  // splashes: debris going in
+  vec3 rp = rippleAt(xz, uSeaLevel);
+  slope += rp.yz;
+  foam = max(foam, rp.x);
   return vec3(clamp(foam, 0.0, 1.0), slope);
 }`)
         .replace('#include <color_fragment>', `#include <color_fragment>

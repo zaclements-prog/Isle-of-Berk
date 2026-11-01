@@ -110,11 +110,12 @@ GPU with `npm run dev`, then open the game page.
 
 **Known gaps and next steps:**
 - Boulders and props on a crater's rim are not re-seated (trees are: a felled tree falls from the dug ground).
-- Debris does not collide with other moving debris, only with settled debris. A piece left jittering inside rubble
-  that settled around it is put to sleep after `maxAwake` (10 s).
-- Structures show damage only as a darker tint before they collapse; nothing comes loose part by part yet.
 - No fire spread (`burn` event) and no embers or smoke trails.
-- No splash when debris hits the water.
+- Opened structures are drawn as their box parts: the gable infill, the crossed gable boards and the door of the
+  longhouse mesh go when the first real damage swaps the mesh out.
+- Done 2026-11-01 (wave 2, structures): buildings break part by part (per-part hit points, lean, char, supports,
+  per-wall collision), moving debris collides with moving debris, and debris splashes on the sea and the pond (see
+  `damage/structures.ts`, `damage/debris.ts`, `damage/splash.ts`).
 
 ## GPU review and fixes (2026-11-01)
 

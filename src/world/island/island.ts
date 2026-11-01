@@ -16,6 +16,7 @@ import { Craters } from '../damage/craters';
 import { DEFAULT_DEBRIS, Debris } from '../damage/debris';
 import { Ejecta } from '../damage/ejecta';
 import { StructureDamage } from '../damage/structures';
+import { Splashes } from '../damage/splash';
 import type { ForceUniforms } from '../forceField';
 import { buildProps, type Placement, type Props } from './props';
 import { Grass } from './grass';
@@ -170,6 +171,8 @@ export class IslandRegion implements Region {
   structures: StructureDamage | null = null;
   /** The soil blasts throw (clods, dirt spray, dust). */
   ejecta: Ejecta | null = null;
+  /** Debris hitting the sea or the pond. */
+  splashes: Splashes | null = null;
   trees: TreeDamage | null = null;
 
   /**
@@ -209,14 +212,19 @@ export class IslandRegion implements Region {
     if (collision) {
       const sea = this.header.seaLevel;
       const P = this.header.cove.pond;
+      const splashes = (this.splashes = new Splashes(force ?? null));
       this.debris = new Debris(collision.world, collision.world.createSet('debris', tile), DEFAULT_DEBRIS, {
         ground: (x, z) => hf.heightAt(x, z),
         water: (x, z) => Math.max(hf.heightAt(x, z) < sea ? sea : -Infinity, Math.hypot(x - P.x, z - P.z) < P.r ? P.level : -Infinity),
+        splash: (at, speed, mass) => splashes.splash(at, speed, mass),
       });
       app_prepare(this.app, this.debris.mesh);
-      this.root.add(this.debris.mesh);
+      this.root.add(this.debris.mesh, splashes.root);
     }
+    // houses, the hall and piers break part by part (their standing parts drawn by the damage once opened)
     this.structures = new StructureDamage(this.berk.breakables, collision?.structures ?? null, this.debris, events);
+    app_prepare(this.app, this.structures.root);
+    this.root.add(this.structures.root);
     // the soil a blast throws: clods, a dirt spray and a dust cloud (none off a blast on the water)
     const sea = this.header.seaLevel;
     const P = this.header.cove.pond;
@@ -242,6 +250,7 @@ export class IslandRegion implements Region {
     this.burn?.update(dt);
     this.trees?.update(dt);
     this.debris?.update(dt);
+    this.splashes?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.ejecta?.update(dt, ctx.camera, this.app.renderer.domElement.height);
     this.terrain.update(ctx.camera);
     this.ocean.update(dt);
@@ -266,6 +275,7 @@ export class IslandRegion implements Region {
     this.craters?.dispose();
     this.structures?.dispose();
     this.debris?.dispose();
+    this.splashes?.dispose();
     this.heightTexture.dispose();
     for (const t of this.splatTextures) t.dispose();
   }
